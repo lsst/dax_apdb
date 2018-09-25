@@ -25,30 +25,13 @@ This was developed as a part of a prototype for performance studies. It
 could probably be removed in the production system.
 """
 
-#--------------------------------
-#  Imports of standard modules --
-#--------------------------------
+
 import logging
 import resource
 import time
 
-#-----------------------------
-# Imports for other modules --
-#-----------------------------
-
-#----------------------------------
-# Local non-exported definitions --
-#----------------------------------
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
-
-#------------------------
-# Exported definitions --
-#------------------------
-
-#---------------------
-#  Class definition --
-#---------------------
 
 
 class Timer(object):
@@ -65,10 +48,6 @@ class Timer(object):
             engine.execute('SELECT ...')
 
     """
-
-    #----------------
-    #  Constructor --
-    #----------------
     def __init__(self, name="", doPrint=True):
         """
         @param name:  Time name, will be printed together with statistics
@@ -83,10 +62,6 @@ class Timer(object):
         self._sumReal = 0.
         self._sumUser = 0.
         self._sumSys = 0.
-
-    #-------------------
-    #  Public methods --
-    #-------------------
 
     def start(self):
         """

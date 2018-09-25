@@ -22,16 +22,14 @@
 """Module responsible for PPDB schema operations.
 """
 
-#--------------------------------
-#  Imports of standard modules --
-#--------------------------------
+__all__ = ["ColumnDef", "IndexDef", "TableDef",
+           "make_minimal_dia_object_schema", "make_minimal_dia_source_schema",
+           "PpdbSchema"]
+
 from collections import namedtuple
 import logging
 import yaml
 
-#-----------------------------
-# Imports for other modules --
-#-----------------------------
 import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
                         UniqueConstraint, Table)
@@ -39,9 +37,6 @@ from sqlalchemy.schema import CreateTable, CreateIndex
 from sqlalchemy.ext.compiler import compiles
 import lsst.afw.table as afwTable
 
-#----------------------------------
-# Local non-exported definitions --
-#----------------------------------
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
@@ -113,8 +108,20 @@ def make_minimal_dia_source_schema():
 
 
 @compiles(CreateTable, "oracle")
-def _add_suffixes(element, compiler, **kw):
-    """Add all needed suffixed for Oracle CREATE TABLE statement"""
+def _add_suffixes_tbl(element, compiler, **kw):
+    """Add all needed suffixed for Oracle CREATE TABLE statement.
+
+    This is a special compilation method for CreateTable clause which
+    registers itself with SQLAlchemy using @compiles decotrator. Exact method
+    name does not matter. Client can pass a dict to ``info`` keyword argument
+    of Table constructor. If the dict has a key "oracle_tablespace" then its
+    value is used as tablespace name. If the dict has a key "oracle_iot" with
+    true value then IOT table is created. This method generates additional
+    clauses for CREATE TABLE statement which specify tablespace name and
+    "ORGANIZATION INDEX" for IOT.
+
+    .. seealso:: https://docs.sqlalchemy.org/en/latest/core/compiler.html
+    """
     text = compiler.visit_create_table(element, **kw)
     _LOG.debug("text: %r", text)
     oracle_tablespace = element.element.info.get("oracle_tablespace")
@@ -129,8 +136,18 @@ def _add_suffixes(element, compiler, **kw):
 
 
 @compiles(CreateIndex, "oracle")
-def _add_suffixes(element, compiler, **kw):
-    """Add all needed suffixed for Oracle CREATE INDEX statement"""
+def _add_suffixes_idx(element, compiler, **kw):
+    """Add all needed suffixed for Oracle CREATE INDEX statement.
+
+    This is a special compilation method for CreateIndex clause which
+    registers itself with SQLAlchemy using @compiles decotrator. Exact method
+    name does not matter. Client can pass a dict to ``info`` keyword argument
+    of Index constructor. If the dict has a key "oracle_tablespace" then its
+    value is used as tablespace name. This method generates additional
+    clause for CREATE INDEX statement which specifies tablespace name.
+
+    .. seealso:: https://docs.sqlalchemy.org/en/latest/core/compiler.html
+    """
     text = compiler.visit_create_index(element, **kw)
     _LOG.debug("text: %r", text)
     oracle_tablespace = element.element.info.get("oracle_tablespace")
@@ -139,10 +156,6 @@ def _add_suffixes(element, compiler, **kw):
         text += " TABLESPACE " + oracle_tablespace
     _LOG.debug("text: %r", text)
     return text
-
-#---------------------
-#  Class definition --
-#---------------------
 
 
 class PpdbSchema(object):
@@ -168,7 +181,8 @@ class PpdbSchema(object):
     engine : `Engine`
         SQLAlchemy engine instance
     dia_object_index : `str`
-        Indexing mode for DiaObject table, see :py:mod:`ppdb` module.
+        Indexing mode for DiaObject table, see `PpdbConfig.dia_object_index`
+        for details.
     dia_object_nightly : `boolean`
         If `True` then create per-night DiaObject table as well.
     schema_file : `str`
@@ -186,18 +200,18 @@ class PpdbSchema(object):
     """
 
     # map afw type names into cat type names
-    _afw_type_map = dict(I="INT",
-                         L="BIGINT",
-                         F="FLOAT",
-                         D="DOUBLE",
-                         Angle="DOUBLE",
-                         String="CHAR")
-    _afw_type_map_reverse = dict(INT="I",
-                                 BIGINT="L",
-                                 FLOAT="F",
-                                 DOUBLE="D",
-                                 DATETIME="L",
-                                 CHAR="String")
+    _afw_type_map = {"I": "INT",
+                     "L": "BIGINT",
+                     "F": "FLOAT",
+                     "D": "DOUBLE",
+                     "Angle": "DOUBLE",
+                     "String": "CHAR"}
+    _afw_type_map_reverse = {"INT": "I",
+                             "BIGINT": "L",
+                             "FLOAT": "F",
+                             "DOUBLE": "D",
+                             "DATETIME": "L",
+                             "CHAR": "String"}
 
     def __init__(self, engine, dia_object_index, dia_object_nightly,
                  schema_file, extra_schema_file=None, column_map=None,
@@ -337,7 +351,8 @@ class PpdbSchema(object):
         self._metadata.clear()
         _LOG.debug("re-do schema mysql_engine=%r oracle_tablespace=%r",
                    mysql_engine, oracle_tablespace)
-        self._makeTables(mysql_engine=mysql_engine, oracle_tablespace=oracle_tablespace, oracle_iot=oracle_iot)
+        self._makeTables(mysql_engine=mysql_engine, oracle_tablespace=oracle_tablespace,
+                         oracle_iot=oracle_iot)
 
         # create all tables (optionally drop first)
         if drop:

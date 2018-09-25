@@ -22,9 +22,8 @@
 """Module defining Ppdb class and related methods.
 """
 
-#--------------------------------
-#  Imports of standard modules --
-#--------------------------------
+__all__ = ["PpdbConfig", "Ppdb"]
+
 from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime
@@ -32,9 +31,6 @@ import logging
 import numpy as np
 import os
 
-#-----------------------------
-# Imports for other modules --
-#-----------------------------
 import lsst.geom as geom
 import lsst.afw.table as afwTable
 import lsst.pex.config as pexConfig
@@ -45,9 +41,6 @@ from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
 from . import timer, ppdbSchema
 
-#----------------------------------
-# Local non-exported definitions --
-#----------------------------------
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
@@ -64,7 +57,6 @@ class Timer(object):
 
     See also :py:mod:`timer` module.
     """
-
     def __init__(self, name, do_logging=True, log_before_cursor_execute=False):
         self._log_before_cursor_execute = log_before_cursor_execute
         self._do_logging = do_logging
@@ -112,12 +104,10 @@ def _split(seq, nItems):
         yield seq[:nItems]
         del seq[:nItems]
 
-#------------------------
-# Exported definitions --
-#------------------------
 
 # Information about single visit
 Visit = namedtuple('Visit', 'visitId visitTime lastObjectId lastSourceId')
+
 
 @contextmanager
 def _ansi_session(engine):
@@ -134,10 +124,6 @@ def _data_file_name(basename):
     """Return path name of a data file.
     """
     return os.path.join(getPackageDir("dax_ppdb"), "data", basename)
-
-#---------------------
-#  Class definition --
-#---------------------
 
 
 class PpdbConfig(pexConfig.Config):
@@ -258,10 +244,6 @@ class Ppdb(object):
                                              afw_schemas=afw_schemas,
                                              prefix=self.config.prefix)
 
-    #-------------------
-    #  Public methods --
-    #-------------------
-
     def lastVisit(self):
         """Returns last visit information or `None` if visits table is empty.
 
@@ -376,11 +358,14 @@ class Ppdb(object):
             query = sql.select(columns)
 
         if self.config.diaobject_index_hint:
-            query = query.with_hint(table, 'index_rs_asc(%(name)s "{}")'.format(self.config.diaobject_index_hint))
+            val = self.config.diaobject_index_hint
+            query = query.with_hint(table, 'index_rs_asc(%(name)s "{}")'.format(val))
         if self.config.dynamic_sampling_hint > 0:
-            query = query.with_hint(table, 'dynamic_sampling(%(name)s {})'.format(self.config.dynamic_sampling_hint))
+            val = self.config.dynamic_sampling_hint
+            query = query.with_hint(table, 'dynamic_sampling(%(name)s {})'.format(val))
         if self.config.cardinality_hint > 0:
-            query = query.with_hint(table, 'FIRST_ROWS_1 cardinality(%(name)s {})'.format(self.config.cardinality_hint))
+            val = self.config.cardinality_hint
+            query = query.with_hint(table, 'FIRST_ROWS_1 cardinality(%(name)s {})'.format(val))
 
         # build selection
         exprlist = []
@@ -394,7 +379,7 @@ class Ppdb(object):
 
         # select latest version of objects
         if self.config.dia_object_index != 'last_object_table':
-            query = query.where(table.c.validityEnd == None)
+            query = query.where(table.c.validityEnd == None)  # noqa: E711
 
         _LOG.debug("query: %s", query)
 
