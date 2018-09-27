@@ -196,9 +196,9 @@ class PpdbConfig(pexConfig.Config):
 class Ppdb(object):
     """Interface to L1 database, hides all database access details.
 
-    The implementation is configured via configuration file (to simplify
-    prototyping) which is an INI-format file with all parameters. For an
-    example check cfg/ folder.
+    The implementation is configured via standard ``pex_config`` mechanism
+    using `PpdbConfig` configuration class. For an example of different
+    configurations check config/ folder.
 
     Parameters
     ----------
