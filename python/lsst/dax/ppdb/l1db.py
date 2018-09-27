@@ -1,5 +1,25 @@
-"""
-Module defining L1db class and related methods.
+# This file is part of dax_ppdb.
+#
+# Developed for the LSST Data Management System.
+# This product includes software developed by the LSST Project
+# (http://www.lsst.org).
+# See the COPYRIGHT file at the top-level directory of this distribution
+# for details of code ownership.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+"""Module defining L1db class and related methods.
 """
 
 #--------------------------------
@@ -19,6 +39,7 @@ import lsst.geom as geom
 import lsst.afw.table as afwTable
 import lsst.pex.config as pexConfig
 from lsst.pex.config import Field, ChoiceField, ListField
+from lsst.utils import getPackageDir
 import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
@@ -112,7 +133,7 @@ def _ansi_session(engine):
 def _data_file_name(basename):
     """Return path name of a data file.
     """
-    return os.path.join(os.environ.get("L1DBPROTO_DIR"), "data", basename)
+    return os.path.join(getPackageDir("dax_ppdb"), "data", basename)
 
 #---------------------
 #  Class definition --

@@ -1,4 +1,4 @@
-# This file is part of l1dbproto.
+# This file is part of dax_ppdb.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
@@ -26,7 +26,8 @@ import os
 import unittest
 
 import lsst.afw.table as afwTable
-from lsst.l1dbproto import L1dbSchema, make_minimal_dia_object_schema, make_minimal_dia_source_schema
+from lsst.dax.ppdb import L1dbSchema, make_minimal_dia_object_schema, make_minimal_dia_source_schema
+from lsst.utils import getPackageDir
 import lsst.utils.tests
 from sqlalchemy import create_engine
 
@@ -34,7 +35,7 @@ from sqlalchemy import create_engine
 def _data_file_name(basename):
     """Return path name of a data file.
     """
-    return os.path.join(os.environ.get("L1DBPROTO_DIR"), "data", basename)
+    return os.path.join(getPackageDir("dax_ppdb"), "data", basename)
 
 
 class L1dbSchemaTestCase(unittest.TestCase):

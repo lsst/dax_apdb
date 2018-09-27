@@ -1,4 +1,4 @@
-# This file is part of l1dbproto.
+# This file is part of dax_ppdb.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
@@ -24,12 +24,11 @@
 
 import datetime
 import logging
-import os
 import unittest
 
 import lsst.afw.table as afwTable
-from lsst.l1dbproto import (L1db, L1dbConfig, make_minimal_dia_object_schema,
-                            make_minimal_dia_source_schema)
+from lsst.dax.ppdb import (L1db, L1dbConfig, make_minimal_dia_object_schema,
+                           make_minimal_dia_source_schema)
 from lsst.sphgeom import Angle, Circle, HtmPixelization, Vector3d, UnitVector3d
 from lsst.geom import SpherePoint
 import lsst.utils.tests
@@ -42,7 +41,7 @@ HTM_LEVEL = 20
 def _makePixelRanges():
     """Generate pixel ID ranges for some envelope region"""
     pointing_v = UnitVector3d(1., 1., -1.)
-    fov = 0.05 # radians
+    fov = 0.05  # radians
     region = Circle(pointing_v, Angle(fov/2))
     pixelator = HtmPixelization(HTM_LEVEL)
     indices = pixelator.envelope(region, 128)
@@ -51,7 +50,7 @@ def _makePixelRanges():
 
 def _makeObjectCatalog(pixel_ranges):
     """make a catalog containing a bunch of DiaObjects inside pixel envelope.
-    
+
     The number of created records will be equal number of ranges (one object
     per pixel range). Coodirnates of the created objects are not usable.
     """
@@ -72,6 +71,7 @@ def _makeObjectCatalog(pixel_ranges):
         record.set("coord_dec", sp.getDec())
 
     return catalog
+
 
 class L1dbTestCase(unittest.TestCase):
     """A test case for L1db class

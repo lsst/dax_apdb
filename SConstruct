@@ -1,3 +1,3 @@
 # -*- python -*-
 from lsst.sconsUtils import scripts
-scripts.BasicSConstruct("l1dbproto")
+scripts.BasicSConstruct("dax_ppdb", disableCc=True)
