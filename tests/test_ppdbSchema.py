@@ -82,7 +82,7 @@ class PpdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.sources, "DiaSource", 108)
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
-        # create shema using prefix
+        # create schema using prefix
         schema = PpdbSchema(engine=engine,
                             dia_object_index="baseline",
                             dia_object_nightly=False,
@@ -178,8 +178,8 @@ class PpdbSchemaTestCase(unittest.TestCase):
         # one extra column exists for some reason for DiaObect in afw schema
         self.assertEqual(afw_schema.getFieldCount(), 5)
 
-    def test_getAfwSchema2(self):
-        """Test for getAfwSchema method.
+    def test_getAfwSchemaWithExtras(self):
+        """Test for getAfwSchema method using extra afw schemas.
 
         Same as above but use non-default afw schemas, this adds few extra
         columns to the table schema

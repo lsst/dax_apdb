@@ -23,7 +23,6 @@
 """
 
 import datetime
-import logging
 import unittest
 
 import lsst.afw.table as afwTable
@@ -52,7 +51,7 @@ def _makeObjectCatalog(pixel_ranges):
     """make a catalog containing a bunch of DiaObjects inside pixel envelope.
 
     The number of created records will be equal number of ranges (one object
-    per pixel range). Coodirnates of the created objects are not usable.
+    per pixel range). Coordinates of the created objects are not usable.
     """
     # make afw catalog
     schema = make_minimal_dia_object_schema()
@@ -77,9 +76,19 @@ class PpdbTestCase(unittest.TestCase):
     """A test case for Ppdb class
     """
 
-    @classmethod
-    def setUpClass(cls):
-        logging.basicConfig(level=logging.INFO)
+    def _assertCatalog(self, catalog, size, type=afwTable.SourceCatalog):
+        """Validate catalog type and size
+
+        Parameters
+        ----------
+        calalog : `lsst.afw.table.SourceCatalog`
+        size : int
+            Expected catalog size
+        type : `type`, optional
+            Expected catalog type
+        """
+        self.assertIsInstance(catalog, type)
+        self.assertEqual(len(catalog), size)
 
     def test_makeSchema(self):
         """Test for making an instance of Ppdb using in-memory sqlite engine.
@@ -89,6 +98,7 @@ class PpdbTestCase(unittest.TestCase):
         config = PpdbConfig(db_url="sqlite://",
                             isolation_level="READ_UNCOMMITTED")
         ppdb = Ppdb(config)
+        # the essence of a test here is that there are no exceptions.
         ppdb.makeSchema()
 
     def test_emptyGetsBaseline0months(self):
@@ -110,8 +120,7 @@ class PpdbTestCase(unittest.TestCase):
 
         # get objects by region
         res = ppdb.getDiaObjects(pixel_ranges)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), 0)
+        self._assertCatalog(res, 0)
 
         # get sources by region
         res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
@@ -144,13 +153,11 @@ class PpdbTestCase(unittest.TestCase):
 
         # get objects by region
         res = ppdb.getDiaObjects(pixel_ranges)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), 0)
+        self._assertCatalog(res, 0)
 
         # get sources by region
         res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), 0)
+        self._assertCatalog(res, 0)
 
         # get sources by object ID, empty object list, should return None
         res = ppdb.getDiaSources([], visit_time)
@@ -158,8 +165,7 @@ class PpdbTestCase(unittest.TestCase):
 
         # get sources by object ID, non-empty object list
         res = ppdb.getDiaSources([1, 2, 3], visit_time)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), 0)
+        self._assertCatalog(res, 0)
 
         # get forced sources by object ID, empty object list
         res = ppdb.getDiaForcedSources([], visit_time)
@@ -167,11 +173,11 @@ class PpdbTestCase(unittest.TestCase):
 
         # get sources by object ID, non-empty object list
         res = ppdb.getDiaForcedSources([1, 2, 3], visit_time)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), 0)
+        self._assertCatalog(res, 0)
 
     def test_emptyGetsObjectLast(self):
-        """Same as bove but using DiaObjectLast table.
+        """Test for getting DiaObjects from empty database using DiaObjectLast
+        table.
 
         All get() methods should return empty results, only useful for
         checking that code is not broken.
@@ -187,8 +193,7 @@ class PpdbTestCase(unittest.TestCase):
 
         # get objects by region
         res = ppdb.getDiaObjects(pixel_ranges)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), 0)
+        self._assertCatalog(res, 0)
 
     def test_storeObjectsBaseline(self):
         """Store and retrieve DiaObjects."""
@@ -210,8 +215,7 @@ class PpdbTestCase(unittest.TestCase):
 
         # read it back and check sizes
         res = ppdb.getDiaObjects(pixel_ranges)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), len(catalog))
+        self._assertCatalog(res, len(catalog))
 
     def test_storeObjectsLast(self):
         """Store and retrieve DiaObjects using DiaObjectLast table."""
@@ -234,12 +238,11 @@ class PpdbTestCase(unittest.TestCase):
 
         # read it back and check sizes
         res = ppdb.getDiaObjects(pixel_ranges)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), len(catalog))
+        self._assertCatalog(res, len(catalog))
 
     def test_storeSources(self):
         """Store and retrieve DiaSources."""
-        # don't care about sources.
+
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
@@ -275,17 +278,15 @@ class PpdbTestCase(unittest.TestCase):
 
         # read it back and check sizes
         res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), len(catalog))
+        self._assertCatalog(res, len(catalog))
 
         # read it back using different method
         res = ppdb.getDiaSources(oids, visit_time)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), len(catalog))
+        self._assertCatalog(res, len(catalog))
 
     def test_storeForcedSources(self):
         """Store and retrieve DiaForcedSources."""
-        # don't care about sources.
+
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
@@ -319,8 +320,7 @@ class PpdbTestCase(unittest.TestCase):
 
         # read it back and check sizes
         res = ppdb.getDiaForcedSources(oids, visit_time)
-        self.assertIsInstance(res, afwTable.SourceCatalog)
-        self.assertEqual(len(res), len(catalog))
+        self._assertCatalog(res, len(catalog))
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
