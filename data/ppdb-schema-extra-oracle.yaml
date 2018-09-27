@@ -1,5 +1,5 @@
-# Extra schema definitions compared to `cat` schema used by L1DB implementation.
-# This is a variant of l1db-schema-extra.yaml which is Oracle-specific,
+# Extra schema definitions compared to `cat` schema used by PPDB implementation.
+# This is a variant of ppdb-schema-extra.yaml which is Oracle-specific,
 # DaiObjectLast PK includes all columns from SELECT (check dia_object_columns
 # config parameter)
 

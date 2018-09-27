@@ -19,7 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Module responsible for L1DB schema operations.
+"""Module responsible for PPDB schema operations.
 """
 
 #--------------------------------
@@ -145,8 +145,8 @@ def _add_suffixes(element, compiler, **kw):
 #---------------------
 
 
-class L1dbSchema(object):
-    """Class for management of L1DB schema.
+class PpdbSchema(object):
+    """Class for management of PPDB schema.
 
     Attributes
     ----------
@@ -161,14 +161,14 @@ class L1dbSchema(object):
     forcedSources : `sqlalchemy.Table`
         DiaForcedSource table instance
     visits : `sqlalchemy.Table`
-        L1DbProtoVisits table instance
+        PpdbProtoVisits table instance
 
     Parameters
     ----------
     engine : `Engine`
         SQLAlchemy engine instance
     dia_object_index : `str`
-        Indexing mode for DiaObject table, see :py:mod:`l1db` module.
+        Indexing mode for DiaObject table, see :py:mod:`ppdb` module.
     dia_object_nightly : `boolean`
         If `True` then create per-night DiaObject table as well.
     schema_file : `str`
@@ -179,7 +179,7 @@ class L1dbSchema(object):
         Name of the YAML file with column mappings.
     afw_schemas : `dict`, optional
         Dictionary with table name for a key and `afw.table.Schema`
-        for a value. Columns in schema will be added to standard L1DB
+        for a value. Columns in schema will be added to standard PPDB
         schema (only if standard schema does not have matching column).
     prefix : `str`, optional
         Prefix to add to all scheam elements.
@@ -217,13 +217,14 @@ class L1dbSchema(object):
         self.forcedSources = None
         self.visits = None
 
-        _LOG.debug("Reading column map file %s", column_map)
         if column_map:
+            _LOG.debug("Reading column map file %s", column_map)
             with open(column_map) as yaml_stream:
                 # maps cat column name to afw column name
                 self._column_map = yaml.load(yaml_stream)
                 _LOG.debug("column map: %s", self._column_map)
         else:
+            _LOG.debug("No column map file is given, initialize to empty")
             self._column_map = {}
         self._column_map_reverse = {}
         for table, cmap in self._column_map.items():
@@ -307,11 +308,11 @@ class L1dbSchema(object):
                 self.forcedSources = table
 
         # special table to track visits, only used by prototype
-        table = Table(self._prefix+'L1DbProtoVisits', self._metadata,
+        table = Table(self._prefix+'PpdbProtoVisits', self._metadata,
                       Column('visitId', sqlalchemy.types.BigInteger, nullable=False),
                       Column('visitTime', sqlalchemy.types.TIMESTAMP, nullable=False),
-                      PrimaryKeyConstraint('visitId', name=self._prefix+'PK_L1DbProtoVisits'),
-                      Index(self._prefix+'IDX_L1DbProtoVisits_vTime', 'visitTime', info=info),
+                      PrimaryKeyConstraint('visitId', name=self._prefix+'PK_PpdbProtoVisits'),
+                      Index(self._prefix+'IDX_PpdbProtoVisits_vTime', 'visitTime', info=info),
                       mysql_engine=mysql_engine,
                       info=info)
         self.visits = table
@@ -351,7 +352,7 @@ class L1dbSchema(object):
         Parameters
         ----------
         table_name : `str`
-            One of known L1DB table names.
+            One of known PPDB table names.
         columns : `list` of `str`, optional
             Include only given table columns in schema, by default all columns
             are included.
@@ -419,12 +420,12 @@ class L1dbSchema(object):
         Parameters
         ----------
         table_name : `str`
-            One of known L1DB table names.
+            One of known PPDB table names.
 
         Returns
         -------
-        `dict` with afw column names as keys and `ColumnDef` instances as
-        values.
+        column_map : `dict`
+            Mapping of afw column names to `ColumnDef` instances.
         """
         table = self._schemas[table_name]
         col_map = self._column_map.get(table_name, {})
@@ -441,12 +442,12 @@ class L1dbSchema(object):
         Parameters
         ----------
         table_name : `str`
-            One of known L1DB table names.
+            One of known PPDB table names.
 
         Returns
         -------
-        `dict` with column names as keys and `ColumnDef` instances as
-        values.
+        column_map : `dict`
+            Mapping of column names to `ColumnDef` instances.
         """
         table = self._schemas[table_name]
         cmap = {column.name: column for column in table.columns}
@@ -466,12 +467,13 @@ class L1dbSchema(object):
             Name of YAML file with extra table information or `None`.
         afw_schemas : `dict`, optional
             Dictionary with table name for a key and `afw.table.Schema`
-            for a value. Columns in schema will be added to standard L1DB
+            for a value. Columns in schema will be added to standard PPDB
             schema (only if standard schema does not have matching column).
 
         Returns
         -------
-        `dict` with table names as keys and `TableDef` instances as values.
+        schemas : `dict`
+            Mapping of table names to `TableDef` instances.
         """
 
         _LOG.debug("Reading schema file %s", schema_file)
@@ -480,8 +482,8 @@ class L1dbSchema(object):
             # index it by table name
         _LOG.debug("Read %d tables from schema", len(tables))
 
-        _LOG.debug("Reading schema file %s", extra_schema_file)
         if extra_schema_file:
+            _LOG.debug("Reading extra schema file %s", extra_schema_file)
             with open(extra_schema_file) as yaml_stream:
                 extras = list(yaml.load_all(yaml_stream))
                 # index it by table name
@@ -574,7 +576,8 @@ class L1dbSchema(object):
 
         Returns
         -------
-        List of `Column` objects.
+        column_defs : `list`
+            List of `Column` objects.
         """
 
         # get the list of columns in primary key, they are treated somewhat
@@ -601,6 +604,22 @@ class L1dbSchema(object):
 
     def _field2dict(self, field, table_name):
         """Convert afw schema field definition into a dict format.
+
+        Parameters
+        ----------
+        field : `lsst.afw.table.Field`
+            Field in afw table schema.
+        table_name : `str`
+            Name of the table.
+
+        Returns
+        -------
+        field_dict : `dict`
+            Field attributes for SQL schema:
+
+            - ``name`` : field name (`str`)
+            - ``type`` : type name in SQL, e.g. "INT", "FLOAT" (`str`)
+            - ``nullable`` : `True` if column can be ``NULL`` (`bool`)
         """
         column = field.getName()
         column = self._column_map_reverse[table_name].get(column, column)
@@ -614,10 +633,13 @@ class L1dbSchema(object):
         ----------
         table_name : `str`
             Name of the table.
+        info : `dict`
+            Additional options passed to SQLAlchemy index constructor.
 
         Returns
         -------
-        List of index/constraint objects.
+        index_defs : `list`
+            List of SQLAlchemy index/constraint objects.
         """
 
         table_schema = self._schemas[table_name]
@@ -639,8 +661,12 @@ class L1dbSchema(object):
         return index_defs
 
     def _getDoubleType(self):
-        """
-        DOUBLE type is database-specific, select one based on dialect.
+        """DOUBLE type is database-specific, select one based on dialect.
+
+        Returns
+        -------
+        type_object : `object`
+            Database-specific type definition.
         """
         if self._engine.name == 'mysql':
             from sqlalchemy.dialects.mysql import DOUBLE

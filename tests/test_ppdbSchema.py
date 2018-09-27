@@ -19,14 +19,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Unit test for L1dbSchema class.
+"""Unit test for PpdbSchema class.
 """
 
 import os
 import unittest
 
 import lsst.afw.table as afwTable
-from lsst.dax.ppdb import L1dbSchema, make_minimal_dia_object_schema, make_minimal_dia_source_schema
+from lsst.dax.ppdb import PpdbSchema, make_minimal_dia_object_schema, make_minimal_dia_source_schema
 from lsst.utils import getPackageDir
 import lsst.utils.tests
 from sqlalchemy import create_engine
@@ -38,8 +38,8 @@ def _data_file_name(basename):
     return os.path.join(getPackageDir("dax_ppdb"), "data", basename)
 
 
-class L1dbSchemaTestCase(unittest.TestCase):
-    """A test case for L1dbSchema class
+class PpdbSchemaTestCase(unittest.TestCase):
+    """A test case for PpdbSchema class
     """
 
     @classmethod
@@ -70,10 +70,10 @@ class L1dbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="baseline",
                             dia_object_nightly=False,
-                            schema_file=_data_file_name("l1db-schema.yaml"))
+                            schema_file=_data_file_name("ppdb-schema.yaml"))
         schema.makeSchema()
         self._assertTable(schema.objects, "DiaObject", 92)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -83,10 +83,10 @@ class L1dbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # create shema using prefix
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="baseline",
                             dia_object_nightly=False,
-                            schema_file=_data_file_name("l1db-schema.yaml"),
+                            schema_file=_data_file_name("ppdb-schema.yaml"),
                             prefix="Pfx")
         # Drop existing tables (but we don't check it here)
         schema.makeSchema(drop=True)
@@ -97,11 +97,11 @@ class L1dbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 7)
 
         # use different indexing for DiaObject, need extra schema for that
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="pix_id_iov",
                             dia_object_nightly=False,
-                            schema_file=_data_file_name("l1db-schema.yaml"),
-                            extra_schema_file=_data_file_name("l1db-schema-extra.yaml"))
+                            schema_file=_data_file_name("ppdb-schema.yaml"),
+                            extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 93)
         self.assertEqual(len(schema.objects.primary_key), 3)
@@ -111,11 +111,11 @@ class L1dbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # use DiaObjectLast table for DiaObject, need extra schema for that
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="last_object_table",
                             dia_object_nightly=False,
-                            schema_file=_data_file_name("l1db-schema.yaml"),
-                            extra_schema_file=_data_file_name("l1db-schema-extra.yaml"))
+                            schema_file=_data_file_name("ppdb-schema.yaml"),
+                            extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 93)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -126,10 +126,10 @@ class L1dbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # baseline schema with nightly DiaObject
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="baseline",
                             dia_object_nightly=True,
-                            schema_file=_data_file_name("l1db-schema.yaml"))
+                            schema_file=_data_file_name("ppdb-schema.yaml"))
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 92)
         self._assertTable(schema.objects_nightly, "DiaObjectNightly", 92)
@@ -146,11 +146,11 @@ class L1dbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema, but use afw column map
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="baseline",
                             dia_object_nightly=False,
-                            schema_file=_data_file_name("l1db-schema.yaml"),
-                            column_map=_data_file_name("l1db-afw-map.yaml"))
+                            schema_file=_data_file_name("ppdb-schema.yaml"),
+                            column_map=_data_file_name("ppdb-afw-map.yaml"))
         schema.makeSchema()
 
         afw_schema, col_map = schema.getAfwSchema("DiaObject")
@@ -189,11 +189,11 @@ class L1dbSchemaTestCase(unittest.TestCase):
         # create standard (baseline) schema, but use afw column map
         afw_schemas = dict(DiaObject=make_minimal_dia_object_schema(),
                            DiaSource=make_minimal_dia_source_schema())
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="baseline",
                             dia_object_nightly=False,
-                            schema_file=_data_file_name("l1db-schema.yaml"),
-                            column_map=_data_file_name("l1db-afw-map.yaml"),
+                            schema_file=_data_file_name("ppdb-schema.yaml"),
+                            column_map=_data_file_name("ppdb-afw-map.yaml"),
                             afw_schemas=afw_schemas)
         schema.makeSchema()
 
@@ -231,11 +231,11 @@ class L1dbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema, but use afw column map
-        schema = L1dbSchema(engine=engine,
+        schema = PpdbSchema(engine=engine,
                             dia_object_index="baseline",
                             dia_object_nightly=False,
-                            schema_file=_data_file_name("l1db-schema.yaml"),
-                            column_map=_data_file_name("l1db-afw-map.yaml"))
+                            schema_file=_data_file_name("ppdb-schema.yaml"),
+                            column_map=_data_file_name("ppdb-afw-map.yaml"))
         schema.makeSchema()
 
         col_map = schema.getAfwColumns("DiaObject")

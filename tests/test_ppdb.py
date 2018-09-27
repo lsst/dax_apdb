@@ -19,7 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Unit test for L1db class.
+"""Unit test for Ppdb class.
 """
 
 import datetime
@@ -27,7 +27,7 @@ import logging
 import unittest
 
 import lsst.afw.table as afwTable
-from lsst.dax.ppdb import (L1db, L1dbConfig, make_minimal_dia_object_schema,
+from lsst.dax.ppdb import (Ppdb, PpdbConfig, make_minimal_dia_object_schema,
                            make_minimal_dia_source_schema)
 from lsst.sphgeom import Angle, Circle, HtmPixelization, Vector3d, UnitVector3d
 from lsst.geom import SpherePoint
@@ -73,8 +73,8 @@ def _makeObjectCatalog(pixel_ranges):
     return catalog
 
 
-class L1dbTestCase(unittest.TestCase):
-    """A test case for L1db class
+class PpdbTestCase(unittest.TestCase):
+    """A test case for Ppdb class
     """
 
     @classmethod
@@ -82,14 +82,14 @@ class L1dbTestCase(unittest.TestCase):
         logging.basicConfig(level=logging.INFO)
 
     def test_makeSchema(self):
-        """Test for making an instance of L1db using in-memory sqlite engine.
+        """Test for making an instance of Ppdb using in-memory sqlite engine.
         """
         # sqlite does not support default READ_COMMITTED, for in-memory
         # database have to use connection pool
-        config = L1dbConfig(db_url="sqlite://",
+        config = PpdbConfig(db_url="sqlite://",
                             isolation_level="READ_UNCOMMITTED")
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
     def test_emptyGetsBaseline0months(self):
         """Test for getting data from empty database.
@@ -98,31 +98,31 @@ class L1dbTestCase(unittest.TestCase):
         checking that code is not broken.
         """
         # set read_sources_months to 0 so that Forced/Sources are None
-        config = L1dbConfig(db_url="sqlite:///",
+        config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=0,
                             read_forced_sources_months=0)
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = l1db.getDiaObjects(pixel_ranges)
+        res = ppdb.getDiaObjects(pixel_ranges)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), 0)
 
         # get sources by region
-        res = l1db.getDiaSourcesInRegion(pixel_ranges, visit_time)
+        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, empty object list
-        res = l1db.getDiaSources([], visit_time)
+        res = ppdb.getDiaSources([], visit_time)
         self.assertIs(res, None)
 
         # get forced sources by object ID, empty object list
-        res = l1db.getDiaForcedSources([], visit_time)
+        res = ppdb.getDiaForcedSources([], visit_time)
         self.assertIs(res, None)
 
     def test_emptyGetsBaseline(self):
@@ -132,41 +132,41 @@ class L1dbTestCase(unittest.TestCase):
         checking that code is not broken.
         """
         # use non-zero months for Forced/Source fetching
-        config = L1dbConfig(db_url="sqlite:///",
+        config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
                             read_forced_sources_months=12)
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = l1db.getDiaObjects(pixel_ranges)
+        res = ppdb.getDiaObjects(pixel_ranges)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), 0)
 
         # get sources by region
-        res = l1db.getDiaSourcesInRegion(pixel_ranges, visit_time)
+        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), 0)
 
         # get sources by object ID, empty object list, should return None
-        res = l1db.getDiaSources([], visit_time)
+        res = ppdb.getDiaSources([], visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = l1db.getDiaSources([1, 2, 3], visit_time)
+        res = ppdb.getDiaSources([1, 2, 3], visit_time)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), 0)
 
         # get forced sources by object ID, empty object list
-        res = l1db.getDiaForcedSources([], visit_time)
+        res = ppdb.getDiaForcedSources([], visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = l1db.getDiaForcedSources([1, 2, 3], visit_time)
+        res = ppdb.getDiaForcedSources([1, 2, 3], visit_time)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), 0)
 
@@ -177,27 +177,27 @@ class L1dbTestCase(unittest.TestCase):
         checking that code is not broken.
         """
         # don't care about sources.
-        config = L1dbConfig(db_url="sqlite:///",
+        config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             dia_object_index="last_object_table")
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
 
         # get objects by region
-        res = l1db.getDiaObjects(pixel_ranges)
+        res = ppdb.getDiaObjects(pixel_ranges)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), 0)
 
     def test_storeObjectsBaseline(self):
         """Store and retrieve DiaObjects."""
         # don't care about sources.
-        config = L1dbConfig(db_url="sqlite:///",
+        config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             dia_object_index="baseline")
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
@@ -206,22 +206,22 @@ class L1dbTestCase(unittest.TestCase):
         catalog = _makeObjectCatalog(pixel_ranges)
 
         # store catalog
-        l1db.storeDiaObjects(catalog, visit_time)
+        ppdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = l1db.getDiaObjects(pixel_ranges)
+        res = ppdb.getDiaObjects(pixel_ranges)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), len(catalog))
 
     def test_storeObjectsLast(self):
         """Store and retrieve DiaObjects using DiaObjectLast table."""
         # don't care about sources.
-        config = L1dbConfig(db_url="sqlite:///",
+        config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             dia_object_index="last_object_table",
                             object_last_replace=True)
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
@@ -230,29 +230,29 @@ class L1dbTestCase(unittest.TestCase):
         catalog = _makeObjectCatalog(pixel_ranges)
 
         # store catalog
-        l1db.storeDiaObjects(catalog, visit_time)
+        ppdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = l1db.getDiaObjects(pixel_ranges)
+        res = ppdb.getDiaObjects(pixel_ranges)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), len(catalog))
 
     def test_storeSources(self):
         """Store and retrieve DiaSources."""
         # don't care about sources.
-        config = L1dbConfig(db_url="sqlite:///",
+        config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
                             read_forced_sources_months=12)
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
         objects = _makeObjectCatalog(pixel_ranges)
-        l1db.storeDiaObjects(objects, visit_time)
+        ppdb.storeDiaObjects(objects, visit_time)
 
         # make some sources
         schema = make_minimal_dia_source_schema()
@@ -271,34 +271,34 @@ class L1dbTestCase(unittest.TestCase):
             oids.append(obj['id'])
 
         # save them
-        l1db.storeDiaSources(catalog)
+        ppdb.storeDiaSources(catalog)
 
         # read it back and check sizes
-        res = l1db.getDiaSourcesInRegion(pixel_ranges, visit_time)
+        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), len(catalog))
 
         # read it back using different method
-        res = l1db.getDiaSources(oids, visit_time)
+        res = ppdb.getDiaSources(oids, visit_time)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), len(catalog))
 
     def test_storeForcedSources(self):
         """Store and retrieve DiaForcedSources."""
         # don't care about sources.
-        config = L1dbConfig(db_url="sqlite:///",
+        config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
                             read_forced_sources_months=12)
-        l1db = L1db(config)
-        l1db.makeSchema()
+        ppdb = Ppdb(config)
+        ppdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
         objects = _makeObjectCatalog(pixel_ranges)
-        l1db.storeDiaObjects(objects, visit_time)
+        ppdb.storeDiaObjects(objects, visit_time)
 
         # make some sources
         schema = afwTable.Schema()
@@ -315,10 +315,10 @@ class L1dbTestCase(unittest.TestCase):
             oids.append(obj['id'])
 
         # save them
-        l1db.storeDiaForcedSources(catalog)
+        ppdb.storeDiaForcedSources(catalog)
 
         # read it back and check sizes
-        res = l1db.getDiaForcedSources(oids, visit_time)
+        res = ppdb.getDiaForcedSources(oids, visit_time)
         self.assertIsInstance(res, afwTable.SourceCatalog)
         self.assertEqual(len(res), len(catalog))
 

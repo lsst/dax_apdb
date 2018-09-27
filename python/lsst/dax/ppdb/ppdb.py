@@ -19,7 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Module defining L1db class and related methods.
+"""Module defining Ppdb class and related methods.
 """
 
 #--------------------------------
@@ -43,7 +43,7 @@ from lsst.utils import getPackageDir
 import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
-from . import timer, l1dbschema
+from . import timer, ppdbSchema
 
 #----------------------------------
 # Local non-exported definitions --
@@ -140,7 +140,7 @@ def _data_file_name(basename):
 #---------------------
 
 
-class L1dbConfig(pexConfig.Config):
+class PpdbConfig(pexConfig.Config):
 
     db_url = Field(dtype=str, doc="SQLAlchemy database connection URI")
     isolation_level = ChoiceField(dtype=str,
@@ -168,10 +168,10 @@ class L1dbConfig(pexConfig.Config):
                                default=False)
     read_sources_months = Field(dtype=int,
                                 doc="Number of months of history to read from DiaSource",
-                                default=0)
+                                default=12)
     read_forced_sources_months = Field(dtype=int,
                                        doc="Number of months of history to read from DiaForcedSource",
-                                       default=0)
+                                       default=12)
     dia_object_columns = ListField(dtype=str,
                                    doc="List of columns to read from DiaObject, by default read all columns",
                                    default=[])
@@ -180,13 +180,13 @@ class L1dbConfig(pexConfig.Config):
                                 default=True)
     schema_file = Field(dtype=str,
                         doc="Location of (YAML) configuration file with standard schema",
-                        default=_data_file_name("l1db-schema.yaml"))
+                        default=_data_file_name("ppdb-schema.yaml"))
     extra_schema_file = Field(dtype=str,
                               doc="Location of (YAML) configuration file with extra schema",
-                              default=_data_file_name("l1db-schema-extra.yaml"))
+                              default=_data_file_name("ppdb-schema-extra.yaml"))
     column_map = Field(dtype=str,
                        doc="Location of (YAML) configuration file with column mapping",
-                       default=_data_file_name("l1db-afw-map.yaml"))
+                       default=_data_file_name("ppdb-afw-map.yaml"))
     prefix = Field(dtype=str,
                    doc="Prefix to add to table names and index names",
                    default="")
@@ -207,7 +207,7 @@ class L1dbConfig(pexConfig.Config):
                              default=0)
 
 
-class L1db(object):
+class Ppdb(object):
     """Interface to L1 database, hides all database access details.
 
     The implementation is configured via configuration file (to simplify
@@ -216,11 +216,11 @@ class L1db(object):
 
     Parameters
     ----------
-    config : `L1dbConfig`
+    config : `PpdbConfig`
     afw_schemas : `dict`, optional
         Dictionary with table name for a key and `afw.table.Schema`
         for a value. Columns in schema will be added to standard
-        L1DB schema.
+        PPDB schema.
     """
 
     def __init__(self, config, afw_schemas=None):
@@ -228,7 +228,7 @@ class L1db(object):
         self.config = config
 
         # logging.getLogger('sqlalchemy').setLevel(logging.INFO)
-        _LOG.info("L1DB Configuration:")
+        _LOG.info("PPDB Configuration:")
         _LOG.info("    dia_object_index: %s", self.config.dia_object_index)
         _LOG.info("    dia_object_nightly: %s", self.config.dia_object_nightly)
         _LOG.info("    read_sources_months: %s", self.config.read_sources_months)
@@ -249,7 +249,7 @@ class L1db(object):
             kw.update(isolation_level=self.config.isolation_level)
         self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
 
-        self._schema = l1dbschema.L1dbSchema(engine=self._engine,
+        self._schema = ppdbSchema.PpdbSchema(engine=self._engine,
                                              dia_object_index=self.config.dia_object_index,
                                              dia_object_nightly=self.config.dia_object_nightly,
                                              schema_file=self.config.schema_file,
@@ -266,11 +266,12 @@ class L1db(object):
         """Returns last visit information or `None` if visits table is empty.
 
         Visits table is used by ap_proto to track visit information, it is
-        not a part of the regular L1DB schema.
+        not a part of the regular PPDB schema.
 
         Returns
         -------
-        Instance of :py:class:`Visit` class or None.
+        visit : `Visit` or `None`
+            Last stored visit info or `None` if there was nothing stored yet.
         """
 
         with self._engine.begin() as conn:
@@ -299,8 +300,8 @@ class L1db(object):
     def saveVisit(self, visitId, visitTime):
         """Store visit information.
 
-        This method is only used by ap_proto and is not intended for
-        production pipelines.
+        This method is only used by ``ap_proto`` script from ``l1dbproto``
+        and is not intended for production pipelines.
 
         Parameters
         ----------
@@ -317,12 +318,13 @@ class L1db(object):
     def tableRowCount(self):
         """Returns dictionary with the table names and row counts.
 
-        Used by ap_proto to keep track of the size of the database tables.
+        Used by ``ap_proto`` to keep track of the size of the database tables.
         Depending on database technology this could be expensive operation.
 
         Returns
         -------
-        Dict where key is a table name and value is a row count.
+        row_counts : `dict`
+            Dict where key is a table name and value is a row count.
         """
         res = {}
         tables = [self._schema.objects, self._schema.sources, self._schema.forcedSources]
@@ -344,11 +346,11 @@ class L1db(object):
         when calculating pixelization indices.
 
         This methods returns `afw.table` catalog with schema determined by
-        the schema of L1 database table. Re-mapping of the column names is
-        done for some columns (based on column map passed to constructor)
-        but types or units are not changed.
+        the schema of PPDB table. Re-mapping of the column names is done for
+        some columns (based on column map passed to constructor) but types
+        or units are not changed.
 
-        Returns only the last version of the the DiaObject.
+        Returns only the last version of each DiaObject.
 
         Parameters
         ----------
@@ -358,7 +360,8 @@ class L1db(object):
 
         Returns
         -------
-        `afw.table.BaseCatalog` instance
+        catalog : `afw.table.SourceCatalog`
+            Catalog contaning DiaObject records.
         """
 
         # decide what columns we need
@@ -416,9 +419,9 @@ class L1db(object):
         when calculating pixelization indices.
 
         This methods returns `afw.table` catalog with schema determined by
-        the schema of L1 database table. Re-mapping of the column names is
-        done for some columns (based on column map passed to constructor)
-        but types or units are not changed.
+        the schema of PPDB table. Re-mapping of the column names is done for
+        some columns (based on column map passed to constructor) but types or
+        units are not changed.
 
         Parameters
         ----------
@@ -430,8 +433,9 @@ class L1db(object):
 
         Returns
         -------
-        `afw.table.SourceCatalog` instance, `None` if ``read_sources_months``
-        configuration parameter is set to 0.
+        catalog : `afw.table.SourceCatalog` or `None`
+            Catalog contaning DiaSource records. `None` is returned if
+            ``read_sources_months`` configuration parameter is set to 0.
         """
 
         if self.config.read_sources_months == 0:
@@ -463,9 +467,9 @@ class L1db(object):
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         This methods returns `afw.table` catalog with schema determined by
-        the schema of L1 database table. Re-mapping of the column names is
-        done for some columns (based on column map passed to constructor)
-        but types or units are not changed.
+        the schema of PPDB table. Re-mapping of the column names is done for
+        some columns (based on column map passed to constructor) but types or
+        units are not changed.
 
         Parameters
         ----------
@@ -476,8 +480,10 @@ class L1db(object):
 
         Returns
         -------
-        `afw.table.SourceCatalog` instance, `None` if ``read_sources_months``
-        configuration parameter is set to 0 or when ``object_ids`` is empty.
+        catalog : `afw.table.SourceCatalog` or `None`
+            Catalog contaning DiaSource records. `None` is returned if
+            ``read_sources_months`` configuration parameter is set to 0 or
+            when ``object_ids`` is empty.
         """
 
         if self.config.read_sources_months == 0:
@@ -508,7 +514,7 @@ class L1db(object):
         return sources
 
     def getDiaForcedSources(self, object_ids, dt):
-        """Returns catalog of DiaForceSource instances matching given
+        """Returns catalog of DiaForcedSource instances matching given
         DiaObjects.
 
         This methods returns `afw.table` catalog with schema determined by
@@ -525,9 +531,10 @@ class L1db(object):
 
         Returns
         -------
-        `afw.table.SourceCatalog` instance, `None` if
-        ``read_forced_sources_months`` configuration parameter is set to 0
-        or when ``object_ids`` is empty.
+        catalog : `afw.table.SourceCatalog` or `None`
+            Catalog contaning DiaForcedSource records. `None` is returned if
+            ``read_sources_months`` configuration parameter is set to 0 or
+            when ``object_ids`` is empty.
         """
 
         if self.config.read_forced_sources_months == 0:
@@ -563,7 +570,7 @@ class L1db(object):
         """Store catalog of DiaObjects from current visit.
 
         This methods takes `afw.table` catalog, its schema must be
-        compatible with the schema of L1 database table:
+        compatible with the schema of PPDB table:
           - column names must correspond to database table columns
           - some columns names are re-mapped based on column map passed to
             constructor
@@ -735,6 +742,8 @@ class L1db(object):
             If True then drop tables before creating new ones.
         mysql_engine : `str`, optional
             Name of the MySQL engine to use for new tables.
+        oracle_tablespace : `str`, optional
+            Name of Oracle tablespace.
         oracle_iot : `bool`, optional
             Make Index-organized DiaObjectLast table.
         """
@@ -982,8 +991,9 @@ class L1db(object):
 
         Returns
         -------
-        `afw.table.BaseCatalog` instance, if ``catalog`` is None then new
-        instance is returned, otherwise ``catalog`` is returned
+        catalog : `afw.table.SourceCatalog`
+             If ``catalog`` is None then new instance is returned, otherwise
+             ``catalog`` is updated and returned.
         """
         # make catalog schema
         columns = res.keys()

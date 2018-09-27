@@ -1,4 +1,4 @@
-# Extra schema definitions compared to `cat` schema used by L1DB implementation.
+# Extra schema definitions compared to `cat` schema used by PPDB implementation.
 
 # DiaObject needs a special column for time of last seen DiaSource,
 # validityEnd should be allowed to have NULL (for +Infinity)
