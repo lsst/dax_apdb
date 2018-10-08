@@ -69,8 +69,8 @@ TableDef = namedtuple('TableDef', 'name description columns indices')
 def make_minimal_dia_object_schema():
     """Define and create the minimal schema required for a DIAObject.
 
-    Return
-    ------
+    Returns
+    -------
     schema : `lsst.afw.table.Schema`
         Minimal schema for DIAObjects.
     """
@@ -84,8 +84,8 @@ def make_minimal_dia_object_schema():
 def make_minimal_dia_source_schema():
     """ Define and create the minimal schema required for a DIASource.
 
-    Return
-    ------
+    Returns
+    -------
     schema : `lsst.afw.table.Schema`
         Minimal schema for DIASources.
     """
@@ -178,12 +178,12 @@ class PpdbSchema(object):
 
     Parameters
     ----------
-    engine : `Engine`
+    engine : `sqlalchemy.engine.Engine`
         SQLAlchemy engine instance
     dia_object_index : `str`
         Indexing mode for DiaObject table, see `PpdbConfig.dia_object_index`
         for details.
-    dia_object_nightly : `boolean`
+    dia_object_nightly : `bool`
         If `True` then create per-night DiaObject table as well.
     schema_file : `str`
         Name of the YAML schema file.
@@ -336,7 +336,7 @@ class PpdbSchema(object):
 
         Parameters
         ----------
-        drop : boolean, optional
+        drop : `bool`, optional
             If True then drop tables before creating new ones.
         mysql_engine : `str`, optional
             MySQL engine type to use for new tables.
@@ -374,7 +374,7 @@ class PpdbSchema(object):
 
         Returns
         -------
-        schema : `afw.table.Schema`
+        schema : `lsst.afw.table.Schema`
         column_map : `dict`
             Mapping of the table/result column names into schema key.
         """
