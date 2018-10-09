@@ -22,7 +22,7 @@
 """Module defining Ppdb class and related methods.
 """
 
-__all__ = ["PpdbConfig", "Ppdb"]
+__all__ = ["PpdbConfig", "Ppdb", "Visit"]
 
 from collections import namedtuple
 from contextlib import contextmanager
@@ -327,7 +327,7 @@ class Ppdb(object):
         particular type of index, client is responsible for consistency
         when calculating pixelization indices.
 
-        This methods returns `afw.table` catalog with schema determined by
+        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of PPDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types
         or units are not changed.
@@ -336,13 +336,13 @@ class Ppdb(object):
 
         Parameters
         ----------
-        pixel_ranges: `list` of `tuple`
+        pixel_ranges : `list` of `tuple`
             Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
             This defines set of pixel indices to be included in result.
 
         Returns
         -------
-        catalog : `afw.table.SourceCatalog`
+        catalog : `lsst.afw.table.SourceCatalog`
             Catalog contaning DiaObject records.
         """
 
@@ -403,14 +403,14 @@ class Ppdb(object):
         particular type of index, client is responsible for consistency
         when calculating pixelization indices.
 
-        This methods returns `afw.table` catalog with schema determined by
+        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of PPDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types or
         units are not changed.
 
         Parameters
         ----------
-        pixel_ranges: `list` of `tuple`
+        pixel_ranges : `list` of `tuple`
             Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
             This defines set of pixel indices to be included in result.
         dt : `datetime.datetime`
@@ -418,7 +418,7 @@ class Ppdb(object):
 
         Returns
         -------
-        catalog : `afw.table.SourceCatalog` or `None`
+        catalog : `lsst.afw.table.SourceCatalog` or `None`
             Catalog contaning DiaSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0.
         """
@@ -451,7 +451,7 @@ class Ppdb(object):
     def getDiaSources(self, object_ids, dt):
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
-        This methods returns `afw.table` catalog with schema determined by
+        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of PPDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types or
         units are not changed.
@@ -465,7 +465,7 @@ class Ppdb(object):
 
         Returns
         -------
-        catalog : `afw.table.SourceCatalog` or `None`
+        catalog : `lsst.afw.table.SourceCatalog` or `None`
             Catalog contaning DiaSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
@@ -502,7 +502,7 @@ class Ppdb(object):
         """Returns catalog of DiaForcedSource instances matching given
         DiaObjects.
 
-        This methods returns `afw.table` catalog with schema determined by
+        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of L1 database table. Re-mapping of the column names may
         be done for some columns (based on column map passed to constructor)
         but types or units are not changed.
@@ -516,7 +516,7 @@ class Ppdb(object):
 
         Returns
         -------
-        catalog : `afw.table.SourceCatalog` or `None`
+        catalog : `lsst.afw.table.SourceCatalog` or `None`
             Catalog contaning DiaForcedSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
@@ -554,8 +554,9 @@ class Ppdb(object):
     def storeDiaObjects(self, objs, dt):
         """Store catalog of DiaObjects from current visit.
 
-        This methods takes `afw.table` catalog, its schema must be
+        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
         compatible with the schema of PPDB table:
+
           - column names must correspond to database table columns
           - some columns names are re-mapped based on column map passed to
             constructor
@@ -569,7 +570,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        objs : `afw.table.BaseCatalog`
+        objs : `lsst.afw.table.BaseCatalog`
             Catalog with DiaObject records
         dt : `datetime.datetime`
             Time of the visit
@@ -642,8 +643,9 @@ class Ppdb(object):
     def storeDiaSources(self, sources):
         """Store catalog of DIASources from current visit.
 
-        This methods takes `afw.table` catalog, its schema must be
+        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
         compatible with the schema of L1 database table:
+
           - column names must correspond to database table columns
           - some columns names may be re-mapped based on column map passed to
             constructor
@@ -654,7 +656,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        sources : `afw.table.BaseCatalog`
+        sources : `lsst.afw.table.BaseCatalog`
             Catalog containing DiaSource records
         """
 
@@ -667,8 +669,9 @@ class Ppdb(object):
     def storeDiaForcedSources(self, sources):
         """Store a set of DIAForcedSources from current visit.
 
-        This methods takes `afw.table` catalog, its schema must be
+        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
         compatible with the schema of L1 database table:
+
           - column names must correspond to database table columns
           - some columns names may be re-mapped based on column map passed to
             constructor
@@ -679,7 +682,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        sources : `afw.table.BaseCatalog`
+        sources : `lsst.afw.table.BaseCatalog`
             Catalog containing DiaForcedSource records
         """
 
@@ -723,7 +726,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        drop : `boolean`
+        drop : `bool`
             If True then drop tables before creating new ones.
         mysql_engine : `str`, optional
             Name of the MySQL engine to use for new tables.
@@ -763,7 +766,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        objects : `afw.table.BaseCatalog`
+        objects : `lsst.afw.table.BaseCatalog`
             Catalog containing object records
         conn :
             Database connection
@@ -872,7 +875,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        objects : `afw.table.BaseCatalog`
+        objects : `lsst.afw.table.BaseCatalog`
             Catalog containing object records
         conn :
             Database connection
@@ -971,12 +974,12 @@ class Ppdb(object):
             SQLAlchemy result set returned by query.
         table_name : `str`
             Name of the table.
-        catalog : `afw.table.BaseCatalog`
+        catalog : `lsst.afw.table.BaseCatalog`
             If not None then extend existing catalog
 
         Returns
         -------
-        catalog : `afw.table.SourceCatalog`
+        catalog : `lsst.afw.table.SourceCatalog`
              If ``catalog`` is None then new instance is returned, otherwise
              ``catalog`` is updated and returned.
         """
