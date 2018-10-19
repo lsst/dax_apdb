@@ -32,6 +32,20 @@ import lsst.utils.tests
 from sqlalchemy import create_engine
 
 
+def _make_case_conficting_dia_object_schema():
+    """Make schema which has column name with case mismatch.
+
+    Copy of make_minimal_dia_object_schema with additional column.
+    """
+    schema = afwTable.SourceTable.makeMinimalSchema()
+    schema.addField("pixelId", type='L',
+                    doc='Unique spherical pixelization identifier.')
+    schema.addField("nDiaSources", type='L')
+    # baseline schema has column `radecTai`
+    schema.addField("RaDecTai", type='D')
+    return schema
+
+
 def _data_file_name(basename):
     """Return path name of a data file.
     """
@@ -136,6 +150,28 @@ class PpdbSchemaTestCase(unittest.TestCase):
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "DiaSource", 108)
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
+
+    def test_afwSchemaCaseSensitivity(self):
+        """Test for column case mismatch errors.
+
+        This is a specific test for when afw schema column names differ from
+        PPDB schem in case only which should generate exception.
+
+        Like all other tests this depends on the column naming in
+        ppdb-schema.yaml.
+        """
+        engine = create_engine('sqlite://')
+
+        afw_schemas = dict(DiaObject=_make_case_conficting_dia_object_schema(),
+                           DiaSource=make_minimal_dia_source_schema())
+        # column case mismatch should cause exception in constructor
+        with self.assertRaises(ValueError):
+            PpdbSchema(engine=engine,
+                       dia_object_index="baseline",
+                       dia_object_nightly=False,
+                       schema_file=_data_file_name("ppdb-schema.yaml"),
+                       column_map=_data_file_name("ppdb-afw-map.yaml"),
+                       afw_schemas=afw_schemas)
 
     def test_getAfwSchema(self):
         """Test for getAfwSchema method.

@@ -543,9 +543,13 @@ class PpdbSchema(object):
             if afw_schema:
                 # use afw schema to create extra columns
                 column_names = {col['name'] for col in columns}
+                column_names_lower = {col.lower() for col in column_names}
                 for _, field in afw_schema:
                     column = self._field2dict(field, table_name)
                     if column['name'] not in column_names:
+                        # check that there is no column name that only differs in case
+                        if column['name'].lower() in column_names_lower:
+                            raise ValueError("afw.table column name case does not match schema column name")
                         columns.append(column)
 
             table_columns = []
