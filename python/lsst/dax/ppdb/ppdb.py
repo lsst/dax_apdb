@@ -475,7 +475,7 @@ class Ppdb(object):
             _LOG.info("Skip DiaSources fetching")
             return None
 
-        if not object_ids:
+        if len(object_ids) <= 0:
             _LOG.info("Skip DiaSources fetching - no Objects")
             # this should create a catalog, but the list of columns may be empty
             return None
