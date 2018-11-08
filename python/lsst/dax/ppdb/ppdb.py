@@ -1002,7 +1002,7 @@ class Ppdb(object):
                     if isinstance(value, datetime):
                         # convert datetime to number of seconds
                         value = int((value - datetime.utcfromtimestamp(0)).total_seconds())
-                    elif col.getTypeString() == 'Angle':
+                    elif col.getTypeString() == 'Angle' and value is not None:
                         value = value * geom.degrees
                     if value is not None:
                         record.set(col, value)
