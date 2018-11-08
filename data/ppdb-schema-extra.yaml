@@ -13,6 +13,11 @@ columns:
   nullable: true
   description: Time when validity of this diaObject ends.
   default: null
+- name: nDiaSources
+  type: INT
+  nullable: false
+  description: Total number of associted DiaSources across all bands.
+  default: null
 
 ---
 # DiaObjectLast uses subset of columns from DiaObject and different index

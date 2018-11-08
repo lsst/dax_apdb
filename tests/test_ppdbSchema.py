@@ -117,7 +117,7 @@ class PpdbSchemaTestCase(unittest.TestCase):
                             schema_file=_data_file_name("ppdb-schema.yaml"),
                             extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 93)
+        self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 3)
         self.assertIsNone(schema.objects_nightly)
         self.assertIsNone(schema.objects_last)
@@ -131,7 +131,7 @@ class PpdbSchemaTestCase(unittest.TestCase):
                             schema_file=_data_file_name("ppdb-schema.yaml"),
                             extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 93)
+        self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 2)
         self.assertIsNone(schema.objects_nightly)
         self._assertTable(schema.objects_last, "DiaObjectLast", 18)
