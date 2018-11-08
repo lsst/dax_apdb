@@ -15,7 +15,7 @@ columns:
   description: Time when validity of this diaObject starts.
 - name: validityEnd
   type: DATETIME
-  nullable: false
+  nullable: true
   description: Time when validity of this diaObject ends.
 - name: ra
   type: DOUBLE
@@ -59,66 +59,66 @@ columns:
   unit: mas/yr
 - name: pmRaSigma
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Uncertainty of pmRa.
   ucd: stat.error;pos.pm
   unit: mas/yr
 - name: pmDecl
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Proper motion (decl).
   ucd: pos.pm
   unit: mas/yr
 - name: pmDeclSigma
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Uncertainty of pmDecl.
   ucd: stat.error;pos.pm
   unit: mas/yr
 - name: parallax
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Parallax.
   ucd: pos.parallax
   unit: mas
 - name: parallaxSigma
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Uncertainty of parallax.
   ucd: stat.error;pos.parallax
   unit: mas
 - name: pmRa_pmDecl_Cov
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Covariance of pmRa and pmDecl.
   ucd: stat.covariance;pos.eq
   unit: (mas/yr)^2
 - name: pmRa_parallax_Cov
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Covariance of pmRa and parallax.
   ucd: stat.covariance
   unit: mas^2/yr
 - name: pmDecl_parallax_Cov
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Covariance of pmDecl and parallax.
   ucd: stat.covariance
   unit: mas^2/yr
 - name: pmParallaxLnL
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Natural log of the likelihood of the linear proper motion parallax
     fit.
   ucd: stat.likelihood
 - name: pmParallaxChi2
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Chi^2 static of the model fit.
   ucd: stat.fit.chi2
 - name: pmParallaxNdata
   type: INT
-  nullable: false
+  nullable: true
   description: The number of data points used to fit the model.
 - name: uPSFluxMean
   type: FLOAT
@@ -497,13 +497,13 @@ columns:
     as the nearbyObj3.
 - name: flags
   type: BIGINT
-  nullable: false
+  nullable: true
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
 - name: pixelId
   type: BIGINT
-  nullable: false
+  nullable: true
   description: HTM index.
 indices:
 - name: PK_DiaObject
@@ -526,7 +526,7 @@ description: The SSObject table contains description of the Solar System (moving
 columns:
 - name: ssObjectId
   type: BIGINT
-  nullable: false
+  nullable: true
   description: Unique identifier.
   ucd: meta.id;src
 - name: q
@@ -936,7 +936,7 @@ columns:
   unit: mag
 - name: flags
   type: BIGINT
-  nullable: false
+  nullable: true
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
@@ -978,13 +978,13 @@ columns:
   ucd: meta.id;src
 - name: parentDiaSourceId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of the parent diaSource this diaSource has been deblended from,
     if any.
   ucd: meta.id;src
 - name: prv_procOrder
   type: INT
-  nullable: false
+  nullable: true
   description: Position of this diaSource in the processing order relative to other
     diaSources within a given diaObjectId or ssObjectId.
 - name: ssObjectReassocTime
@@ -1006,7 +1006,7 @@ columns:
   unit: deg
 - name: raSigma
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Uncertainty of ra.
   ucd: stat.error;pos.eq.ra
   unit: deg
@@ -1018,13 +1018,13 @@ columns:
   unit: deg
 - name: declSigma
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Uncertainty of decl.
   ucd: stat.error;pos.eq.dec
   unit: deg
 - name: ra_decl_Cov
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Covariance between ra and decl.
   ucd: stat.covariance
   unit: deg^2
@@ -1036,7 +1036,7 @@ columns:
   unit: pixel
 - name: xSigma
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Uncertainty of x.
   ucd: stat.error:pos.cartesian.x
   unit: pixel
@@ -1048,32 +1048,32 @@ columns:
   unit: pixel
 - name: ySigma
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Uncertainty of y.
   ucd: stat.error:pos.cartesian.y
   unit: pixel
 - name: x_y_Cov
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Covariance between x and y.
   ucd: stat.covariance
   unit: pixel^2
 - name: apFlux
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Calibrated aperture flux. Note that this actually measures the difference
     between the template and the visit image.
   ucd: phot.count
   unit: nmgy
 - name: apFluxErr
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Estimated uncertainty of apFlux.
   ucd: stat.error;phot.count
   unit: nmgy
 - name: snr
   type: FLOAT
-  nullable: false
+  nullable: true
   description: The signal-to-noise ratio at which this source was detected in the
     difference image.
   ucd: stat.snr
@@ -1544,7 +1544,7 @@ columns:
     system (e.g., ghost maps, defect maps, etc.).
 - name: flags
   type: BIGINT
-  nullable: false
+  nullable: true
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
@@ -1580,18 +1580,18 @@ description: Forced-photometry source measurement on an individual difference Ex
 columns:
 - name: diaObjectId
   type: BIGINT
-  nullable: false
+  nullable: true
   ucd: meta.id;src
 - name: ccdVisitId
   type: BIGINT
-  nullable: false
+  nullable: true
   description: Id of the visit where this forcedSource was measured. Note that we
     are allowing a forcedSource to belong to multiple amplifiers, but it may not span
     multiple ccds.
   ucd: meta.id;obs.image
 - name: psFlux
   type: FLOAT
-  nullable: false
+  nullable: true
   description: Point Source model flux.
   ucd: phot.count
   unit: nmgy
@@ -1603,19 +1603,19 @@ columns:
   unit: nmgy
 - name: x
   type: FLOAT
-  nullable: false
+  nullable: true
   description: x position at which psFlux has been measured.
   ucd: pos.cartesian.x
   unit: pixel
 - name: y
   type: FLOAT
-  nullable: false
+  nullable: true
   description: y position at which psFlux has been measured.
   ucd: pos.cartesian.y
   unit: pixel
 - name: flags
   type: BIGINT
-  nullable: false
+  nullable: true
   default: '0'
   description: Flags, bitwise OR tbd
   ucd: meta.code
@@ -1635,17 +1635,17 @@ description: The table stores mapping of diaObjects to the nearby objects.
 columns:
 - name: diaObjectId
   type: BIGINT
-  nullable: false
+  nullable: true
   description: Id of diaObject.
   ucd: meta.id;src
 - name: objectId
   type: BIGINT
-  nullable: false
+  nullable: true
   description: Id of a nearby object.
   ucd: meta.id;src
 - name: dist
   type: FLOAT
-  nullable: false
+  nullable: true
   description: The distance between the diaObject and the object.
   unit: arcsec
 - name: lnP

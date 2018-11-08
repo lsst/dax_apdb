@@ -838,7 +838,8 @@ class Ppdb(object):
                 if field not in column_map:
                     continue
                 value = rec[field]
-                if column_map[field].type == "DATETIME":
+                if column_map[field].type == "DATETIME" and \
+                   not np.isnan(value):
                     # convert seconds into datetime
                     value = datetime.utcfromtimestamp(value)
                 row.append(quoteValue(value))
