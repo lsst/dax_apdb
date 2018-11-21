@@ -118,7 +118,7 @@ columns:
   ucd: stat.fit.chi2
 - name: pmParallaxNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points used to fit the model.
 - name: uPSFluxMean
   type: FLOAT
@@ -145,7 +145,7 @@ columns:
   ucd: stat.fit.chi2
 - name: uPSFluxNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points used to compute uPSFluxChi2.
 - name: uFPFluxMean
   type: FLOAT
@@ -190,7 +190,7 @@ columns:
   ucd: stat.fit.chi2
 - name: gPSFluxNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points used to compute gPSFluxChi2.
 - name: gFPFluxMean
   type: FLOAT
@@ -235,7 +235,7 @@ columns:
   ucd: stat.fit.chi2
 - name: rPSFluxNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points used to compute rPSFluxChi2.
 - name: rFPFluxMean
   type: FLOAT
@@ -280,7 +280,7 @@ columns:
   ucd: stat.fit.chi2
 - name: iPSFluxNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points used to compute iPSFluxChi2.
 - name: iFPFluxMean
   type: FLOAT
@@ -325,7 +325,7 @@ columns:
   ucd: stat.fit.chi2
 - name: zPSFluxNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points used to compute zPSFluxChi2.
 - name: zFPFluxMean
   type: FLOAT
@@ -370,7 +370,7 @@ columns:
   ucd: stat.fit.chi2
 - name: yPSFluxNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points used to compute yPSFluxChi2.
 - name: yFPFluxMean
   type: FLOAT
@@ -452,7 +452,7 @@ columns:
     Lomb-Scargle periodogram for y filter. [20 FLOAT].
 - name: nearbyObj1
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of the closest nearby object.
   ucd: meta.id;src
 - name: nearbyObj1Dist
@@ -467,7 +467,7 @@ columns:
     as the nearbyObj1.
 - name: nearbyObj2
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of the second-closest nearby object.
   ucd: meta.id;src
 - name: nearbyObj2Dist
@@ -482,7 +482,7 @@ columns:
     as the nearbyObj2.
 - name: nearbyObj3
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of the third-closest nearby object.
   ucd: meta.id;src
 - name: nearbyObj3Dist
@@ -497,13 +497,13 @@ columns:
     as the nearbyObj3.
 - name: flags
   type: BIGINT
-  nullable: true
+  nullable: false
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
 - name: pixelId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: HTM index.
 indices:
 - name: PK_DiaObject
@@ -526,7 +526,7 @@ description: The SSObject table contains description of the Solar System (moving
 columns:
 - name: ssObjectId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Unique identifier.
   ucd: meta.id;src
 - name: q
@@ -714,7 +714,7 @@ columns:
   ucd: stat.fit.chi2
 - name: orbFitNdata
   type: INTEGER
-  nullable: true
+  nullable: false
   description: Number of observations used in the fit.
 - name: MOID1
   type: FLOAT
@@ -936,7 +936,7 @@ columns:
   unit: mag
 - name: flags
   type: BIGINT
-  nullable: true
+  nullable: false
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
@@ -964,14 +964,14 @@ columns:
   ucd: meta.id;obs.image
 - name: diaObjectId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of the diaObject this source was associated with, if any. If not,
     it is set to NULL (each diaSource will be associated with either a diaObject or
     ssObject).
   ucd: meta.id;src
 - name: ssObjectId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of the ssObject this source was associated with, if any. If not,
     it is set to NULL (each diaSource will be associated with either a diaObject or
     ssObject).
@@ -984,7 +984,7 @@ columns:
   ucd: meta.id;src
 - name: prv_procOrder
   type: INT
-  nullable: true
+  nullable: false
   description: Position of this diaSource in the processing order relative to other
     diaSources within a given diaObjectId or ssObjectId.
 - name: ssObjectReassocTime
@@ -1144,7 +1144,7 @@ columns:
   ucd: stat.fit.chi2
 - name: psNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points (pixels) used to fit the model.
 - name: trailFlux
   type: FLOAT
@@ -1265,7 +1265,7 @@ columns:
   ucd: stat.fit.chi2
 - name: trailNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points (pixels) used to fit the model.
 - name: dipMeanFlux
   type: FLOAT
@@ -1428,7 +1428,7 @@ columns:
   ucd: stat.fit.chi2
 - name: dipNdata
   type: INT
-  nullable: true
+  nullable: false
   description: The number of data points (pixels) used to fit the model.
 - name: totFlux
   type: FLOAT
@@ -1544,7 +1544,7 @@ columns:
     system (e.g., ghost maps, defect maps, etc.).
 - name: flags
   type: BIGINT
-  nullable: true
+  nullable: false
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
@@ -1580,11 +1580,11 @@ description: Forced-photometry source measurement on an individual difference Ex
 columns:
 - name: diaObjectId
   type: BIGINT
-  nullable: true
+  nullable: false
   ucd: meta.id;src
 - name: ccdVisitId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of the visit where this forcedSource was measured. Note that we
     are allowing a forcedSource to belong to multiple amplifiers, but it may not span
     multiple ccds.
@@ -1615,7 +1615,7 @@ columns:
   unit: pixel
 - name: flags
   type: BIGINT
-  nullable: true
+  nullable: false
   default: '0'
   description: Flags, bitwise OR tbd
   ucd: meta.code
@@ -1635,12 +1635,12 @@ description: The table stores mapping of diaObjects to the nearby objects.
 columns:
 - name: diaObjectId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of diaObject.
   ucd: meta.id;src
 - name: objectId
   type: BIGINT
-  nullable: true
+  nullable: false
   description: Id of a nearby object.
   ucd: meta.id;src
 - name: dist
