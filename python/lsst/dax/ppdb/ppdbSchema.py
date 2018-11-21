@@ -204,14 +204,12 @@ class PpdbSchema(object):
                      "L": "BIGINT",
                      "F": "FLOAT",
                      "D": "DOUBLE",
-                     "ArrayF": "BLOB",
                      "Angle": "DOUBLE",
                      "String": "CHAR"}
     _afw_type_map_reverse = {"INT": "I",
                              "BIGINT": "L",
                              "FLOAT": "F",
                              "DOUBLE": "D",
-                             "BLOB": "ArrayF",
                              "DATETIME": "L",
                              "CHAR": "String"}
 
