@@ -192,6 +192,11 @@ class PpdbConfig(pexConfig.Config):
                              doc="If non-zero then use cardinality hint",
                              default=0)
 
+    def validate(self):
+        if self.isolation_level == "READ_COMMITTED" and self.db_url.startswith("sqlite"):
+            raise ValueError("Attempting to run Ppdb with SQLITE and isolation level 'READ_COMMITTED.' "
+                             "Use 'READ_UNCOMMITTED' instead.")
+
 
 class Ppdb(object):
     """Interface to L1 database, hides all database access details.
