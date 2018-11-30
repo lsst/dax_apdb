@@ -192,6 +192,11 @@ class PpdbConfig(pexConfig.Config):
                              doc="If non-zero then use cardinality hint",
                              default=0)
 
+    def validate(self):
+        if self.isolation_level == "READ_COMMITTED" and self.db_url.startswith("sqlite"):
+            raise ValueError("Attempting to run Ppdb with SQLITE and isolation level 'READ_COMMITTED.' "
+                             "Use 'READ_UNCOMMITTED' instead.")
+
 
 class Ppdb(object):
     """Interface to L1 database, hides all database access details.
@@ -475,7 +480,7 @@ class Ppdb(object):
             _LOG.info("Skip DiaSources fetching")
             return None
 
-        if not object_ids:
+        if len(object_ids) <= 0:
             _LOG.info("Skip DiaSources fetching - no Objects")
             # this should create a catalog, but the list of columns may be empty
             return None
@@ -838,7 +843,8 @@ class Ppdb(object):
                 if field not in column_map:
                     continue
                 value = rec[field]
-                if column_map[field].type == "DATETIME":
+                if column_map[field].type == "DATETIME" and \
+                   not np.isnan(value):
                     # convert seconds into datetime
                     value = datetime.utcfromtimestamp(value)
                 row.append(quoteValue(value))
@@ -946,7 +952,7 @@ class Ppdb(object):
                 if field not in column_map:
                     continue
                 value = rec[field]
-                if column_map[field].type == "DATETIME":
+                if column_map[field].type == "DATETIME" and not np.isnan(value):
                     # convert seconds into datetime
                     value = datetime.utcfromtimestamp(value)
                 elif isinstance(value, geom.Angle):
@@ -1001,7 +1007,7 @@ class Ppdb(object):
                     if isinstance(value, datetime):
                         # convert datetime to number of seconds
                         value = int((value - datetime.utcfromtimestamp(0)).total_seconds())
-                    elif col.getTypeString() == 'Angle':
+                    elif col.getTypeString() == 'Angle' and value is not None:
                         value = value * geom.degrees
                     if value is not None:
                         record.set(col, value)
