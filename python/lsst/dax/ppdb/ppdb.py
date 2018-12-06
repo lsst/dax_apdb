@@ -809,7 +809,7 @@ class Ppdb(object):
             elif isinstance(v, geom.Angle):
                 v = str(v.asDegrees())
             else:
-                if np.isnan(v):
+                if not np.isfinite(v):
                     v = "NULL"
                 else:
                     v = str(v)
@@ -968,7 +968,7 @@ class Ppdb(object):
                     value = datetime.utcfromtimestamp(value)
                 elif isinstance(value, geom.Angle):
                     value = str(value.asDegrees())
-                elif np.isnan(value):
+                elif not np.isfinite(value):
                     value = None
                 row["col{}".format(col)] = value
                 col += 1
