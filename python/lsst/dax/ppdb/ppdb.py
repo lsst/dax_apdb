@@ -140,6 +140,10 @@ class PpdbConfig(pexConfig.Config):
                             doc=("If False then disable SQLAlchemy connection pool. "
                                  "Do not use connection pool when forking."),
                             default=True)
+    connection_timeout = Field(dtype=float,
+                               doc="Maximum time to wait time for database lock to be released before "
+                                   "exiting. Defaults to sqlachemy defaults if not set.",
+                               default=None)
     sql_echo = Field(dtype=bool,
                      doc="If True then pass SQLAlchemy echo option.",
                      default=False)
@@ -234,10 +238,17 @@ class Ppdb(object):
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
         kw = dict(echo=self.config.sql_echo)
+        conn_args = dict()
         if not self.config.connection_pool:
             kw.update(poolclass=NullPool)
         if self.config.isolation_level is not None:
             kw.update(isolation_level=self.config.isolation_level)
+        if self.config.connection_timeout is not None:
+            if self.config.db_url.startswith("sqlite"):
+                conn_args.update(timeout=self.config.connection_timeout)
+            elif self.config.db_url.startswith("postgresql") or self.config.db_url.startswith("mysql"):
+                conn_args.update(connect_timeout=self.config.connection_timeout)
+        kw.update(connect_args=conn_args)
         self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
 
         self._schema = ppdbSchema.PpdbSchema(engine=self._engine,
