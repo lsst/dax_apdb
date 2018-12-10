@@ -246,7 +246,7 @@ class Ppdb(object):
         if self.config.connection_timeout is not None:
             if self.config.db_url.startswith("sqlite"):
                 conn_args.update(timeout=self.config.connection_timeout)
-            elif self.config.db_url.startswith("postgresql") or self.config.db_url.startswith("mysql"):
+            elif self.config.db_url.startswith(("postgresql", "mysql")):
                 conn_args.update(connect_timeout=self.config.connection_timeout)
         kw.update(connect_args=conn_args)
         self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
