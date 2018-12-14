@@ -125,19 +125,19 @@ columns:
   nullable: true
   description: Weighted mean point-source model magnitude for u filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: uPSFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of uPSFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: uPSFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of uPSFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: uPSFluxChi2
   type: FLOAT
   nullable: true
@@ -152,37 +152,37 @@ columns:
   nullable: true
   description: Weighted mean forced photometry flux for u filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: uFPFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of uFPFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: uFPFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of uFPFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: gPSFluxMean
   type: FLOAT
   nullable: true
   description: Weighted mean point-source model magnitude for g filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: gPSFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of gPSFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: gPSFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of gPSFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: gPSFluxChi2
   type: FLOAT
   nullable: true
@@ -197,37 +197,37 @@ columns:
   nullable: true
   description: Weighted mean forced photometry flux for g filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: gFPFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of gFPFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: gFPFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of gFPFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: rPSFluxMean
   type: FLOAT
   nullable: true
   description: Weighted mean point-source model magnitude for r filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: rPSFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of rPSFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: rPSFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of rPSFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: rPSFluxChi2
   type: FLOAT
   nullable: true
@@ -242,37 +242,37 @@ columns:
   nullable: true
   description: Weighted mean forced photometry flux for r filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: rFPFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of rFPFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: rFPFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of rFPFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: iPSFluxMean
   type: FLOAT
   nullable: true
   description: Weighted mean point-source model magnitude for i filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: iPSFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of iPSFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: iPSFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of iPSFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: iPSFluxChi2
   type: FLOAT
   nullable: true
@@ -287,37 +287,37 @@ columns:
   nullable: true
   description: Weighted mean forced photometry flux for i filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: iFPFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of iFPFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: iFPFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of iFPFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: zPSFluxMean
   type: FLOAT
   nullable: true
   description: Weighted mean point-source model magnitude for z filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: zPSFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of zPSFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: zPSFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of zPSFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: zPSFluxChi2
   type: FLOAT
   nullable: true
@@ -332,37 +332,37 @@ columns:
   nullable: true
   description: Weighted mean forced photometry flux for z filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: zFPFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of zFPFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: zFPFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of zFPFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: yPSFluxMean
   type: FLOAT
   nullable: true
   description: Weighted mean point-source model magnitude for y filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: yPSFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of yPSFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: yPSFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of yPSFlux.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: yPSFluxChi2
   type: FLOAT
   nullable: true
@@ -377,19 +377,19 @@ columns:
   nullable: true
   description: Weighted mean forced photometry flux for y filter.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: yFPFluxMeanErr
   type: FLOAT
   nullable: true
   description: Standard error of yFPFluxMean.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: yFPFluxSigma
   type: FLOAT
   nullable: true
   description: Standard deviation of the distribution of yFPFlux.
   ucd: stat.stdev
-  unit: nmgy
+  unit: nJy
 - name: uLcPeriodic
   type: BLOB
   nullable: true
@@ -1064,13 +1064,13 @@ columns:
   description: Calibrated aperture flux. Note that this actually measures the difference
     between the template and the visit image.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: apFluxErr
   type: FLOAT
   nullable: true
   description: Estimated uncertainty of apFlux.
   ucd: stat.error;phot.count
-  unit: nmgy
+  unit: nJy
 - name: snr
   type: FLOAT
   nullable: true
@@ -1083,12 +1083,12 @@ columns:
   description: Calibrated flux for Point Source model. Note this actually measures
     the flux difference between the template and the visit image.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: psFluxSigma
   type: FLOAT
   nullable: true
   description: Uncertainty of psFlux.
-  unit: nmgy
+  unit: nJy
 - name: psRa
   type: DOUBLE
   nullable: true
@@ -1151,12 +1151,12 @@ columns:
   nullable: true
   description: Calibrated flux for a trailed source model. Note this actually measures
     the flux difference between the template and the visit image.
-  unit: nmgy
+  unit: nJy
 - name: trailFluxSigma
   type: FLOAT
   nullable: true
   description: Uncertainty of trailFlux.
-  unit: nmgy
+  unit: nJy
 - name: trailRa
   type: DOUBLE
   nullable: true
@@ -1190,7 +1190,7 @@ columns:
   type: FLOAT
   nullable: true
   description: Uncertainty of trailLength.
-  unit: nmgy
+  unit: nJy
 - name: trailAngle
   type: FLOAT
   nullable: true
@@ -1201,7 +1201,7 @@ columns:
   type: FLOAT
   nullable: true
   description: Uncertainty of trailAngle.
-  unit: nmgy
+  unit: nJy
 - name: trailFlux_trailRa_Cov
   type: FLOAT
   nullable: true
@@ -1272,25 +1272,25 @@ columns:
   nullable: true
   description: Maximum likelihood value for the mean absolute flux of the two lobes
     for a dipole model.
-  unit: nmgy
+  unit: nJy
 - name: dipMeanFluxSigma
   type: FLOAT
   nullable: true
   description: Uncertainty of dipMeanFlux.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: dipFluxDiff
   type: FLOAT
   nullable: true
   description: Maximum likelihood value for the difference of absolute fluxes of the
     two lobes for a dipole model.
-  unit: nmgy
+  unit: nJy
 - name: dipFluxDiffSigma
   type: FLOAT
   nullable: true
   description: Uncertainty of dipFluxDiff.
   ucd: stat.error
-  unit: nmgy
+  unit: nJy
 - name: dipRa
   type: DOUBLE
   nullable: true
@@ -1436,98 +1436,98 @@ columns:
   description: Calibrated flux for Point Source model measured on the visit image
     centered at the centroid measured on the difference image (forced photometry flux).
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: totFluxErr
   type: FLOAT
   nullable: true
   description: Estimated uncertainty of totFlux.
   ucd: stat.error;phot.count
-  unit: nmgy
+  unit: nJy
 - name: diffFlux
   type: FLOAT
   nullable: true
   description: Calibrated flux for Point Source model centered on radec but measured
     on the difference of snaps comprising this visit.
-  unit: nmgy
+  unit: nJy
 - name: diffFluxErr
   type: FLOAT
   nullable: true
   description: Estimated uncertainty of diffFlux.
   ucd: stat.error;phot.count
-  unit: nmgy
+  unit: nJy
 - name: fpBkgd
   type: FLOAT
   nullable: true
   description: Estimated sky background at the position (centroid) of the object.
-  unit: nmgy/asec^2
+  unit: nJy/asec^2
 - name: fpBkgdErr
   type: FLOAT
   nullable: true
   description: Estimated uncertainty of fpBkgd.
-  unit: nmgy/asec^2
+  unit: nJy/asec^2
 - name: ixx
   type: FLOAT
   nullable: true
   description: Adaptive second moment of the source intensity.
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: ixxSigma
   type: FLOAT
   nullable: true
   description: Uncertainty of ixx.
   ucd: stat.error
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: iyy
   type: FLOAT
   nullable: true
   description: Adaptive second moment of the source intensity.
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: iyySigma
   type: FLOAT
   nullable: true
   description: Uncertainty of iyy.
   ucd: stat.error
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: ixy
   type: FLOAT
   nullable: true
   description: Adaptive second moment of the source intensity.
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: ixySigma
   type: FLOAT
   nullable: true
   description: Uncertainty of ixy.
   ucd: stat.error
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: ixx_iyy_Cov
   type: FLOAT
   nullable: true
   description: Covariance of ixx and iyy.
-  unit: nmgy^2*asec^4
+  unit: nJy^2*asec^4
 - name: ixx_ixy_Cov
   type: FLOAT
   nullable: true
   description: Covariance of ixx and ixy.
-  unit: nmgy^2*asec^4
+  unit: nJy^2*asec^4
 - name: iyy_ixy_Cov
   type: FLOAT
   nullable: true
   description: Covariance of iyy and ixy.
-  unit: nmgy^2*asec^4
+  unit: nJy^2*asec^4
 - name: ixxPSF
   type: FLOAT
   nullable: true
   description: Adaptive second moment for the PSF.
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: iyyPSF
   type: FLOAT
   nullable: true
   description: Adaptive second moment for the PSF.
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: ixyPSF
   type: FLOAT
   nullable: true
   description: Adaptive second moment for the PSF.
-  unit: nmgy*asec^2
+  unit: nJy*asec^2
 - name: extendedness
   type: FLOAT
   nullable: true
@@ -1594,13 +1594,13 @@ columns:
   nullable: true
   description: Point Source model flux.
   ucd: phot.count
-  unit: nmgy
+  unit: nJy
 - name: psFluxSigma
   type: FLOAT
   nullable: true
   description: Uncertainty of psFlux.
   ucd: stat.error;phot.count
-  unit: nmgy
+  unit: nJy
 - name: x
   type: FLOAT
   nullable: true
