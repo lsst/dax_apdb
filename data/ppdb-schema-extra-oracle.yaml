@@ -28,16 +28,16 @@ indices:
   - lastNonForcedSource
   - ra
   - decl
-  - raSigma
-  - declSigma
+  - raErr
+  - declErr
   - ra_decl_Cov
   - radecTai
   - pmRa
-  - pmRaSigma
+  - pmRaErr
   - pmDecl
-  - pmDeclSigma
+  - pmDeclErr
   - parallax
-  - parallaxSigma
+  - parallaxErr
   - pmRa_pmDecl_Cov
   - pmRa_parallax_Cov
   - pmDecl_parallax_Cov

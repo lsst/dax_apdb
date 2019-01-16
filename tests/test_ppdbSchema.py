@@ -240,9 +240,9 @@ class PpdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(afw_schema.getFieldCount(), 82)
 
         afw_schema, col_map = schema.getAfwSchema("DiaSource")
-        self.assertEqual(len(col_map), 109)
+        self.assertEqual(len(col_map), 108)
         self.assertIsInstance(afw_schema, afwTable.Schema)
-        self.assertEqual(afw_schema.getFieldCount(), 109)
+        self.assertEqual(afw_schema.getFieldCount(), 108)
 
         afw_schema, col_map = schema.getAfwSchema("DiaForcedSource")
         self.assertEqual(len(col_map), 7)

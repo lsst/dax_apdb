@@ -23,7 +23,7 @@ columns:
   description: RA-coordinate of the position of the object at time radecTai.
   ucd: pos.eq.ra
   unit: deg
-- name: raSigma
+- name: raErr
   type: FLOAT
   nullable: true
   description: Uncertainty of ra.
@@ -35,7 +35,7 @@ columns:
   description: Decl-coordinate of the position of the object at time radecTai.
   ucd: pos.eq.dec
   unit: deg
-- name: declSigma
+- name: declErr
   type: FLOAT
   nullable: true
   description: Uncertainty of decl.
@@ -57,7 +57,7 @@ columns:
   description: Proper motion (ra).
   ucd: pos.pm
   unit: mas/yr
-- name: pmRaSigma
+- name: pmRaErr
   type: FLOAT
   nullable: true
   description: Uncertainty of pmRa.
@@ -69,7 +69,7 @@ columns:
   description: Proper motion (decl).
   ucd: pos.pm
   unit: mas/yr
-- name: pmDeclSigma
+- name: pmDeclErr
   type: FLOAT
   nullable: true
   description: Uncertainty of pmDecl.
@@ -81,7 +81,7 @@ columns:
   description: Parallax.
   ucd: pos.parallax
   unit: mas
-- name: parallaxSigma
+- name: parallaxErr
   type: FLOAT
   nullable: true
   description: Uncertainty of parallax.
@@ -533,7 +533,7 @@ columns:
   type: DOUBLE
   nullable: true
   description: Osculating orbital elements at epoch (q, e, i, lan, aop, M, epoch).
-- name: qSigma
+- name: qErr
   type: DOUBLE
   nullable: true
   description: Uncertainty of q.
@@ -542,7 +542,7 @@ columns:
   type: DOUBLE
   nullable: true
   description: Osculating orbital elements at epoch (q, e, i, lan, aop, M, epoch).
-- name: eSigma
+- name: eErr
   type: DOUBLE
   nullable: true
   description: Uncertainty of e.
@@ -551,7 +551,7 @@ columns:
   type: DOUBLE
   nullable: true
   description: Osculating orbital elements at epoch (q, e, i, lan, aop, M, epoch).
-- name: iSigma
+- name: iErr
   type: DOUBLE
   nullable: true
   description: Uncertainty of i.
@@ -560,7 +560,7 @@ columns:
   type: DOUBLE
   nullable: true
   description: Osculating orbital elements at epoch (q, e, i, lan, aop, M, epoch).
-- name: lanSigma
+- name: lanErr
   type: DOUBLE
   nullable: true
   description: Uncertainty of lan.
@@ -569,7 +569,7 @@ columns:
   type: DOUBLE
   nullable: true
   description: Osculating orbital elements at epoch (q, e, i, lan, aop, M, epoch).
-- name: aopSigma
+- name: aopErr
   type: DOUBLE
   nullable: true
   description: Uncertainty of aop.
@@ -578,7 +578,7 @@ columns:
   type: DOUBLE
   nullable: true
   description: Osculating orbital elements at epoch (q, e, i, lan, aop, M, epoch).
-- name: MSigma
+- name: MErr
   type: DOUBLE
   nullable: true
   description: Uncertainty of M.
@@ -587,7 +587,7 @@ columns:
   type: DOUBLE
   nullable: true
   description: Osculating orbital elements at epoch (q, e, i, lan, aop, M, epoch).
-- name: epochSigma
+- name: epochErr
   type: DOUBLE
   nullable: true
   description: Uncertainty of epoch.
@@ -1004,7 +1004,7 @@ columns:
   description: RA-coordinate of the center of this diaSource.
   ucd: pos.eq.ra
   unit: deg
-- name: raSigma
+- name: raErr
   type: FLOAT
   nullable: true
   description: Uncertainty of ra.
@@ -1016,7 +1016,7 @@ columns:
   description: ' Decl-coordinate of the center of this diaSource.'
   ucd: pos.eq.dec
   unit: deg
-- name: declSigma
+- name: declErr
   type: FLOAT
   nullable: true
   description: Uncertainty of decl.
@@ -1034,7 +1034,7 @@ columns:
   description: x position computed by a centroiding algorithm.
   ucd: pos.cartesian.x
   unit: pixel
-- name: xSigma
+- name: xErr
   type: FLOAT
   nullable: true
   description: Uncertainty of x.
@@ -1046,7 +1046,7 @@ columns:
   description: y position computed by a centroiding algorithm.
   ucd: pos.cartesian.y
   unit: pixel
-- name: ySigma
+- name: yErr
   type: FLOAT
   nullable: true
   description: Uncertainty of y.
@@ -1084,7 +1084,7 @@ columns:
     the flux difference between the template and the visit image.
   ucd: phot.count
   unit: nJy
-- name: psFluxSigma
+- name: psFluxErr
   type: FLOAT
   nullable: true
   description: Uncertainty of psFlux.
@@ -1095,7 +1095,7 @@ columns:
   description: ' RA-coordinate of centroid for point source model.'
   ucd: pos.eq.ra
   unit: deg
-- name: psRaSigma
+- name: psRaErr
   type: FLOAT
   nullable: true
   description: Uncertainty of psRa.
@@ -1107,7 +1107,7 @@ columns:
   description: ' Decl-coordinate of centroid for point source model.'
   ucd: pos.eq.dec
   unit: deg
-- name: psDeclSigma
+- name: psDeclErr
   type: FLOAT
   nullable: true
   description: Uncertainty of psDecl.
@@ -1152,7 +1152,7 @@ columns:
   description: Calibrated flux for a trailed source model. Note this actually measures
     the flux difference between the template and the visit image.
   unit: nJy
-- name: trailFluxSigma
+- name: trailFluxErr
   type: FLOAT
   nullable: true
   description: Uncertainty of trailFlux.
@@ -1163,7 +1163,7 @@ columns:
   description: ' RA-coordinate of centroid for trailed source model.'
   ucd: pos.eq.ra
   unit: deg
-- name: trailRaSigma
+- name: trailRaErr
   type: FLOAT
   nullable: true
   description: Uncertainty of trailRa.
@@ -1175,7 +1175,7 @@ columns:
   description: ' Decl-coordinate of centroid for trailed source model.'
   ucd: pos.eq.dec
   unit: deg
-- name: trailDeclSigma
+- name: trailDeclErr
   type: FLOAT
   nullable: true
   description: Uncertainty of trailDecl.
@@ -1186,7 +1186,7 @@ columns:
   nullable: true
   description: Maximum likelihood fit of trail length.
   unit: arcsec
-- name: trailLengthSigma
+- name: trailLengthErr
   type: FLOAT
   nullable: true
   description: Uncertainty of trailLength.
@@ -1197,7 +1197,7 @@ columns:
   description: Maximum likelihood fit of the angle between the meridian through the
     centroid and the trail direction (bearing).
   unit: deg
-- name: trailAngleSigma
+- name: trailAngleErr
   type: FLOAT
   nullable: true
   description: Uncertainty of trailAngle.
@@ -1273,7 +1273,7 @@ columns:
   description: Maximum likelihood value for the mean absolute flux of the two lobes
     for a dipole model.
   unit: nJy
-- name: dipMeanFluxSigma
+- name: dipMeanFluxErr
   type: FLOAT
   nullable: true
   description: Uncertainty of dipMeanFlux.
@@ -1285,7 +1285,7 @@ columns:
   description: Maximum likelihood value for the difference of absolute fluxes of the
     two lobes for a dipole model.
   unit: nJy
-- name: dipFluxDiffSigma
+- name: dipFluxDiffErr
   type: FLOAT
   nullable: true
   description: Uncertainty of dipFluxDiff.
@@ -1297,7 +1297,7 @@ columns:
   description: ' RA-coordinate of centroid for dipole model.'
   ucd: pos.eq.ra
   unit: deg
-- name: dipRaSigma
+- name: dipRaErr
   type: FLOAT
   nullable: true
   description: Uncertainty of trailRa.
@@ -1309,7 +1309,7 @@ columns:
   description: ' Decl-coordinate of centroid for dipole model.'
   ucd: pos.eq.dec
   unit: deg
-- name: dipDeclSigma
+- name: dipDeclErr
   type: FLOAT
   nullable: true
   description: Uncertainty of dipDecl.
@@ -1321,7 +1321,7 @@ columns:
   description: Maximum likelihood value for the lobe separation in dipole model.
   ucd: pos.angDistance
   unit: arcsec
-- name: dipLengthSigma
+- name: dipLengthErr
   type: FLOAT
   nullable: true
   description: Uncertainty of dipLength.
@@ -1334,7 +1334,7 @@ columns:
     centroid and the dipole direction (bearing, from negative to positive lobe).
   ucd: pos.posAng
   unit: deg
-- name: dipAngleSigma
+- name: dipAngleErr
   type: FLOAT
   nullable: true
   description: Uncertainty of dipAngle.
@@ -1470,7 +1470,7 @@ columns:
   nullable: true
   description: Adaptive second moment of the source intensity.
   unit: nJy*asec^2
-- name: ixxSigma
+- name: ixxErr
   type: FLOAT
   nullable: true
   description: Uncertainty of ixx.
@@ -1481,7 +1481,7 @@ columns:
   nullable: true
   description: Adaptive second moment of the source intensity.
   unit: nJy*asec^2
-- name: iyySigma
+- name: iyyErr
   type: FLOAT
   nullable: true
   description: Uncertainty of iyy.
@@ -1492,7 +1492,7 @@ columns:
   nullable: true
   description: Adaptive second moment of the source intensity.
   unit: nJy*asec^2
-- name: ixySigma
+- name: ixyErr
   type: FLOAT
   nullable: true
   description: Uncertainty of ixy.
@@ -1595,7 +1595,7 @@ columns:
   description: Point Source model flux.
   ucd: phot.count
   unit: nJy
-- name: psFluxSigma
+- name: psFluxErr
   type: FLOAT
   nullable: true
   description: Uncertainty of psFlux.

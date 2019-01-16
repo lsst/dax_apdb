@@ -807,12 +807,16 @@ class Ppdb(object):
                 # we don't expect nasty stuff in strings
                 v = "'" + v + "'"
             elif isinstance(v, geom.Angle):
-                v = str(v.asDegrees())
-            else:
-                if not np.isfinite(v):
-                    v = "NULL"
-                else:
+                v = v.asDegrees()
+                if np.isfinite(v):
                     v = str(v)
+                else:
+                    v = "NULL"
+            else:
+                if np.isfinite(v):
+                    v = str(v)
+                else:
+                    v = "NULL"
             return v
 
         def quoteId(columnName):
@@ -855,7 +859,7 @@ class Ppdb(object):
                     continue
                 value = rec[field]
                 if column_map[field].type == "DATETIME" and \
-                   not np.isnan(value):
+                   np.isfinite(value):
                     # convert seconds into datetime
                     value = datetime.utcfromtimestamp(value)
                 row.append(quoteValue(value))
