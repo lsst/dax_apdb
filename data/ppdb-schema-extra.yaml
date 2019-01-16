@@ -38,7 +38,7 @@ columns:
   description: RA-coordinate of the position of the object at time radecTai.
   ucd: pos.eq.ra
   unit: deg
-- name: raSigma
+- name: raErr
   type: FLOAT
   nullable: false
   description: Uncertainty of ra.
@@ -50,7 +50,7 @@ columns:
   description: Decl-coordinate of the position of the object at time radecTai.
   ucd: pos.eq.dec
   unit: deg
-- name: declSigma
+- name: declErr
   type: FLOAT
   nullable: false
   description: Uncertainty of decl.
@@ -72,7 +72,7 @@ columns:
   description: Proper motion (ra).
   ucd: pos.pm
   unit: mas/yr
-- name: pmRaSigma
+- name: pmRaErr
   type: FLOAT
   nullable: false
   description: Uncertainty of pmRa.
@@ -84,7 +84,7 @@ columns:
   description: Proper motion (decl).
   ucd: pos.pm
   unit: mas/yr
-- name: pmDeclSigma
+- name: pmDeclErr
   type: FLOAT
   nullable: false
   description: Uncertainty of pmDecl.
@@ -96,7 +96,7 @@ columns:
   description: Parallax.
   ucd: pos.parallax
   unit: mas
-- name: parallaxSigma
+- name: parallaxErr
   type: FLOAT
   nullable: false
   description: Uncertainty of parallax.
