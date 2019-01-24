@@ -23,7 +23,7 @@
 ApVerify.
 """
 
-__all__ = ["countUnassociatedObjects"]
+__all__ = ["countUnassociatedObjects", "isVisitProcessed"]
 
 from sqlalchemy import (func, sql)
 
@@ -51,3 +51,29 @@ def countUnassociatedObjects(ppdb):
     count = ppdb._engine.scalar(stmt)
 
     return count
+
+
+def isVisitProcessed(ppdb, visitInfo):
+    """Test whether data from an image has been loaded into the database.
+
+    Parameters
+    ----------
+    ppdb : `lsst.dax.ppdb.Ppdb`
+        Ppdb object connected to an instantiated database.
+    visitInfo : `lsst.afw.image.VisitInfo`
+        The metadata for the image of interest.
+
+    Returns
+    -------
+    isProcessed : `bool`
+        `True` if the data are present, `False` otherwise.
+    """
+    id = visitInfo.getExposureId()
+    table = ppdb._schema.sources
+    idField = table.c.ccdVisitId
+
+    # Hopefully faster than SELECT DISTINCT
+    query = sql.select([idField]).select_from(table) \
+        .where(idField == id).limit(1)
+
+    return ppdb._engine.scalar(query) is not None

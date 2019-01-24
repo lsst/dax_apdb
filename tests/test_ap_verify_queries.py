@@ -19,13 +19,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import unittest
+import unittest.mock
 import lsst.utils.tests
 
 import lsst.afw.table as afwTable
+import lsst.afw.image as afwImage
 import lsst.geom as geom
 import lsst.daf.base as dafBase
-from lsst.dax.ppdb import Ppdb, PpdbConfig, countUnassociatedObjects
+from lsst.dax.ppdb import Ppdb, PpdbConfig, countUnassociatedObjects, isVisitProcessed
 
 
 def createTestObjects(n_objects, extra_fields):
@@ -93,6 +94,26 @@ class TestApVerifyQueries(unittest.TestCase):
 
         value = countUnassociatedObjects(self.ppdb)
         self.assertEqual(n_created - 1, value)
+
+    @staticmethod
+    def _makeVisitInfo(exposureId):
+        # Real VisitInfo hard to create
+        visitInfo = unittest.mock.NonCallableMock(
+            afwImage.VisitInfo,
+            **{"getExposureId.return_value": exposureId}
+        )
+        return visitInfo
+
+    def test_isExposureProcessed(self):
+        n_created = 5
+        sources = createTestObjects(n_created, {'ccdVisitId': 'I'})
+        for source in sources:
+            source['ccdVisitId'] = 2381
+
+        self.ppdb.storeDiaSources(sources)
+
+        self.assertTrue(isVisitProcessed(self.ppdb, TestApVerifyQueries._makeVisitInfo(2381)))
+        self.assertFalse(isVisitProcessed(self.ppdb, TestApVerifyQueries._makeVisitInfo(42)))
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
