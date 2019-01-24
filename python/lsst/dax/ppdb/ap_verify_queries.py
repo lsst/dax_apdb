@@ -31,10 +31,12 @@ from sqlalchemy import (func, sql)
 def countUnassociatedObjects(ppdb):
     """Return the number of DiaObjects that have only one DiaSource associated
     with them.
+
     Parameters
     ----------
     ppdb : `lsst.dax.ppdb.Ppdb`
         Ppdb object connected to an instantiated database.
+
     Returns
     -------
     count : `int`
