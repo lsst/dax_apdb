@@ -28,13 +28,15 @@ import lsst.daf.base as dafBase
 from lsst.dax.ppdb import Ppdb, PpdbConfig, countUnassociatedObjects
 
 
-def createTestObjects(n_objects):
+def createTestObjects(n_objects, extra_fields):
     """Create test objects to store in the Ppdb.
 
     Parameters
     ----------
     n_objects : `int`
         Number of objects to create.
+    extra_fields : `dict`
+        A `dict` whose keys are field names and whose values are their types.
 
     Returns
     -------
@@ -42,7 +44,8 @@ def createTestObjects(n_objects):
         Tests sources with filled values.
     """
     schema = afwTable.SourceTable.makeMinimalSchema()
-    schema.addField('nDiaSources', type="I")
+    for field, type in extra_fields.items():
+        schema.addField(field, type=type)
     sources = afwTable.SourceCatalog(schema)
 
     for src_idx in range(n_objects):
@@ -81,9 +84,10 @@ class TestApVerifyQueries(unittest.TestCase):
 
     def test_count_objects(self):
         n_created = 5
-        sources = createTestObjects(n_created)
+        sources = createTestObjects(n_created, {'nDiaSources': 'I'})
         sources[-1]['nDiaSources'] = 2
 
+        # nsecs must be an integer, not 1.4e18
         dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
         self.ppdb.storeDiaObjects(sources, dateTime.toPython())
 
