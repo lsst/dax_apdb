@@ -223,17 +223,17 @@ class Ppdb(object):
         self.config = config
 
         # logging.getLogger('sqlalchemy').setLevel(logging.INFO)
-        _LOG.info("PPDB Configuration:")
-        _LOG.info("    dia_object_index: %s", self.config.dia_object_index)
-        _LOG.info("    dia_object_nightly: %s", self.config.dia_object_nightly)
-        _LOG.info("    read_sources_months: %s", self.config.read_sources_months)
-        _LOG.info("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
-        _LOG.info("    dia_object_columns: %s", self.config.dia_object_columns)
-        _LOG.info("    object_last_replace: %s", self.config.object_last_replace)
-        _LOG.info("    schema_file: %s", self.config.schema_file)
-        _LOG.info("    extra_schema_file: %s", self.config.extra_schema_file)
-        _LOG.info("    column_map: %s", self.config.column_map)
-        _LOG.info("    schema prefix: %s", self.config.prefix)
+        _LOG.debug("PPDB Configuration:")
+        _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
+        _LOG.debug("    dia_object_nightly: %s", self.config.dia_object_nightly)
+        _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
+        _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
+        _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
+        _LOG.debug("    object_last_replace: %s", self.config.object_last_replace)
+        _LOG.debug("    schema_file: %s", self.config.schema_file)
+        _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
+        _LOG.debug("    column_map: %s", self.config.column_map)
+        _LOG.debug("    schema prefix: %s", self.config.prefix)
 
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
@@ -833,16 +833,15 @@ class Ppdb(object):
                                                extra_columns)
 
         schema = objects.getSchema()
-        afw_fields = [field.getName() for key, field in schema]
+        # use extra columns if specified
+        extra_fields = list((extra_columns or {}).keys())
+
+        afw_fields = [field.getName() for key, field in schema
+                      if field.getName() not in extra_fields]
 
         column_map = self._schema.getAfwColumns(schema_table_name)
-
         # list of columns (as in cat schema)
         fields = [column_map[field].name for field in afw_fields if field in column_map]
-
-        # use extra columns that are not in fields already
-        extra_fields = (extra_columns or {}).keys()
-        extra_fields = [field for field in extra_fields if field not in fields]
 
         if replace and conn.engine.name in ('mysql', 'sqlite'):
             query = 'REPLACE INTO '
@@ -920,7 +919,12 @@ class Ppdb(object):
             return columnName
 
         schema = objects.getSchema()
-        afw_fields = [field.getName() for key, field in schema]
+
+        # use extra columns that as overrides always.
+        extra_fields = list((extra_columns or {}).keys())
+
+        afw_fields = [field.getName() for key, field in schema
+                      if field.getName() not in extra_fields]
         # _LOG.info("afw_fields: %s", afw_fields)
 
         column_map = self._schema.getAfwColumns(schema_table_name)
@@ -930,10 +934,6 @@ class Ppdb(object):
         fields = [column_map[field].name for field in afw_fields
                   if field in column_map]
         # _LOG.info("fields: %s", fields)
-
-        # use extra columns that are not in fields already
-        extra_fields = (extra_columns or {}).keys()
-        extra_fields = [field for field in extra_fields if field not in fields]
 
         qfields = [quoteId(field) for field in fields + extra_fields]
 
