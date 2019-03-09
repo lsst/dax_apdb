@@ -135,7 +135,8 @@ class PpdbConfig(pexConfig.Config):
                                            "READ_UNCOMMITTED": "Read uncommitted",
                                            "REPEATABLE_READ": "Repeatable read",
                                            "SERIALIZABLE": "Serializable"},
-                                  default="READ_COMMITTED")
+                                  default="READ_COMMITTED",
+                                  optional=True)
     connection_pool = Field(dtype=bool,
                             doc=("If False then disable SQLAlchemy connection pool. "
                                  "Do not use connection pool when forking."),
@@ -143,7 +144,8 @@ class PpdbConfig(pexConfig.Config):
     connection_timeout = Field(dtype=float,
                                doc="Maximum time to wait time for database lock to be released before "
                                    "exiting. Defaults to sqlachemy defaults if not set.",
-                               default=None)
+                               default=None,
+                               optional=True)
     sql_echo = Field(dtype=bool,
                      doc="If True then pass SQLAlchemy echo option.",
                      default=False)
@@ -188,7 +190,8 @@ class PpdbConfig(pexConfig.Config):
                   default=False)
     diaobject_index_hint = Field(dtype=str,
                                  doc="Name of the index to use with Oracle index hint",
-                                 default=None)
+                                 default=None,
+                                 optional=True)
     dynamic_sampling_hint = Field(dtype=int,
                                   doc="If non-zero then use dynamic_sampling hint",
                                   default=0)
@@ -197,6 +200,7 @@ class PpdbConfig(pexConfig.Config):
                              default=0)
 
     def validate(self):
+        super().validate()
         if self.isolation_level == "READ_COMMITTED" and self.db_url.startswith("sqlite"):
             raise ValueError("Attempting to run Ppdb with SQLITE and isolation level 'READ_COMMITTED.' "
                              "Use 'READ_UNCOMMITTED' instead.")
