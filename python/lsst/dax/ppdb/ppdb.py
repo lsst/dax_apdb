@@ -880,7 +880,7 @@ class Ppdb(object):
             # This depends on that "replace" can only be true for DiaObjectLast table
             pks = ('pixelId', 'diaObjectId')
             query += " ON CONFLICT (\"{}\", \"{}\") DO UPDATE SET ".format(*pks)
-            fields = [column_map[field].name for field in afw_fields]
+            fields = [column_map[field].name for field in afw_fields if field in column_map]
             fields = ['"{0}" = EXCLUDED."{0}"'.format(field)
                       for field in fields if field not in pks]
             query += ', '.join(fields)
