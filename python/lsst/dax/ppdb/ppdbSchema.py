@@ -205,13 +205,15 @@ class PpdbSchema(object):
                      "F": "FLOAT",
                      "D": "DOUBLE",
                      "Angle": "DOUBLE",
-                     "String": "CHAR"}
+                     "String": "CHAR",
+                     "Flag": "BOOL"}
     _afw_type_map_reverse = {"INT": "I",
                              "BIGINT": "L",
                              "FLOAT": "F",
                              "DOUBLE": "D",
                              "DATETIME": "L",
-                             "CHAR": "String"}
+                             "CHAR": "String",
+                             "BOOL": "Flag"}
 
     def __init__(self, engine, dia_object_index, dia_object_nightly,
                  schema_file, extra_schema_file=None, column_map=None,
@@ -259,7 +261,8 @@ class PpdbSchema(object):
                               INT=sqlalchemy.types.Integer,
                               TINYINT=sqlalchemy.types.Integer,
                               BLOB=sqlalchemy.types.LargeBinary,
-                              CHAR=sqlalchemy.types.CHAR)
+                              CHAR=sqlalchemy.types.CHAR,
+                              BOOL=sqlalchemy.types.Boolean)
 
         # generate schema for all tables, must be called last
         self._makeTables()
