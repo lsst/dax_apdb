@@ -237,7 +237,7 @@ class PpdbSchema(object):
             _LOG.debug("Reading column map file %s", column_map)
             with open(column_map) as yaml_stream:
                 # maps cat column name to afw column name
-                self._column_map = yaml.load(yaml_stream)
+                self._column_map = yaml.load(yaml_stream, Loader=yaml.SafeLoader)
                 _LOG.debug("column map: %s", self._column_map)
         else:
             _LOG.debug("No column map file is given, initialize to empty")
@@ -496,14 +496,14 @@ class PpdbSchema(object):
 
         _LOG.debug("Reading schema file %s", schema_file)
         with open(schema_file) as yaml_stream:
-            tables = list(yaml.load_all(yaml_stream))
+            tables = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
             # index it by table name
         _LOG.debug("Read %d tables from schema", len(tables))
 
         if extra_schema_file:
             _LOG.debug("Reading extra schema file %s", extra_schema_file)
             with open(extra_schema_file) as yaml_stream:
-                extras = list(yaml.load_all(yaml_stream))
+                extras = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
                 # index it by table name
                 schemas_extra = {table['table']: table for table in extras}
         else:
