@@ -542,7 +542,7 @@ class Ppdb(object):
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def getDiaForcedSources(self, object_ids, dt, return_panads=False):
+    def getDiaForcedSources(self, object_ids, dt, return_pandas=False):
         """Returns catalog of DiaForcedSource instances matching given
         DiaObjects.
 
@@ -592,7 +592,7 @@ class Ppdb(object):
                     query += '"diaObjectId" IN (' + ids + ') '
 
                     # execute select
-                    if return_panads:
+                    if return_pandas:
                         df = pandas.read_sql_query(sql.text(query), conn)
                         if sources is None:
                             sources = df

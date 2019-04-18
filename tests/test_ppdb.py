@@ -23,6 +23,7 @@
 """
 
 import datetime
+import pandas
 import unittest
 
 import lsst.afw.table as afwTable
@@ -72,6 +73,103 @@ def _makeObjectCatalog(pixel_ranges):
     return catalog
 
 
+def _makeObjectCatalogPandas(pixel_ranges):
+    """make a catalog containing a bunch of DiaObjects inside pixel envelope.
+
+    The number of created records will be equal number of ranges (one object
+    per pixel range). Coordinates of the created objects are not usable.
+    """
+    # make small bunch of records, one entry per one pixel range,
+    # we do not care about coordinates here, in current implementation
+    # they are not used in any query
+    v3d = Vector3d(1., 1., -1.)
+    sp = SpherePoint(v3d)
+    data_list = []
+    for oid, (start, end) in enumerate(pixel_ranges):
+        tmp_dict = {"diaObjectId": oid,
+                    "pixelId": start,
+                    "ra": sp.getRa().asDegrees(),
+                    "decl": sp.getDec().asDegrees()}
+        data_list.append(tmp_dict)
+
+    df = pandas.DataFrame(data=data_list)
+    return df
+
+
+def _makeSourceCatalog(objects):
+    """make a catalog containing a bunch of DiaSources associated with the
+    input diaObjects.
+    """
+    # make some sources
+    schema = make_minimal_dia_source_schema()
+    catalog = afwTable.BaseCatalog(schema)
+    oids = []
+    for sid, obj in enumerate(objects):
+        record = catalog.addNew()
+        record.set("id", sid)
+        record.set("ccdVisitId", 1)
+        record.set("diaObjectId", obj['id'])
+        record.set("parent", 0)
+        record.set("coord_ra", obj['coord_ra'])
+        record.set("coord_dec", obj['coord_dec'])
+        record.set("flags", 0)
+        record.set("pixelId", obj['pixelId'])
+        oids.append(obj['id'])
+
+    return catalog, oids
+
+
+def _makeSourceCatalogPandas(objects):
+    """make a catalog containing a bunch of DiaSources associated with the
+    input diaObjects.
+    """
+    # make some sources
+    catalog = []
+    oids = []
+    for sid, (index, obj) in enumerate(objects.iterrows()):
+        catalog.append({"diaSourceId": sid,
+                        "ccdVisitId": 1,
+                        "diaObjectId": obj["diaObjectId"],
+                        "parentDiaSourceId": 0,
+                        "ra": obj["ra"],
+                        "decl": obj["decl"],
+                        "flags": 0,
+                        "pixelId": obj["pixelId"]})
+        oids.append(obj['diaObjectId'])
+    return pandas.DataFrame(data=catalog), oids
+
+
+def _makeForcedSourceCatalog(objects):
+
+    # make some sources
+    schema = afwTable.Schema()
+    schema.addField("diaObjectId", "L")
+    schema.addField("ccdVisitId", "L")
+    schema.addField("flags", "L")
+    catalog = afwTable.BaseCatalog(schema)
+    oids = []
+    for obj in objects:
+        record = catalog.addNew()
+        record.set("diaObjectId", obj['id'])
+        record.set("ccdVisitId", 1)
+        record.set("flags", 0)
+        oids.append(obj['id'])
+
+    return catalog, oids
+
+
+def _makeForcedSourceCatalogPandas(objects):
+    # make some sources
+    catalog = []
+    oids = []
+    for index, obj in objects.iterrows():
+        catalog.append({"diaObjectId": obj["diaObjectId"],
+                        "ccdVisitId": 1,
+                        "flags": 0})
+        oids.append(obj['diaObjectId'])
+    return pandas.DataFrame(data=catalog), oids
+
+
 class PpdbTestCase(unittest.TestCase):
     """A test case for Ppdb class
     """
@@ -107,6 +205,10 @@ class PpdbTestCase(unittest.TestCase):
         All get() methods should return empty results, only useful for
         checking that code is not broken.
         """
+        self._emptyGetsBaseline0months(test_pandas=False)
+        self._emptyGetsBaseline0months(test_pandas=True)
+
+    def _emptyGetsBaseline0months(self, test_pandas=False):
         # set read_sources_months to 0 so that Forced/Sources are None
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
@@ -118,20 +220,24 @@ class PpdbTestCase(unittest.TestCase):
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
+        if test_pandas:
+            data_type = pandas.DataFrame
+        else:
+            data_type = afwTable.SourceCatalog
+
         # get objects by region
-        res = ppdb.getDiaObjects(pixel_ranges)
-        self._assertCatalog(res, 0)
+        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=test_pandas)
+        self._assertCatalog(res, 0, type=data_type)
 
         # get sources by region
-        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
+        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=test_pandas)
         self.assertIs(res, None)
 
         # get sources by object ID, empty object list
-        res = ppdb.getDiaSources([], visit_time)
-        self.assertIs(res, None)
+        res = ppdb.getDiaSources([], visit_time, return_pandas=test_pandas)
 
         # get forced sources by object ID, empty object list
-        res = ppdb.getDiaForcedSources([], visit_time)
+        res = ppdb.getDiaForcedSources([], visit_time, return_pandas=test_pandas)
         self.assertIs(res, None)
 
     def test_emptyGetsBaseline(self):
@@ -140,6 +246,10 @@ class PpdbTestCase(unittest.TestCase):
         All get() methods should return empty results, only useful for
         checking that code is not broken.
         """
+        self._emptyGetsBaseline(test_pandas=False)
+        self._emptyGetsBaseline(test_pandas=True)
+
+    def _emptyGetsBaseline(self, test_pandas=False):
         # use non-zero months for Forced/Source fetching
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
@@ -151,29 +261,34 @@ class PpdbTestCase(unittest.TestCase):
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
+        if test_pandas:
+            data_type = pandas.DataFrame
+        else:
+            data_type = afwTable.SourceCatalog
+
         # get objects by region
-        res = ppdb.getDiaObjects(pixel_ranges)
-        self._assertCatalog(res, 0)
+        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=test_pandas)
+        self._assertCatalog(res, 0, type=data_type)
 
         # get sources by region
-        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
-        self._assertCatalog(res, 0)
+        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=test_pandas)
+        self._assertCatalog(res, 0, type=data_type)
 
         # get sources by object ID, empty object list, should return None
-        res = ppdb.getDiaSources([], visit_time)
+        res = ppdb.getDiaSources([], visit_time, return_pandas=test_pandas)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = ppdb.getDiaSources([1, 2, 3], visit_time)
-        self._assertCatalog(res, 0)
+        res = ppdb.getDiaSources([1, 2, 3], visit_time, return_pandas=test_pandas)
+        self._assertCatalog(res, 0, type=data_type)
 
         # get forced sources by object ID, empty object list
-        res = ppdb.getDiaForcedSources([], visit_time)
+        res = ppdb.getDiaForcedSources([], visit_time, return_pandas=test_pandas)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = ppdb.getDiaForcedSources([1, 2, 3], visit_time)
-        self._assertCatalog(res, 0)
+        res = ppdb.getDiaForcedSources([1, 2, 3], visit_time, return_pandas=test_pandas)
+        self._assertCatalog(res, 0, type=data_type)
 
     def test_emptyGetsObjectLast(self):
         """Test for getting DiaObjects from empty database using DiaObjectLast
@@ -182,6 +297,10 @@ class PpdbTestCase(unittest.TestCase):
         All get() methods should return empty results, only useful for
         checking that code is not broken.
         """
+        self._emptyGetsObjectLast(test_pandas=False)
+        self._emptyGetsObjectLast(test_pandas=True)
+
+    def _emptyGetsObjectLast(self, test_pandas=False):
         # don't care about sources.
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
@@ -191,12 +310,21 @@ class PpdbTestCase(unittest.TestCase):
 
         pixel_ranges = _makePixelRanges()
 
+        if test_pandas:
+            data_type = pandas.DataFrame
+        else:
+            data_type = afwTable.SourceCatalog
+
         # get objects by region
-        res = ppdb.getDiaObjects(pixel_ranges)
-        self._assertCatalog(res, 0)
+        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=test_pandas)
+        self._assertCatalog(res, 0, type=data_type)
 
     def test_storeObjectsBaseline(self):
         """Store and retrieve DiaObjects."""
+        self._storeObjectsBaseline(test_pandas=False)
+        self._storeObjectsBaseline(test_pandas=True)
+
+    def _storeObjectsBaseline(self, test_pandas=False):
         # don't care about sources.
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
@@ -208,18 +336,27 @@ class PpdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # make afw catalog with Objects
-        catalog = _makeObjectCatalog(pixel_ranges)
+        if test_pandas:
+            data_type = pandas.DataFrame
+            catalog = _makeObjectCatalogPandas(pixel_ranges)
+        else:
+            data_type = afwTable.SourceCatalog
+            catalog = _makeObjectCatalog(pixel_ranges)
 
         # store catalog
         ppdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = ppdb.getDiaObjects(pixel_ranges)
-        self._assertCatalog(res, len(catalog))
+        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=test_pandas)
+        self._assertCatalog(res, len(catalog), type=data_type)
 
     def test_storeObjectsLast(self):
         """Store and retrieve DiaObjects using DiaObjectLast table."""
         # don't care about sources.
+        self._storeObjectsLast(test_pandas=False)
+        self._storeObjectsLast(test_pandas=True)
+
+    def _storeObjectsLast(self, test_pandas=False):
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             dia_object_index="last_object_table",
@@ -231,18 +368,26 @@ class PpdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # make afw catalog with Objects
-        catalog = _makeObjectCatalog(pixel_ranges)
+        if test_pandas:
+            data_type = pandas.DataFrame
+            catalog = _makeObjectCatalogPandas(pixel_ranges)
+        else:
+            data_type = afwTable.SourceCatalog
+            catalog = _makeObjectCatalog(pixel_ranges)
 
         # store catalog
         ppdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = ppdb.getDiaObjects(pixel_ranges)
-        self._assertCatalog(res, len(catalog))
+        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=test_pandas)
+        self._assertCatalog(res, len(catalog), type=data_type)
 
     def test_storeSources(self):
         """Store and retrieve DiaSources."""
+        self._storeSources(test_pandas=False)
+        self._storeSources(test_pandas=True)
 
+    def _storeSources(self, test_pandas=False):
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
@@ -254,39 +399,35 @@ class PpdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalog(pixel_ranges)
+        if test_pandas:
+            data_type = pandas.DataFrame
+            objects = _makeObjectCatalogPandas(pixel_ranges)
+            catalog, oids = _makeSourceCatalogPandas(objects)
+        else:
+            data_type = afwTable.SourceCatalog
+            objects = _makeObjectCatalog(pixel_ranges)
+            catalog, oids = _makeSourceCatalog(objects)
+
+        # save the objects
         ppdb.storeDiaObjects(objects, visit_time)
 
-        # make some sources
-        schema = make_minimal_dia_source_schema()
-        catalog = afwTable.BaseCatalog(schema)
-        oids = []
-        for sid, obj in enumerate(objects):
-            record = catalog.addNew()
-            record.set("id", sid)
-            record.set("ccdVisitId", 1)
-            record.set("diaObjectId", obj['id'])
-            record.set("parent", 0)
-            record.set("coord_ra", obj['coord_ra'])
-            record.set("coord_dec", obj['coord_dec'])
-            record.set("flags", 0)
-            record.set("pixelId", obj['pixelId'])
-            oids.append(obj['id'])
-
-        # save them
+        # save the sources
         ppdb.storeDiaSources(catalog)
 
         # read it back and check sizes
-        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
-        self._assertCatalog(res, len(catalog))
+        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time, test_pandas)
+        self._assertCatalog(res, len(catalog), type=data_type)
 
         # read it back using different method
-        res = ppdb.getDiaSources(oids, visit_time)
-        self._assertCatalog(res, len(catalog))
+        res = ppdb.getDiaSources(oids, visit_time, test_pandas)
+        self._assertCatalog(res, len(catalog), type=data_type)
 
     def test_storeForcedSources(self):
         """Store and retrieve DiaForcedSources."""
+        self._storeForcedSources(test_pandas=False)
+        self._storeForcedSources(test_pandas=True)
 
+    def _storeForcedSources(self, test_pandas=False):
         config = PpdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
@@ -298,29 +439,24 @@ class PpdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalog(pixel_ranges)
-        ppdb.storeDiaObjects(objects, visit_time)
+        # have to store Objects first
+        if test_pandas:
+            data_type = pandas.DataFrame
+            objects = _makeObjectCatalogPandas(pixel_ranges)
+            catalog, oids = _makeForcedSourceCatalogPandas(objects)
+        else:
+            data_type = afwTable.SourceCatalog
+            objects = _makeObjectCatalog(pixel_ranges)
+            catalog, oids = _makeForcedSourceCatalog(objects)
 
-        # make some sources
-        schema = afwTable.Schema()
-        schema.addField("diaObjectId", "L")
-        schema.addField("ccdVisitId", "L")
-        schema.addField("flags", "L")
-        catalog = afwTable.BaseCatalog(schema)
-        oids = []
-        for obj in objects:
-            record = catalog.addNew()
-            record.set("diaObjectId", obj['id'])
-            record.set("ccdVisitId", 1)
-            record.set("flags", 0)
-            oids.append(obj['id'])
+        ppdb.storeDiaObjects(objects, visit_time)
 
         # save them
         ppdb.storeDiaForcedSources(catalog)
 
         # read it back and check sizes
-        res = ppdb.getDiaForcedSources(oids, visit_time)
-        self._assertCatalog(res, len(catalog))
+        res = ppdb.getDiaForcedSources(oids, visit_time, return_pandas=test_pandas)
+        self._assertCatalog(res, len(catalog), type=data_type)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
