@@ -624,7 +624,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        objs : `lsst.afw.table.BaseCatalog`
+        objs : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog with DiaObject records
         dt : `datetime.datetime`
             Time of the visit
@@ -651,7 +651,10 @@ class Ppdb(object):
                 # non-standard features (handled in _storeObjectsAfw)
                 table = self._schema.objects_last
                 do_replace = self.config.object_last_replace
-                if not do_replace:
+                # If the input data is of type Pandas, we drop the previous
+                # objects regardless of the do_replace setting due to how
+                # Pandas inserts objects.
+                if not do_replace or isinstance(objs, pandas.DataFrame):
                     query = 'DELETE FROM "' + table.name + '" '
                     query += 'WHERE "diaObjectId" IN (' + ids + ') '
 
@@ -665,7 +668,8 @@ class Ppdb(object):
 
                 extra_columns = dict(lastNonForcedSource=dt)
                 if isinstance(objs, pandas.DataFrame):
-                    objs['lastNonForcedSource'] = dt
+                    for col, data in extra_columns.items():
+                        objs[col] = data
                     objs.to_sql("DiaObjectLast", conn, if_exists='append',
                                 index=False, method="multi")
                 else:
@@ -700,8 +704,8 @@ class Ppdb(object):
             extra_columns = dict(lastNonForcedSource=dt, validityStart=dt,
                                  validityEnd=None)
             if isinstance(objs, pandas.DataFrame):
-                for key in extra_columns:
-                    objs[key] = extra_columns[key]
+                for col, data in extra_columns.items():
+                    objs[col] = data
                 objs.to_sql("DiaObject", conn, if_exists='append',
                             index=False, method="multi")
             else:
@@ -724,7 +728,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        sources : `lsst.afw.table.BaseCatalog`
+        sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaSource records
         """
 
@@ -753,7 +757,7 @@ class Ppdb(object):
 
         Parameters
         ----------
-        sources : `lsst.afw.table.BaseCatalog`
+        sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaForcedSource records
         """
 

@@ -49,7 +49,7 @@ def _makePixelRanges():
 
 
 def _makeObjectCatalog(pixel_ranges):
-    """make a catalog containing a bunch of DiaObjects inside pixel envelope.
+    """Make a catalog containing a bunch of DiaObjects inside pixel envelope.
 
     The number of created records will be equal number of ranges (one object
     per pixel range). Coordinates of the created objects are not usable.
@@ -74,14 +74,11 @@ def _makeObjectCatalog(pixel_ranges):
 
 
 def _makeObjectCatalogPandas(pixel_ranges):
-    """make a catalog containing a bunch of DiaObjects inside pixel envelope.
+    """Make a catalog containing a bunch of DiaObjects inside pixel envelope.
 
-    The number of created records will be equal number of ranges (one object
-    per pixel range). Coordinates of the created objects are not usable.
+    The number of created records will be equal to the number of ranges (one
+    object per pixel range). Coordinates of the created objects are not usable.
     """
-    # make small bunch of records, one entry per one pixel range,
-    # we do not care about coordinates here, in current implementation
-    # they are not used in any query
     v3d = Vector3d(1., 1., -1.)
     sp = SpherePoint(v3d)
     data_list = []
@@ -97,7 +94,7 @@ def _makeObjectCatalogPandas(pixel_ranges):
 
 
 def _makeSourceCatalog(objects):
-    """make a catalog containing a bunch of DiaSources associated with the
+    """Make a catalog containing a bunch of DiaSources associated with the
     input diaObjects.
     """
     # make some sources
@@ -108,19 +105,19 @@ def _makeSourceCatalog(objects):
         record = catalog.addNew()
         record.set("id", sid)
         record.set("ccdVisitId", 1)
-        record.set("diaObjectId", obj['id'])
+        record.set("diaObjectId", obj["id"])
         record.set("parent", 0)
-        record.set("coord_ra", obj['coord_ra'])
-        record.set("coord_dec", obj['coord_dec'])
+        record.set("coord_ra", obj["coord_ra"])
+        record.set("coord_dec", obj["coord_dec"])
         record.set("flags", 0)
-        record.set("pixelId", obj['pixelId'])
-        oids.append(obj['id'])
+        record.set("pixelId", obj["pixelId"])
+        oids.append(obj["id"])
 
     return catalog, oids
 
 
 def _makeSourceCatalogPandas(objects):
-    """make a catalog containing a bunch of DiaSources associated with the
+    """Make a catalog containing a bunch of DiaSources associated with the
     input diaObjects.
     """
     # make some sources
@@ -135,12 +132,14 @@ def _makeSourceCatalogPandas(objects):
                         "decl": obj["decl"],
                         "flags": 0,
                         "pixelId": obj["pixelId"]})
-        oids.append(obj['diaObjectId'])
+        oids.append(obj["diaObjectId"])
     return pandas.DataFrame(data=catalog), oids
 
 
 def _makeForcedSourceCatalog(objects):
-
+    """Make a catalog containing a bunch of DiaFourceSources associated with
+    the input diaObjects.
+    """
     # make some sources
     schema = afwTable.Schema()
     schema.addField("diaObjectId", "L")
@@ -150,15 +149,18 @@ def _makeForcedSourceCatalog(objects):
     oids = []
     for obj in objects:
         record = catalog.addNew()
-        record.set("diaObjectId", obj['id'])
+        record.set("diaObjectId", obj["id"])
         record.set("ccdVisitId", 1)
         record.set("flags", 0)
-        oids.append(obj['id'])
+        oids.append(obj["id"])
 
     return catalog, oids
 
 
 def _makeForcedSourceCatalogPandas(objects):
+    """Make a catalog containing a bunch of DiaFourceSources associated with
+    the input diaObjects.
+    """
     # make some sources
     catalog = []
     oids = []
@@ -166,7 +168,7 @@ def _makeForcedSourceCatalogPandas(objects):
         catalog.append({"diaObjectId": obj["diaObjectId"],
                         "ccdVisitId": 1,
                         "flags": 0})
-        oids.append(obj['diaObjectId'])
+        oids.append(obj["diaObjectId"])
     return pandas.DataFrame(data=catalog), oids
 
 
@@ -438,7 +440,6 @@ class PpdbTestCase(unittest.TestCase):
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
-        # have to store Objects first
         # have to store Objects first
         if test_pandas:
             data_type = pandas.DataFrame
