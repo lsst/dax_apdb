@@ -15,7 +15,7 @@ columns:
   default: null
 - name: nDiaSources
   type: INT
-  nullable: false
+  nullable: true
   description: Total number of associated DiaSources across all bands.
   default: null
 
