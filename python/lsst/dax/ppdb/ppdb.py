@@ -534,7 +534,7 @@ class Ppdb(object):
                         if sources is None:
                             sources = df
                         else:
-                            sources.append(df)
+                            sources = sources.append(df)
                     else:
                         res = conn.execute(sql.text(query))
                         sources = self._convertResult(res, "DiaSource", sources)
@@ -597,7 +597,7 @@ class Ppdb(object):
                         if sources is None:
                             sources = df
                         else:
-                            sources.append(df)
+                            sources = sources.append(df)
                     else:
                         res = conn.execute(sql.text(query))
                         sources = self._convertResult(res, "DiaForcedSource", sources)
@@ -668,10 +668,11 @@ class Ppdb(object):
 
                 extra_columns = dict(lastNonForcedSource=dt)
                 if isinstance(objs, pandas.DataFrame):
-                    for col, data in extra_columns.items():
-                        objs[col] = data
-                    objs.to_sql("DiaObjectLast", conn, if_exists='append',
-                                index=False, method="multi")
+                    with Timer("DiaObjectLast insert", self.config.timer):
+                        for col, data in extra_columns.items():
+                            objs[col] = data
+                        objs.to_sql("DiaObjectLast", conn, if_exists='append',
+                                    index=False)
                 else:
                     self._storeObjectsAfw(objs, conn, table, "DiaObjectLast",
                                           replace=do_replace,
@@ -704,10 +705,11 @@ class Ppdb(object):
             extra_columns = dict(lastNonForcedSource=dt, validityStart=dt,
                                  validityEnd=None)
             if isinstance(objs, pandas.DataFrame):
-                for col, data in extra_columns.items():
-                    objs[col] = data
-                objs.to_sql("DiaObject", conn, if_exists='append',
-                            index=False, method="multi")
+                with Timer("DiaObject insert", self.config.timer):
+                    for col, data in extra_columns.items():
+                        objs[col] = data
+                    objs.to_sql("DiaObject", conn, if_exists='append',
+                                index=False)
             else:
                 self._storeObjectsAfw(objs, conn, table, "DiaObject",
                                       extra_columns=extra_columns)
@@ -736,7 +738,9 @@ class Ppdb(object):
         with _ansi_session(self._engine) as conn:
 
             if isinstance(sources, pandas.DataFrame):
-                sources.to_sql("DiaSource", conn, if_exists='append', index=False, method="multi")
+                with Timer("DiaSource insert", self.config.timer):
+                    sources.to_sql("DiaSource", conn, if_exists='append',
+                                   index=False)
             else:
                 table = self._schema.sources
                 self._storeObjectsAfw(sources, conn, table, "DiaSource")
@@ -765,7 +769,9 @@ class Ppdb(object):
         with _ansi_session(self._engine) as conn:
 
             if isinstance(sources, pandas.DataFrame):
-                sources.to_sql("DiaForcedSource", conn, if_exists='append', method="multi", index=False)
+                with Timer("DiaForcedSource insert", self.config.timer):
+                    sources.to_sql("DiaForcedSource", conn, if_exists='append',
+                                   index=False)
             else:
                 table = self._schema.forcedSources
                 self._storeObjectsAfw(sources, conn, table, "DiaForcedSource")
