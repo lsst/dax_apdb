@@ -1,5 +1,6 @@
 
 from .ap_verify_queries import *
+from .ppdbBaseSchema import *
+from .ppdbSqlSchema import *
 from .ppdb import *
-from .ppdbSchema import *
 from .version import *
