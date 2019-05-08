@@ -25,10 +25,14 @@
 __all__ = ["PpdbCassandraConfig", "PpdbCassandra", "Visit"]
 
 from collections import namedtuple
+from datetime import datetime, timedelta
 import logging
+import numpy as np
 
 from cassandra.cluster import Cluster
 from cassandra.policies import RoundRobinPolicy
+import lsst.afw.table as afwTable
+import lsst.geom as geom
 from lsst.pex.config import Field, ListField
 from . import timer
 from .ppdbCassandraSchema import PpdbCassandraSchema, PpdbCassandraSchemaConfig
@@ -162,6 +166,16 @@ class PpdbCassandra:
                                            config=self.config,
                                            afw_schemas=afw_schemas)
 
+    def makeSchema(self, drop=False, **kw):
+        """Create or re-create all tables.
+
+        Parameters
+        ----------
+        drop : `bool`
+            If True then drop tables before creating new ones.
+        """
+        self._schema.makeSchema(drop=drop)
+
     def lastVisit(self):
         """Returns last visit information or `None` if visits table is empty.
 
@@ -173,7 +187,36 @@ class PpdbCassandra:
         visit : `Visit` or `None`
             Last stored visit info or `None` if there was nothing stored yet.
         """
-        pass
+        query = 'SELECT MAX("visitId"), MAX("visitTime") FROM "{}" WHERE "ppdb_part" = 0'.format(
+                self._schema.visitTableName)
+        rows = self._session.execute(query)
+        for row in rows:
+            _LOG.debug("lastVisit: row = %s", row)
+            visitId, visitTime = row
+            if visitId is None:
+                return None
+            break
+        else:
+            # no rows
+            return None
+
+        # TODO: This is super-inefficient
+        lastObjectId = 0
+        query = 'SELECT MAX("diaObjectId") FROM "{}"'.format(self._schema.objectTableName)
+        rows = self._session.execute(query)
+        for row in rows:
+            if row[0] is not None:
+                lastObjectId = row[0]
+
+        lastSourceId = 0
+        query = 'SELECT MAX("diaSourceId") FROM "{}"'.format(self._schema.sourceTableName)
+        rows = self._session.execute(query)
+        for row in rows:
+            if row[0] is not None:
+                lastSourceId = row[0]
+
+        return Visit(visitId=visitId, visitTime=visitTime,
+                     lastObjectId=lastObjectId, lastSourceId=lastSourceId)
 
     def saveVisit(self, visitId, visitTime):
         """Store visit information.
@@ -188,10 +231,12 @@ class PpdbCassandra:
         visitTime : `datetime.datetime`
             Visit timestamp.
         """
-
-        ins = self._schema.visits.insert().values(visitId=visitId,
-                                                  visitTime=visitTime)
-        self._engine.execute(ins)
+        # Cassandra timestamps is in milliseconds since UTC
+        timestamp = int((visitTime - datetime(1970, 1, 1)) / timedelta(seconds=1))*1000
+        query = 'INSERT INTO "{}" ("ppdb_part", "visitId", "visitTime") VALUES (0, {}, {})'.format(
+                self._schema.visitTableName, visitId, timestamp)
+        _LOG.debug("saveVisit: query = %s", query)
+        self._session.execute(query)
 
     def tableRowCount(self):
         """Returns dictionary with the table names and row counts.
@@ -204,7 +249,7 @@ class PpdbCassandra:
         row_counts : `dict`
             Dict where key is a table name and value is a row count.
         """
-        pass
+        return {}
 
     def getDiaObjects(self, pixel_ranges, return_pandas=False):
         """Returns catalog of DiaObject instances from given region.
@@ -235,7 +280,8 @@ class PpdbCassandra:
         catalog : `lsst.afw.table.SourceCatalog` or `pandas.DataFrame`
             Catalog containing DiaObject records.
         """
-        pass
+        objects = self._convertResult([], "DiaObject")
+        return objects
 
     def getDiaSourcesInRegion(self, pixel_ranges, dt, return_pandas=False):
         """Returns catalog of DiaSource instances from given region.
@@ -267,7 +313,8 @@ class PpdbCassandra:
             Catalog containing DiaSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0.
         """
-        pass
+        sources = self._convertResult([], "DiaSource")
+        return sources
 
     def getDiaSources(self, object_ids, dt, return_pandas=False):
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
@@ -295,7 +342,8 @@ class PpdbCassandra:
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
         """
-        pass
+        sources = self._convertResult([], "DiaSource")
+        return sources
 
     def getDiaForcedSources(self, object_ids, dt, return_pandas=False):
         """Returns catalog of DiaForcedSource instances matching given
@@ -323,7 +371,8 @@ class PpdbCassandra:
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
         """
-        pass
+        sources = self._convertResult([], "DiaForcedSource")
+        return sources
 
     def storeDiaObjects(self, objs, dt):
         """Store catalog of DiaObjects from current visit.
@@ -349,7 +398,11 @@ class PpdbCassandra:
         dt : `datetime.datetime`
             Time of the visit
         """
-        pass
+        extra_columns = dict(lastNonForcedSource=dt)
+        self._storeObjectsAfw(objs, "DiaObjectLast", extra_columns=extra_columns)
+
+        extra_columns = dict(lastNonForcedSource=dt, validityStart=dt, validityEnd=None)
+        self._storeObjectsAfw(objs, "DiaObject", extra_columns=extra_columns)
 
     def storeDiaSources(self, sources):
         """Store catalog of DIASources from current visit.
@@ -401,12 +454,168 @@ class PpdbCassandra:
         """
         pass
 
-    def makeSchema(self, drop=False, **kw):
-        """Create or re-create all tables.
+    def _convertResult(self, res, table_name, catalog=None):
+        """Convert result set into output catalog.
 
         Parameters
         ----------
-        drop : `bool`
-            If True then drop tables before creating new ones.
+        res : `cassandra.cluster.ResultSet`
+            Cassandra result set returned by query.
+        table_name : `str`
+            Name of the table.
+        catalog : `lsst.afw.table.BaseCatalog`
+            If not None then extend existing catalog
+
+        Returns
+        -------
+        catalog : `lsst.afw.table.SourceCatalog`
+             If ``catalog`` is None then new instance is returned, otherwise
+             ``catalog`` is updated and returned.
         """
-        self._schema.makeSchema(drop=drop)
+        # make catalog schema
+        schema, col_map = self._schema.getAfwSchema(table_name)
+        if catalog is None:
+            # _LOG.debug("_convertResult: schema: %s", schema)
+            # _LOG.debug("_convertResult: col_map: %s", col_map)
+            catalog = afwTable.SourceCatalog(schema)
+
+        # fill catalog
+        for row in res:
+            record = catalog.addNew()
+            for col, value in row.items():
+                # some columns may exist in database but not included in afw schema
+                col = col_map.get(col)
+                if col is not None:
+                    if isinstance(value, datetime):
+                        # convert datetime to number of seconds
+                        value = int((value - datetime.utcfromtimestamp(0)).total_seconds())
+                    elif col.getTypeString() == 'Angle' and value is not None:
+                        value = value * geom.degrees
+                    if value is not None:
+                        record.set(col, value)
+
+        return catalog
+
+    def _storeObjectsAfw(self, objects, table_name, extra_columns=None):
+        """Generic store method.
+
+        Takes catalog of records and stores a bunch of objects in a table.
+
+        Parameters
+        ----------
+        objects : `lsst.afw.table.BaseCatalog`
+            Catalog containing object records
+        table_name : `str`
+            Name of the table as defined in PPDB schema.
+        extra_columns : `dict`, optional
+            Mapping (column_name, column_value) which gives column values to add
+            to every row, only if column is missing in catalog records.
+        """
+
+        def quoteValue(v):
+            """Quote and escape values"""
+            if v is None:
+                v = "NULL"
+            elif isinstance(v, datetime):
+                v = "'" + str(v) + "'"
+            elif isinstance(v, str):
+                # we don't expect nasty stuff in strings
+                v = "'" + v + "'"
+            elif isinstance(v, geom.Angle):
+                v = v.asDegrees()
+                if np.isfinite(v):
+                    v = str(v)
+                else:
+                    v = "NULL"
+            else:
+                if np.isfinite(v):
+                    v = str(v)
+                else:
+                    v = "NULL"
+            return v
+
+        def quoteId(columnName):
+            """Smart quoting for column names.
+            Lower-case names are not quoted.
+            """
+            if not columnName.islower():
+                columnName = '"' + columnName + '"'
+            return columnName
+
+        schema = objects.getSchema()
+        # use extra columns if specified
+        extra_fields = list((extra_columns or {}).keys())
+
+        afw_fields = [field.getName() for key, field in schema
+                      if field.getName() not in extra_fields]
+
+        column_map = self._schema.getAfwColumns(table_name)
+        # list of columns (as in cat schema)
+        fields = [column_map[field].name for field in afw_fields if field in column_map]
+        fields += extra_fields
+
+        # some partioning columns may not be in afwtable, they need to be added explicitly
+        part_columns = self._schema.partitionColumns(table_name)
+        part_columns = [column for column in part_columns if column not in fields]
+        fields += part_columns
+
+        qfields = ','.join([quoteId(field) for field in fields])
+
+        queries = ["BEGIN BATCH"]
+        for rec in objects:
+            values = []
+            for field in afw_fields:
+                if field not in column_map:
+                    continue
+                value = rec[field]
+                if column_map[field].type == "DATETIME" and np.isfinite(value):
+                    # CAssandra datetime is in millisconds
+                    value = int(value * 1000)
+                values.append(quoteValue(value))
+            for field in extra_fields:
+                values.append(quoteValue(extra_columns[field]))
+            if part_columns:
+                part_values = self._partitionValues(rec, table_name, part_columns)
+                values += [quoteValue(val) for val in part_values]
+            values = ','.join(values)
+            query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(self._schema.tableName(table_name),
+                                                                qfields, values)
+            queries.append(query)
+
+        queries.append("APPLY BATCH;")
+        query = '\n'.join(queries)
+
+        # _LOG.debug("query: %s", query)
+        _LOG.info("%s: will store %d records", self._schema.tableName(table_name), len(objects))
+        with Timer(table_name + ' insert', self.config.timer):
+            self._session.execute(query)
+
+    def _partitionValues(self, rec, table_name, part_columns):
+        """Return values of partition columns for a record.
+
+        Parameters
+        ----------
+        rec : `afw.table.Record`
+            Single record from a catalog.
+        table_name : `str`
+            Table name as defined in PPDB schema.
+        part_columns : `list` of `str`
+            Names of the columns for which to return values.
+
+        Returns
+        -------
+        values : `list`
+            List of column values.
+        """
+
+        if table_name in ("DiaObject", "DiaObjectLast"):
+            if part_columns != ["ppdb_part"]:
+                raise ValueError("unexpected partitionig columns for {}: {}".format(
+                    table_name, part_columns))
+            # TODO: expecting level=20 for HTM, need to check
+            htm20 = rec["pixelId"]
+            htm8 = htm20 >> 24
+            part = htm8 & 0xf
+            return [part]
+        else:
+            raise ValueError("unexpected table {}".format(table_name))

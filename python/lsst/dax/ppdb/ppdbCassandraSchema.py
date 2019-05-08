@@ -60,6 +60,12 @@ class PpdbCassandraSchema(PpdbBaseSchema):
         self._session = session
         self._prefix = config.prefix
 
+        self.visitTableName = self._prefix + "PpdbProtoVisits"
+        self.objectTableName = self._prefix + "DiaObject"
+        self.lastObjectTableName = self._prefix + "DiaLastObject"
+        self.sourceTableName = self._prefix + "DiaSource"
+        self.forcedSourceTableName = self._prefix + "DiaForcedSource"
+
         # map cat column types to alchemy
         self._type_map = dict(DOUBLE="DOUBLE",
                               FLOAT="FLOAT",
@@ -72,6 +78,31 @@ class PpdbCassandraSchema(PpdbBaseSchema):
                               CHAR="TEXT",
                               BOOL="BOOLEAN")
 
+    def tableName(self, table_name):
+        """Return Cassandra table name for PPDB table.
+        """
+        return self._prefix + table_name
+
+    def partitionColumns(self, table_name):
+        """Return a list of columns used for table partitioning.
+
+        Parameters
+        ----------
+        table_name : `str`
+            Table name in PPDB schema
+
+        Returns
+        -------
+        columns : `list` of `str`
+            Names of columns for used for partitioning.
+        """
+        table_schema = self.tableSchemas[table_name]
+        for index in table_schema.indices:
+            if index.type == 'PARTITION':
+                # there could be just one partitoning index (possibly with few columns)
+                return index.columns
+        return []
+
     def makeSchema(self, drop=False):
         """Create or re-create all tables.
 
@@ -81,7 +112,10 @@ class PpdbCassandraSchema(PpdbBaseSchema):
             If True then drop tables before creating new ones.
         """
 
-        for table in self.tableSchemas:
+        # add internal visits table to the list of tables
+        tables = list(self.tableSchemas) + [self.visitTableName]
+
+        for table in tables:
             _LOG.debug("Making table %s", table)
 
             if drop:
@@ -91,7 +125,7 @@ class PpdbCassandraSchema(PpdbBaseSchema):
             query = "CREATE TABLE "
             if not drop:
                 query += "IF NOT EXISTS "
-            query += '"{}{}" ('.format(self._prefix, table)
+            query += '"{}" ('.format(self.tableName(table))
             query += ", ".join(self._tableColumns(table))
             query += ")"
             _LOG.debug("query: %s", query)
@@ -110,6 +144,14 @@ class PpdbCassandraSchema(PpdbBaseSchema):
         column_defs : `list`
             List of strings in the format "column_name type".
         """
+
+        if table_name == "PpdbProtoVisits":
+            column_defs = ['"ppdb_part" INT',
+                           '"visitId" INT',
+                           '"visitTime" TIMESTAMP',
+                           'PRIMARY KEY ("ppdb_part", "visitId")']
+            return column_defs
+
         table_schema = self.tableSchemas[table_name]
 
         # must have partition columns and clustering columns
@@ -127,13 +169,13 @@ class PpdbCassandraSchema(PpdbBaseSchema):
         if not clust_columns:
             raise ValueError("Table {} configuration is missing primary index".format(table_name))
 
-        # convert all column dicts into alchemy Columns
+        # all columns
         column_defs = []
         for column in table_schema.columns:
             ctype = self._type_map[column.type]
             column_defs.append('"{}" {}'.format(column.name, ctype))
 
-        # quote them all
+        # primary key definition
         part_columns = ['"{}"'.format(col) for col in part_columns]
         clust_columns = ['"{}"'.format(col) for col in clust_columns]
         if len(part_columns) > 1:
