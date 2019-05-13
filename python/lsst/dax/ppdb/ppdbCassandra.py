@@ -249,6 +249,7 @@ class PpdbCassandra:
         row_counts : `dict`
             Dict where key is a table name and value is a row count.
         """
+        # We probably do not want it ever implemented for Cassandra
         return {}
 
     def getDiaObjects(self, pixel_ranges, return_pandas=False):
@@ -423,7 +424,7 @@ class PpdbCassandra:
         sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaSource records
         """
-        pass
+        self._storeObjectsAfw(sources, "DiaSource")
 
     def storeDiaForcedSources(self, sources):
         """Store a set of DIAForcedSources from current visit.
@@ -444,7 +445,7 @@ class PpdbCassandra:
         sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaForcedSource records
         """
-        pass
+        self._storeObjectsAfw(sources, "DiaForcedSource")
 
     def dailyJob(self):
         """Implement daily activities like cleanup/vacuum.
@@ -561,29 +562,31 @@ class PpdbCassandra:
 
         qfields = ','.join([quoteId(field) for field in fields])
 
-        queries = ["BEGIN BATCH"]
-        for rec in objects:
-            values = []
-            for field in afw_fields:
-                if field not in column_map:
-                    continue
-                value = rec[field]
-                if column_map[field].type == "DATETIME" and np.isfinite(value):
-                    # CAssandra datetime is in millisconds
-                    value = int(value * 1000)
-                values.append(quoteValue(value))
-            for field in extra_fields:
-                values.append(quoteValue(extra_columns[field]))
-            if part_columns:
-                part_values = self._partitionValues(rec, table_name, part_columns)
-                values += [quoteValue(val) for val in part_values]
-            values = ','.join(values)
-            query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(self._schema.tableName(table_name),
-                                                                qfields, values)
-            queries.append(query)
+        with Timer(table_name + ' query build', self.config.timer):
+            queries = ["BEGIN BATCH"]
+            for rec in objects:
+                values = []
+                for field in afw_fields:
+                    if field not in column_map:
+                        continue
+                    value = rec[field]
+                    if column_map[field].type == "DATETIME" and np.isfinite(value):
+                        # CAssandra datetime is in millisconds
+                        value = int(value * 1000)
+                    values.append(quoteValue(value))
+                for field in extra_fields:
+                    values.append(quoteValue(extra_columns[field]))
+                if part_columns:
+                    part_values = self._partitionValues(rec, table_name, part_columns)
+                    values += [quoteValue(val) for val in part_values]
+                values = ','.join(values)
+                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(self._schema.tableName(table_name),
+                                                                    qfields, values)
+                queries.append(query)
 
-        queries.append("APPLY BATCH;")
-        query = '\n'.join(queries)
+            queries.append("APPLY BATCH;")
+            query = '\n'.join(queries)
+            _LOG.info("%s: query size: %d", self._schema.tableName(table_name), len(query))
 
         # _LOG.debug("query: %s", query)
         _LOG.info("%s: will store %d records", self._schema.tableName(table_name), len(objects))
@@ -608,7 +611,7 @@ class PpdbCassandra:
             List of column values.
         """
 
-        if table_name in ("DiaObject", "DiaObjectLast"):
+        if table_name in ("DiaObject", "DiaObjectLast", "DiaSource", "DiaForcedSource"):
             if part_columns != ["ppdb_part"]:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
                     table_name, part_columns))
