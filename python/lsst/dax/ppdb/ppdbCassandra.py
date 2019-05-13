@@ -31,6 +31,7 @@ import numpy as np
 
 from cassandra.cluster import Cluster
 from cassandra.policies import RoundRobinPolicy
+import cassandra.query
 import lsst.afw.table as afwTable
 import lsst.geom as geom
 from lsst.pex.config import Field, ListField
@@ -39,6 +40,18 @@ from .ppdbCassandraSchema import PpdbCassandraSchema, PpdbCassandraSchemaConfig
 
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
+
+
+def _pixelId2partition(pixelId):
+    """Converts pixelID (HTM index) into partition number.
+
+    This assumes that pixelId indexing is HTM level=20. Partitoning is done
+    with HTM level=8.
+    """
+    htm20 = pixelId
+    htm8 = htm20 >> 24
+    part = htm8 & 0xf
+    return part
 
 
 class Timer(object):
@@ -161,6 +174,7 @@ class PpdbCassandra:
         self._cluster = Cluster(contact_points=self.config.contact_points,
                                 load_balancing_policy=RoundRobinPolicy())
         self._session = self._cluster.connect(keyspace=config.keyspace)
+        self._session.row_factory = cassandra.query.named_tuple_factory
 
         self._schema = PpdbCassandraSchema(session=self._session,
                                            config=self.config,
@@ -203,14 +217,14 @@ class PpdbCassandra:
         # TODO: This is super-inefficient
         lastObjectId = 0
         query = 'SELECT MAX("diaObjectId") FROM "{}"'.format(self._schema.objectTableName)
-        rows = self._session.execute(query)
+        rows = self._session.execute(query, timeout=300)
         for row in rows:
             if row[0] is not None:
                 lastObjectId = row[0]
 
         lastSourceId = 0
         query = 'SELECT MAX("diaSourceId") FROM "{}"'.format(self._schema.sourceTableName)
-        rows = self._session.execute(query)
+        rows = self._session.execute(query, timeout=300)
         for row in rows:
             if row[0] is not None:
                 lastSourceId = row[0]
@@ -281,7 +295,28 @@ class PpdbCassandra:
         catalog : `lsst.afw.table.SourceCatalog` or `pandas.DataFrame`
             Catalog containing DiaObject records.
         """
-        objects = self._convertResult([], "DiaObject")
+        # Need a separate query for each partition and pixelId range
+        queries = []
+        for lower, upper in pixel_ranges:
+            # need to be careful with inclusive/exclusive ranges
+            part_low = _pixelId2partition(lower)
+            part_high = _pixelId2partition(upper-1)
+            for part in range(part_low, part_high+1):
+                if lower + 1 == upper:
+                    expr = '"ppdb_part" = {} AND "pixelId" = {}'.format(part, lower)
+                else:
+                    expr = '"ppdb_part" = {} AND "pixelId" >= {} AND "pixelId" < {}'
+                    expr = expr.format(part, lower, upper)
+                query = 'SELECT * from "DiaObjectLast" WHERE ' + expr
+                queries.append(query)
+        _LOG.debug("getDiaObjects: #queries: %s", len(queries))
+
+        objects = None
+        with Timer('DiaObject select', self.config.timer):
+            futures = [self._session.execute_async(query) for query in queries]
+            for future in futures:
+                rows = future.result()
+                objects = self._convertResult(rows, "DiaObject", catalog=objects)
         return objects
 
     def getDiaSourcesInRegion(self, pixel_ranges, dt, return_pandas=False):
@@ -483,7 +518,7 @@ class PpdbCassandra:
         # fill catalog
         for row in res:
             record = catalog.addNew()
-            for col, value in row.items():
+            for col, value in zip(row._fields, row):
                 # some columns may exist in database but not included in afw schema
                 col = col_map.get(col)
                 if col is not None:
@@ -616,9 +651,7 @@ class PpdbCassandra:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
                     table_name, part_columns))
             # TODO: expecting level=20 for HTM, need to check
-            htm20 = rec["pixelId"]
-            htm8 = htm20 >> 24
-            part = htm8 & 0xf
+            part = _pixelId2partition(rec["pixelId"])
             return [part]
         else:
             raise ValueError("unexpected table {}".format(table_name))
