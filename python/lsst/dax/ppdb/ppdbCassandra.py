@@ -319,13 +319,8 @@ class PpdbCassandra:
                 objects = self._convertResult(rows, "DiaObject", catalog=objects)
         return objects
 
-    def getDiaSourcesInRegion(self, pixel_ranges, dt, return_pandas=False):
-        """Returns catalog of DiaSource instances from given region.
-
-        Sources are searched based on pixelization index and region is
-        determined by the set of indices. There is no assumption on a
-        particular type of index, client is responsible for consistency
-        when calculating pixelization indices.
+    def getDiaSources(self, pixel_ranges, object_ids, dt, return_pandas=False):
+        """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of PPDB table. Re-mapping of the column names is done for
@@ -337,31 +332,6 @@ class PpdbCassandra:
         pixel_ranges : `list` of `tuple`
             Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
             This defines set of pixel indices to be included in result.
-        dt : `datetime.datetime`
-            Time of the current visit
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
-
-        Returns
-        -------
-        catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
-            Catalog containing DiaSource records. `None` is returned if
-            ``read_sources_months`` configuration parameter is set to 0.
-        """
-        sources = self._convertResult([], "DiaSource")
-        return sources
-
-    def getDiaSources(self, object_ids, dt, return_pandas=False):
-        """Returns catalog of DiaSource instances given set of DiaObject IDs.
-
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of PPDB table. Re-mapping of the column names is done for
-        some columns (based on column map passed to constructor) but types or
-        units are not changed.
-
-        Parameters
-        ----------
         object_ids :
             Collection of DiaObject IDs
         dt : `datetime.datetime`
@@ -370,7 +340,6 @@ class PpdbCassandra:
             Return a `pandas.DataFrame` instead of
             `lsst.afw.table.SourceCatalog`.
 
-
         Returns
         -------
         catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
@@ -378,8 +347,41 @@ class PpdbCassandra:
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
         """
-        sources = self._convertResult([], "DiaSource")
-        return sources
+        # Need a separate query for each partition and pixelId range
+        queries = []
+        for lower, upper in pixel_ranges:
+            # need to be careful with inclusive/exclusive ranges
+            part_low = _pixelId2partition(lower)
+            part_high = _pixelId2partition(upper-1)
+            for part in range(part_low, part_high+1):
+                if lower + 1 == upper:
+                    expr = '"ppdb_part" = {} AND "pixelId" = {}'.format(part, lower)
+                else:
+                    expr = '"ppdb_part" = {} AND "pixelId" >= {} AND "pixelId" < {}'
+                    expr = expr.format(part, lower, upper)
+                query = 'SELECT * from "DiaSource" WHERE ' + expr
+                if self.config.read_sources_months > 0:
+                    start_time = dt - timedelta(days=self.config.read_sources_months*30)
+                    timestamp = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
+                    query += ' AND "midPointTai" >= {} ALLOW FILTERING'.format(timestamp)
+                queries.append(query)
+        _LOG.debug("getDiaObjects: #queries: %s", len(queries))
+
+        def filterObjectIds(rows):
+            """Generator which filters returned rows based on diaObjectId
+            """
+            object_ids = set(object_ids)
+            for row in rows:
+                if row.diaObjectId in object_ids:
+                    yield row
+
+        catalog = None
+        with Timer('DiaSource select', self.config.timer):
+            futures = [self._session.execute_async(query) for query in queries]
+            for future in futures:
+                rows = filterObjectIds(future.result())
+                catalog = self._convertResult(rows, "DiaSource", catalog=objects)
+        return catalog
 
     def getDiaForcedSources(self, object_ids, dt, return_pandas=False):
         """Returns catalog of DiaForcedSource instances matching given
@@ -495,7 +497,7 @@ class PpdbCassandra:
 
         Parameters
         ----------
-        res : `cassandra.cluster.ResultSet`
+        res : iterator for `namedtuple`
             Cassandra result set returned by query.
         table_name : `str`
             Name of the table.
