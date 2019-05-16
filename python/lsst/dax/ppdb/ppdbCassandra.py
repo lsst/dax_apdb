@@ -54,6 +54,25 @@ def _pixelId2partition(pixelId):
     return part
 
 
+def _filterObjectIds(rows, object_ids):
+    """Generator which filters rows returned from query based on diaObjectId.
+
+    Parameters
+    ----------
+    rows : iterable of `namedtuple`
+        Rows returned from database query.
+
+    Yields
+    ------
+    row : `namedtuple`
+        Filtered rows.
+    """
+    object_id_set = set(object_ids)
+    for row in rows:
+        if row.diaObjectId in object_id_set:
+            yield row
+
+
 class Timer(object):
     """Timer class defining context manager which tracks execution timing.
 
@@ -201,12 +220,12 @@ class PpdbCassandra:
         visit : `Visit` or `None`
             Last stored visit info or `None` if there was nothing stored yet.
         """
-        query = 'SELECT MAX("visitId"), MAX("visitTime") FROM "{}" WHERE "ppdb_part" = 0'.format(
+        query = 'SELECT MAX("visitId") FROM "{}" WHERE "ppdb_part" = 0'.format(
                 self._schema.visitTableName)
         rows = self._session.execute(query)
         for row in rows:
             _LOG.debug("lastVisit: row = %s", row)
-            visitId, visitTime = row
+            visitId = row[0]
             if visitId is None:
                 return None
             break
@@ -214,25 +233,21 @@ class PpdbCassandra:
             # no rows
             return None
 
-        # TODO: This is super-inefficient
-        lastObjectId = 0
-        query = 'SELECT MAX("diaObjectId") FROM "{}"'.format(self._schema.objectTableName)
-        rows = self._session.execute(query, timeout=300)
+        query = """SELECT "visitTime", "lastObjectId", "lastSourceId" FROM "{}"
+                WHERE "ppdb_part" = %s AND "visitId" = %s""".format(self._schema.visitTableName)
+        rows = self._session.execute(query, [0, visitId])
         for row in rows:
-            if row[0] is not None:
-                lastObjectId = row[0]
+            _LOG.debug("lastVisit: row = %s", row)
+            visitTime, lastObjectId, lastSourceId = row
+            if visitTime is None:
+                return None
+            return Visit(visitId=visitId, visitTime=visitTime,
+                         lastObjectId=lastObjectId, lastSourceId=lastSourceId)
+        else:
+            # no rows
+            return None
 
-        lastSourceId = 0
-        query = 'SELECT MAX("diaSourceId") FROM "{}"'.format(self._schema.sourceTableName)
-        rows = self._session.execute(query, timeout=300)
-        for row in rows:
-            if row[0] is not None:
-                lastSourceId = row[0]
-
-        return Visit(visitId=visitId, visitTime=visitTime,
-                     lastObjectId=lastObjectId, lastSourceId=lastSourceId)
-
-    def saveVisit(self, visitId, visitTime):
+    def saveVisit(self, visitId, visitTime, lastObjectId, lastSourceId):
         """Store visit information.
 
         This method is only used by ``ap_proto`` script from ``l1dbproto``
@@ -247,10 +262,11 @@ class PpdbCassandra:
         """
         # Cassandra timestamps is in milliseconds since UTC
         timestamp = int((visitTime - datetime(1970, 1, 1)) / timedelta(seconds=1))*1000
-        query = 'INSERT INTO "{}" ("ppdb_part", "visitId", "visitTime") VALUES (0, {}, {})'.format(
-                self._schema.visitTableName, visitId, timestamp)
-        _LOG.debug("saveVisit: query = %s", query)
-        self._session.execute(query)
+        query = """INSERT INTO "{}" ("ppdb_part", "visitId", "visitTime", "lastObjectId", "lastSourceId")
+                VALUES (%s, %s, %s, %s, %s)""".format(self._schema.visitTableName)
+        params = (0, visitId, timestamp, lastObjectId, lastSourceId)
+        _LOG.debug("saveVisit: params = %s", params)
+        self._session.execute(query, params)
 
     def tableRowCount(self):
         """Returns dictionary with the table names and row counts.
@@ -302,21 +318,24 @@ class PpdbCassandra:
             part_low = _pixelId2partition(lower)
             part_high = _pixelId2partition(upper-1)
             for part in range(part_low, part_high+1):
+                query = 'SELECT * from "DiaObjectLast" WHERE "ppdb_part" = %(part)s AND'
+                values = dict(part=part, lower=lower, upper=upper)
                 if lower + 1 == upper:
-                    expr = '"ppdb_part" = {} AND "pixelId" = {}'.format(part, lower)
+                    query += ' "pixelId" = %(lower)s'
                 else:
-                    expr = '"ppdb_part" = {} AND "pixelId" >= {} AND "pixelId" < {}'
-                    expr = expr.format(part, lower, upper)
-                query = 'SELECT * from "DiaObjectLast" WHERE ' + expr
-                queries.append(query)
+                    query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
+                queries += [(cassandra.query.SimpleStatement(query), values)]
         _LOG.debug("getDiaObjects: #queries: %s", len(queries))
+        # _LOG.debug("getDiaObjects: queries: %s", queries)
 
         objects = None
         with Timer('DiaObject select', self.config.timer):
-            futures = [self._session.execute_async(query) for query in queries]
+            futures = [self._session.execute_async(query, values) for query, values in queries]
             for future in futures:
                 rows = future.result()
                 objects = self._convertResult(rows, "DiaObject", catalog=objects)
+
+        _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
     def getDiaSources(self, pixel_ranges, object_ids, dt, return_pandas=False):
@@ -347,43 +366,10 @@ class PpdbCassandra:
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
         """
-        # Need a separate query for each partition and pixelId range
-        queries = []
-        for lower, upper in pixel_ranges:
-            # need to be careful with inclusive/exclusive ranges
-            part_low = _pixelId2partition(lower)
-            part_high = _pixelId2partition(upper-1)
-            for part in range(part_low, part_high+1):
-                if lower + 1 == upper:
-                    expr = '"ppdb_part" = {} AND "pixelId" = {}'.format(part, lower)
-                else:
-                    expr = '"ppdb_part" = {} AND "pixelId" >= {} AND "pixelId" < {}'
-                    expr = expr.format(part, lower, upper)
-                query = 'SELECT * from "DiaSource" WHERE ' + expr
-                if self.config.read_sources_months > 0:
-                    start_time = dt - timedelta(days=self.config.read_sources_months*30)
-                    timestamp = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
-                    query += ' AND "midPointTai" >= {} ALLOW FILTERING'.format(timestamp)
-                queries.append(query)
-        _LOG.debug("getDiaObjects: #queries: %s", len(queries))
+        return self._getSources(pixel_ranges, object_ids, dt, "DiaSource",
+                                self.config.read_sources_months, return_pandas)
 
-        def filterObjectIds(rows):
-            """Generator which filters returned rows based on diaObjectId
-            """
-            object_ids = set(object_ids)
-            for row in rows:
-                if row.diaObjectId in object_ids:
-                    yield row
-
-        catalog = None
-        with Timer('DiaSource select', self.config.timer):
-            futures = [self._session.execute_async(query) for query in queries]
-            for future in futures:
-                rows = filterObjectIds(future.result())
-                catalog = self._convertResult(rows, "DiaSource", catalog=objects)
-        return catalog
-
-    def getDiaForcedSources(self, object_ids, dt, return_pandas=False):
+    def getDiaForcedSources(self, pixel_ranges, object_ids, dt, return_pandas=False):
         """Returns catalog of DiaForcedSource instances matching given
         DiaObjects.
 
@@ -409,8 +395,78 @@ class PpdbCassandra:
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
         """
-        sources = self._convertResult([], "DiaForcedSource")
-        return sources
+        return self._getSources(pixel_ranges, object_ids, dt, "DiaForcedSource",
+                                self.config.read_forced_sources_months, return_pandas)
+
+    def _getSources(self, pixel_ranges, object_ids, dt, table_name, months, return_pandas=False):
+        """Returns catalog of DiaSource instances given set of DiaObject IDs.
+
+        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
+        the schema of PPDB table. Re-mapping of the column names is done for
+        some columns (based on column map passed to constructor) but types or
+        units are not changed.
+
+        Parameters
+        ----------
+        pixel_ranges : `list` of `tuple`
+            Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
+            This defines set of pixel indices to be included in result.
+        object_ids :
+            Collection of DiaObject IDs
+        dt : `datetime.datetime`
+            Time of the current visit
+        table_name : `str`
+            Name of the table, either "DiaSource" or "DiaForcedSource"
+        months : `int`
+            Number of months of history to return, if negative returns whole
+            history.
+        return_pandas : `bool`
+            Return a `pandas.DataFrame` instead of
+            `lsst.afw.table.SourceCatalog`.
+
+        Returns
+        -------
+        catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
+            Catalog contaning DiaSource records. `None` is returned if
+            ``months`` 0 or when ``object_ids`` is empty.
+        """
+        if months == 0 or len(object_ids) == 0:
+            return None
+
+        start_time = None
+        if months > 0:
+            start_time = dt - timedelta(days=months*30)
+            start_time = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
+
+        # Need a separate query for each partition and pixelId range
+        queries = []
+        for lower, upper in pixel_ranges:
+            # need to be careful with inclusive/exclusive ranges
+            part_low = _pixelId2partition(lower)
+            part_high = _pixelId2partition(upper-1)
+            for part in range(part_low, part_high+1):
+                query = 'SELECT * from "{}" WHERE "ppdb_part" = %(part)s AND'.format(table_name)
+                values = dict(part=part, lower=lower, upper=upper, start_time=start_time)
+                if lower + 1 == upper:
+                    query += ' "pixelId" = %(lower)s'
+                else:
+                    query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
+                if start_time is not None:
+                    query += ' AND "midPointTai" >= %(start_time)s ALLOW FILTERING'
+                queries += [(cassandra.query.SimpleStatement(query), values)]
+        _LOG.debug("_getSources: #queries: %s", len(queries))
+        # _LOG.debug("_getSources: queries: %s", queries)
+
+        catalog = None
+        with Timer(table_name + ' select', self.config.timer):
+            futures = [self._session.execute_async(query, values) for query, values in queries]
+            for future in futures:
+                rows = future.result()
+                rows = _filterObjectIds(rows, object_ids)
+                catalog = self._convertResult(rows, table_name, catalog=catalog)
+
+        _LOG.debug("found %d %ss", len(catalog), table_name)
+        return catalog
 
     def storeDiaObjects(self, objs, dt):
         """Store catalog of DiaObjects from current visit.
@@ -442,7 +498,7 @@ class PpdbCassandra:
         extra_columns = dict(lastNonForcedSource=dt, validityStart=dt, validityEnd=None)
         self._storeObjectsAfw(objs, "DiaObject", extra_columns=extra_columns)
 
-    def storeDiaSources(self, sources):
+    def storeDiaSources(self, sources, dt):
         """Store catalog of DIASources from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -460,10 +516,14 @@ class PpdbCassandra:
         ----------
         sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaSource records
+        dt : `datetime.datetime`
+            Tiemstamp used to fill ``midPointTai`` column.
         """
-        self._storeObjectsAfw(sources, "DiaSource")
+        # this is a lie of course
+        extra_columns = dict(midPointTai=dt)
+        self._storeObjectsAfw(sources, "DiaSource", extra_columns=extra_columns)
 
-    def storeDiaForcedSources(self, sources):
+    def storeDiaForcedSources(self, sources, dt):
         """Store a set of DIAForcedSources from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -481,8 +541,11 @@ class PpdbCassandra:
         ----------
         sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaForcedSource records
+        dt : `datetime.datetime`
+            Tiemstamp used to fill ``midPointTai`` column.
         """
-        self._storeObjectsAfw(sources, "DiaForcedSource")
+        extra_columns = dict(midPointTai=dt)
+        self._storeObjectsAfw(sources, "DiaForcedSource", extra_columns=extra_columns)
 
     def dailyJob(self):
         """Implement daily activities like cleanup/vacuum.
@@ -550,26 +613,21 @@ class PpdbCassandra:
             to every row, only if column is missing in catalog records.
         """
 
-        def quoteValue(v):
-            """Quote and escape values"""
+        def qValue(v):
+            """Transform object into a value for query"""
             if v is None:
-                v = "NULL"
+                pass
             elif isinstance(v, datetime):
-                v = "'" + str(v) + "'"
+                v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1))*1000
             elif isinstance(v, str):
-                # we don't expect nasty stuff in strings
-                v = "'" + v + "'"
+                pass
             elif isinstance(v, geom.Angle):
                 v = v.asDegrees()
-                if np.isfinite(v):
-                    v = str(v)
-                else:
-                    v = "NULL"
+                if not np.isfinite(v):
+                    v = None
             else:
-                if np.isfinite(v):
-                    v = str(v)
-                else:
-                    v = "NULL"
+                if not np.isfinite(v):
+                    v = None
             return v
 
         def quoteId(columnName):
@@ -600,7 +658,7 @@ class PpdbCassandra:
         qfields = ','.join([quoteId(field) for field in fields])
 
         with Timer(table_name + ' query build', self.config.timer):
-            queries = ["BEGIN BATCH"]
+            queries = cassandra.query.BatchStatement()
             for rec in objects:
                 values = []
                 for field in afw_fields:
@@ -610,25 +668,25 @@ class PpdbCassandra:
                     if column_map[field].type == "DATETIME" and np.isfinite(value):
                         # CAssandra datetime is in millisconds
                         value = int(value * 1000)
-                    values.append(quoteValue(value))
+                    values.append(qValue(value))
                 for field in extra_fields:
-                    values.append(quoteValue(extra_columns[field]))
+                    value = extra_columns[field]
+                    values.append(qValue(value))
                 if part_columns:
                     part_values = self._partitionValues(rec, table_name, part_columns)
-                    values += [quoteValue(val) for val in part_values]
-                values = ','.join(values)
-                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(self._schema.tableName(table_name),
-                                                                    qfields, values)
-                queries.append(query)
-
-            queries.append("APPLY BATCH;")
-            query = '\n'.join(queries)
-            _LOG.info("%s: query size: %d", self._schema.tableName(table_name), len(query))
+                    values += [qValue(value) for value in part_values]
+                holders = ','.join(['%s'] * len(values))
+                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(
+                        self._schema.tableName(table_name), qfields, holders)
+                # _LOG.debug("query: %r", query)
+                # _LOG.debug("values: %s", values)
+                query = cassandra.query.SimpleStatement(query)
+                queries.add(query, values)
 
         # _LOG.debug("query: %s", query)
         _LOG.info("%s: will store %d records", self._schema.tableName(table_name), len(objects))
         with Timer(table_name + ' insert', self.config.timer):
-            self._session.execute(query)
+            self._session.execute(queries)
 
     def _partitionValues(self, rec, table_name, part_columns):
         """Return values of partition columns for a record.

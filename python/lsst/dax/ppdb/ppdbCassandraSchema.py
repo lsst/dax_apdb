@@ -149,6 +149,8 @@ class PpdbCassandraSchema(PpdbBaseSchema):
             column_defs = ['"ppdb_part" INT',
                            '"visitId" INT',
                            '"visitTime" TIMESTAMP',
+                           '"lastObjectId" INT',
+                           '"lastSourceId" INT',
                            'PRIMARY KEY ("ppdb_part", "visitId")']
             return column_defs
 

@@ -183,6 +183,7 @@ class PpdbBaseSchema:
         self.tableSchemas = self._buildSchemas(config.schema_file,
                                                config.extra_schema_file,
                                                afw_schemas)
+        self.afwSchemas = {}
 
     def getAfwSchema(self, table_name, columns=None):
         """Return afw schema for given table.
@@ -201,6 +202,11 @@ class PpdbBaseSchema:
         column_map : `dict`
             Mapping of the table/result column names into schema key.
         """
+
+        cacheKey = (table_name, frozenset(columns or []))
+        res = self.afwSchemas.get(cacheKey)
+        if res is not None:
+            return res
 
         table = self.tableSchemas[table_name]
         col_map = self._column_map.get(table_name, {})
@@ -250,6 +256,7 @@ class PpdbBaseSchema:
                                           parse_strict="silent")
             col2afw[column.name] = key
 
+        self.afwSchemas[cacheKey] = (schema, col2afw)
         return schema, col2afw
 
     def getAfwColumns(self, table_name):
