@@ -41,6 +41,8 @@ from .ppdbCassandraSchema import PpdbCassandraSchema, PpdbCassandraSchemaConfig
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
+SECONDS_IN_MONTH = 30*24*3600
+
 
 def _pixelId2partition(pixelId):
     """Converts pixelID (HTM index) into partition number.
@@ -50,7 +52,8 @@ def _pixelId2partition(pixelId):
     """
     htm20 = pixelId
     htm8 = htm20 >> 24
-    part = htm8 & 0xf
+    part = htm8
+    # part = part & 0xf
     return part
 
 
@@ -433,10 +436,12 @@ class PpdbCassandra:
         if months == 0 or len(object_ids) == 0:
             return None
 
-        start_time = None
+        months_list = []
         if months > 0:
-            start_time = dt - timedelta(days=months*30)
-            start_time = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
+            seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
+            month_now = seconds_now // SECONDS_IN_MONTH
+            months_list = ','.join([str(i) for i in range(month_now-months, month_now+1)])
+            _LOG.debug("_getSources: months_list: %s", months_list)
 
         # Need a separate query for each partition and pixelId range
         queries = []
@@ -446,13 +451,13 @@ class PpdbCassandra:
             part_high = _pixelId2partition(upper-1)
             for part in range(part_low, part_high+1):
                 query = 'SELECT * from "{}" WHERE "ppdb_part" = %(part)s AND'.format(table_name)
-                values = dict(part=part, lower=lower, upper=upper, start_time=start_time)
+                if months_list:
+                    query += ' "ppdb_month" IN ({}) AND'.format(months_list)
+                values = dict(part=part, lower=lower, upper=upper)
                 if lower + 1 == upper:
                     query += ' "pixelId" = %(lower)s'
                 else:
                     query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
-                if start_time is not None:
-                    query += ' AND "midPointTai" >= %(start_time)s ALLOW FILTERING'
                 queries += [(cassandra.query.SimpleStatement(query), values)]
         _LOG.debug("_getSources: #queries: %s", len(queries))
         # _LOG.debug("_getSources: queries: %s", queries)
@@ -673,7 +678,7 @@ class PpdbCassandra:
                     value = extra_columns[field]
                     values.append(qValue(value))
                 if part_columns:
-                    part_values = self._partitionValues(rec, table_name, part_columns)
+                    part_values = self._partitionValues(rec, table_name, part_columns, extra_columns)
                     values += [qValue(value) for value in part_values]
                 holders = ','.join(['%s'] * len(values))
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(
@@ -688,7 +693,7 @@ class PpdbCassandra:
         with Timer(table_name + ' insert', self.config.timer):
             self._session.execute(queries)
 
-    def _partitionValues(self, rec, table_name, part_columns):
+    def _partitionValues(self, rec, table_name, part_columns, extra_columns=None):
         """Return values of partition columns for a record.
 
         Parameters
@@ -699,6 +704,9 @@ class PpdbCassandra:
             Table name as defined in PPDB schema.
         part_columns : `list` of `str`
             Names of the columns for which to return values.
+        extra_columns : `dict`, optional
+            Mapping (column_name, column_value) which gives column values to add
+            to every row, only if column is missing in catalog records.
 
         Returns
         -------
@@ -706,12 +714,21 @@ class PpdbCassandra:
             List of column values.
         """
 
-        if table_name in ("DiaObject", "DiaObjectLast", "DiaSource", "DiaForcedSource"):
+        if table_name in ("DiaObject", "DiaObjectLast"):
             if part_columns != ["ppdb_part"]:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
                     table_name, part_columns))
             # TODO: expecting level=20 for HTM, need to check
             part = _pixelId2partition(rec["pixelId"])
             return [part]
+        if table_name in ("DiaSource", "DiaForcedSource"):
+            if part_columns != ["ppdb_part", "ppdb_month"]:
+                raise ValueError("unexpected partitionig columns for {}: {}".format(
+                    table_name, part_columns))
+            # TODO: expecting level=20 for HTM, need to check
+            part = _pixelId2partition(rec["pixelId"])
+            value = int((extra_columns["midPointTai"] - datetime.utcfromtimestamp(0)).total_seconds())
+            month = value // SECONDS_IN_MONTH
+            return [part, month]
         else:
             raise ValueError("unexpected table {}".format(table_name))
