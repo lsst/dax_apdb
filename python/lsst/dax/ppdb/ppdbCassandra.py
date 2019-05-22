@@ -333,7 +333,7 @@ class PpdbCassandra:
 
         objects = None
         with Timer('DiaObject select', self.config.timer):
-            futures = [self._session.execute_async(query, values) for query, values in queries]
+            futures = [self._session.execute_async(query, values, timeout=120.) for query, values in queries]
             for future in futures:
                 rows = future.result()
                 objects = self._convertResult(rows, "DiaObject", catalog=objects)
@@ -464,7 +464,7 @@ class PpdbCassandra:
 
         catalog = None
         with Timer(table_name + ' select', self.config.timer):
-            futures = [self._session.execute_async(query, values) for query, values in queries]
+            futures = [self._session.execute_async(query, values, timeout=120.) for query, values in queries]
             for future in futures:
                 rows = future.result()
                 rows = _filterObjectIds(rows, object_ids)
