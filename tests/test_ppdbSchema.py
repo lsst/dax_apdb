@@ -19,14 +19,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Unit test for PpdbSchema class.
+"""Unit test for PPDB schema classes.
 """
 
 import os
 import unittest
 
 import lsst.afw.table as afwTable
-from lsst.dax.ppdb import PpdbSchema, make_minimal_dia_object_schema, make_minimal_dia_source_schema
+from lsst.dax.ppdb import (PpdbSqlSchema, PpdbSqlSchemaConfig,
+                           make_minimal_dia_object_schema, make_minimal_dia_source_schema)
 from lsst.utils import getPackageDir
 import lsst.utils.tests
 from sqlalchemy import create_engine
@@ -52,13 +53,17 @@ def _data_file_name(basename):
     return os.path.join(getPackageDir("dax_ppdb"), "data", basename)
 
 
-class PpdbSchemaTestCase(unittest.TestCase):
-    """A test case for PpdbSchema class
+def _make_sql_schema_config(**kw):
+    """Make config instance and fill it from keyword arguments.
     """
+    config = PpdbSqlSchemaConfig()
+    config.update(**kw)
+    return config
 
-    @classmethod
-    def setUpClass(cls):
-        pass
+
+class PpdbSqlSchemaTestCase(unittest.TestCase):
+    """A test case for PpdbSqlSchema class
+    """
 
     def _assertTable(self, table, name, ncol):
         """validation for tables schema.
@@ -84,10 +89,11 @@ class PpdbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("ppdb-schema.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=None)
+        schema = PpdbSqlSchema(engine=engine, config=config)
         schema.makeSchema()
         self._assertTable(schema.objects, "DiaObject", 92)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -97,11 +103,12 @@ class PpdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # create schema using prefix
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("ppdb-schema.yaml"),
-                            prefix="Pfx")
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         prefix="Pfx")
+        schema = PpdbSqlSchema(engine=engine, config=config)
         # Drop existing tables (but we don't check it here)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "PfxDiaObject", 92)
@@ -111,11 +118,11 @@ class PpdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 7)
 
         # use different indexing for DiaObject, need extra schema for that
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="pix_id_iov",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("ppdb-schema.yaml"),
-                            extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
+        config = _make_sql_schema_config(dia_object_index="pix_id_iov",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
+        schema = PpdbSqlSchema(engine=engine, config=config)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 3)
@@ -125,11 +132,11 @@ class PpdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # use DiaObjectLast table for DiaObject, need extra schema for that
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="last_object_table",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("ppdb-schema.yaml"),
-                            extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
+        config = _make_sql_schema_config(dia_object_index="last_object_table",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=_data_file_name("ppdb-schema-extra.yaml"))
+        schema = PpdbSqlSchema(engine=engine, config=config)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -140,10 +147,11 @@ class PpdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # baseline schema with nightly DiaObject
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=True,
-                            schema_file=_data_file_name("ppdb-schema.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=True,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=None)
+        schema = PpdbSqlSchema(engine=engine, config=config)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 92)
         self._assertTable(schema.objects_nightly, "DiaObjectNightly", 92)
@@ -166,12 +174,11 @@ class PpdbSchemaTestCase(unittest.TestCase):
                            DiaSource=make_minimal_dia_source_schema())
         # column case mismatch should cause exception in constructor
         with self.assertRaises(ValueError):
-            PpdbSchema(engine=engine,
-                       dia_object_index="baseline",
-                       dia_object_nightly=False,
-                       schema_file=_data_file_name("ppdb-schema.yaml"),
-                       column_map=_data_file_name("ppdb-afw-map.yaml"),
-                       afw_schemas=afw_schemas)
+            config = _make_sql_schema_config(dia_object_index="baseline",
+                                             dia_object_nightly=False,
+                                             schema_file=_data_file_name("ppdb-schema.yaml"),
+                                             column_map=_data_file_name("ppdb-afw-map.yaml"))
+            PpdbSqlSchema(engine=engine, config=config, afw_schemas=afw_schemas)
 
     def test_getAfwSchema(self):
         """Test for getAfwSchema method.
@@ -182,11 +189,12 @@ class PpdbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema, but use afw column map
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("ppdb-schema.yaml"),
-                            column_map=_data_file_name("ppdb-afw-map.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         column_map=_data_file_name("ppdb-afw-map.yaml"))
+        schema = PpdbSqlSchema(engine=engine, config=config)
         schema.makeSchema()
 
         afw_schema, col_map = schema.getAfwSchema("DiaObject")
@@ -225,12 +233,12 @@ class PpdbSchemaTestCase(unittest.TestCase):
         # create standard (baseline) schema, but use afw column map
         afw_schemas = dict(DiaObject=make_minimal_dia_object_schema(),
                            DiaSource=make_minimal_dia_source_schema())
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("ppdb-schema.yaml"),
-                            column_map=_data_file_name("ppdb-afw-map.yaml"),
-                            afw_schemas=afw_schemas)
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         column_map=_data_file_name("ppdb-afw-map.yaml"))
+        schema = PpdbSqlSchema(engine=engine, config=config, afw_schemas=afw_schemas)
         schema.makeSchema()
 
         afw_schema, col_map = schema.getAfwSchema("DiaObject")
@@ -267,11 +275,12 @@ class PpdbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema, but use afw column map
-        schema = PpdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("ppdb-schema.yaml"),
-                            column_map=_data_file_name("ppdb-afw-map.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("ppdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         column_map=_data_file_name("ppdb-afw-map.yaml"))
+        schema = PpdbSqlSchema(engine=engine, config=config)
         schema.makeSchema()
 
         col_map = schema.getAfwColumns("DiaObject")

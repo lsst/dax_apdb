@@ -19,23 +19,25 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Module responsible for PPDB schema operations.
+"""This module contains methods and classes for generic PPDB schema operations.
+
+The code in this module is independent of the specific technology used to
+implement PPDB.
 """
 
 __all__ = ["ColumnDef", "IndexDef", "TableDef",
            "make_minimal_dia_object_schema", "make_minimal_dia_source_schema",
-           "PpdbSchema"]
+           "PpdbBaseSchema", "PpdbBaseSchemaConfig"]
 
 from collections import namedtuple
 import logging
+import os
 import yaml
 
-import sqlalchemy
-from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
-                        UniqueConstraint, Table)
-from sqlalchemy.schema import CreateTable, CreateIndex
-from sqlalchemy.ext.compiler import compiles
 import lsst.afw.table as afwTable
+import lsst.pex.config as pexConfig
+from lsst.pex.config import Field
+from lsst.utils import getPackageDir
 
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
@@ -67,7 +69,7 @@ TableDef = namedtuple('TableDef', 'name description columns indices')
 
 
 def make_minimal_dia_object_schema():
-    """Define and create the minimal schema required for a DIAObject.
+    """Define and create the minimal afw.table schema for a DIAObject.
 
     Returns
     -------
@@ -82,7 +84,7 @@ def make_minimal_dia_object_schema():
 
 
 def make_minimal_dia_source_schema():
-    """ Define and create the minimal schema required for a DIASource.
+    """ Define and create the minimal afw.table schema for a DIASource.
 
     Returns
     -------
@@ -107,96 +109,41 @@ def make_minimal_dia_source_schema():
     return schema
 
 
-@compiles(CreateTable, "oracle")
-def _add_suffixes_tbl(element, compiler, **kw):
-    """Add all needed suffixed for Oracle CREATE TABLE statement.
-
-    This is a special compilation method for CreateTable clause which
-    registers itself with SQLAlchemy using @compiles decotrator. Exact method
-    name does not matter. Client can pass a dict to ``info`` keyword argument
-    of Table constructor. If the dict has a key "oracle_tablespace" then its
-    value is used as tablespace name. If the dict has a key "oracle_iot" with
-    true value then IOT table is created. This method generates additional
-    clauses for CREATE TABLE statement which specify tablespace name and
-    "ORGANIZATION INDEX" for IOT.
-
-    .. seealso:: https://docs.sqlalchemy.org/en/latest/core/compiler.html
+def _data_file_name(basename):
+    """Return path name of a data file.
     """
-    text = compiler.visit_create_table(element, **kw)
-    _LOG.debug("text: %r", text)
-    oracle_tablespace = element.element.info.get("oracle_tablespace")
-    oracle_iot = element.element.info.get("oracle_iot", False)
-    _LOG.debug("oracle_tablespace: %r", oracle_tablespace)
-    if oracle_iot:
-        text += " ORGANIZATION INDEX"
-    if oracle_tablespace:
-        text += " TABLESPACE " + oracle_tablespace
-    _LOG.debug("text: %r", text)
-    return text
+    return os.path.join(getPackageDir("dax_ppdb"), "data", basename)
 
 
-@compiles(CreateIndex, "oracle")
-def _add_suffixes_idx(element, compiler, **kw):
-    """Add all needed suffixed for Oracle CREATE INDEX statement.
+class PpdbBaseSchemaConfig(pexConfig.Config):
 
-    This is a special compilation method for CreateIndex clause which
-    registers itself with SQLAlchemy using @compiles decotrator. Exact method
-    name does not matter. Client can pass a dict to ``info`` keyword argument
-    of Index constructor. If the dict has a key "oracle_tablespace" then its
-    value is used as tablespace name. This method generates additional
-    clause for CREATE INDEX statement which specifies tablespace name.
-
-    .. seealso:: https://docs.sqlalchemy.org/en/latest/core/compiler.html
-    """
-    text = compiler.visit_create_index(element, **kw)
-    _LOG.debug("text: %r", text)
-    oracle_tablespace = element.element.info.get("oracle_tablespace")
-    _LOG.debug("oracle_tablespace: %r", oracle_tablespace)
-    if oracle_tablespace:
-        text += " TABLESPACE " + oracle_tablespace
-    _LOG.debug("text: %r", text)
-    return text
+    schema_file = Field(dtype=str,
+                        doc="Location of (YAML) configuration file with standard schema",
+                        default=_data_file_name("ppdb-schema.yaml"))
+    extra_schema_file = Field(dtype=str,
+                              doc="Location of (YAML) configuration file with extra schema",
+                              default=_data_file_name("ppdb-schema-extra.yaml"))
+    column_map = Field(dtype=str,
+                       doc="Location of (YAML) configuration file with column mapping",
+                       default=_data_file_name("ppdb-afw-map.yaml"))
 
 
-class PpdbSchema(object):
+class PpdbBaseSchema:
     """Class for management of PPDB schema.
 
     Attributes
     ----------
-    objects : `sqlalchemy.Table`
-        DiaObject table instance
-    objects_nightly : `sqlalchemy.Table`
-        DiaObjectNightly table instance, may be None
-    objects_last : `sqlalchemy.Table`
-        DiaObjectLast table instance, may be None
-    sources : `sqlalchemy.Table`
-        DiaSource table instance
-    forcedSources : `sqlalchemy.Table`
-        DiaForcedSource table instance
-    visits : `sqlalchemy.Table`
-        PpdbProtoVisits table instance
+    tableSchemas : `dict`
+        Maps table name to `TableDef` instance.
 
     Parameters
     ----------
-    engine : `sqlalchemy.engine.Engine`
-        SQLAlchemy engine instance
-    dia_object_index : `str`
-        Indexing mode for DiaObject table, see `PpdbConfig.dia_object_index`
-        for details.
-    dia_object_nightly : `bool`
-        If `True` then create per-night DiaObject table as well.
-    schema_file : `str`
-        Name of the YAML schema file.
-    extra_schema_file : `str`, optional
-        Name of the YAML schema file with extra column definitions.
-    column_map : `str`, optional
-        Name of the YAML file with column mappings.
+    config : `PpdbBaseSchemaConfig`
+        Configuration for this class.
     afw_schemas : `dict`, optional
         Dictionary with table name for a key and `afw.table.Schema`
         for a value. Columns in schema will be added to standard PPDB
         schema (only if standard schema does not have matching column).
-    prefix : `str`, optional
-        Prefix to add to all scheam elements.
     """
 
     # map afw type names into cat type names
@@ -215,27 +162,11 @@ class PpdbSchema(object):
                              "CHAR": "String",
                              "BOOL": "Flag"}
 
-    def __init__(self, engine, dia_object_index, dia_object_nightly,
-                 schema_file, extra_schema_file=None, column_map=None,
-                 afw_schemas=None, prefix=""):
+    def __init__(self, config, afw_schemas=None):
 
-        self._engine = engine
-        self._dia_object_index = dia_object_index
-        self._dia_object_nightly = dia_object_nightly
-        self._prefix = prefix
-
-        self._metadata = MetaData(self._engine)
-
-        self.objects = None
-        self.objects_nightly = None
-        self.objects_last = None
-        self.sources = None
-        self.forcedSources = None
-        self.visits = None
-
-        if column_map:
-            _LOG.debug("Reading column map file %s", column_map)
-            with open(column_map) as yaml_stream:
+        if config.column_map:
+            _LOG.debug("Reading column map file %s", config.column_map)
+            with open(config.column_map) as yaml_stream:
                 # maps cat column name to afw column name
                 self._column_map = yaml.load(yaml_stream, Loader=yaml.SafeLoader)
                 _LOG.debug("column map: %s", self._column_map)
@@ -249,120 +180,10 @@ class PpdbSchema(object):
         _LOG.debug("reverse column map: %s", self._column_map_reverse)
 
         # build complete table schema
-        self._schemas = self._buildSchemas(schema_file, extra_schema_file,
-                                           afw_schemas)
-
-        # map cat column types to alchemy
-        self._type_map = dict(DOUBLE=self._getDoubleType(),
-                              FLOAT=sqlalchemy.types.Float,
-                              DATETIME=sqlalchemy.types.TIMESTAMP,
-                              BIGINT=sqlalchemy.types.BigInteger,
-                              INTEGER=sqlalchemy.types.Integer,
-                              INT=sqlalchemy.types.Integer,
-                              TINYINT=sqlalchemy.types.Integer,
-                              BLOB=sqlalchemy.types.LargeBinary,
-                              CHAR=sqlalchemy.types.CHAR,
-                              BOOL=sqlalchemy.types.Boolean)
-
-        # generate schema for all tables, must be called last
-        self._makeTables()
-
-    def _makeTables(self, mysql_engine='InnoDB', oracle_tablespace=None, oracle_iot=False):
-        """Generate schema for all tables.
-
-        Parameters
-        ----------
-        mysql_engine : `str`, optional
-            MySQL engine type to use for new tables.
-        oracle_tablespace : `str`, optional
-            Name of Oracle tablespace, only useful with oracle
-        oracle_iot : `bool`, optional
-            Make Index-organized DiaObjectLast table.
-        """
-
-        info = dict(oracle_tablespace=oracle_tablespace)
-
-        if self._dia_object_index == 'pix_id_iov':
-            # Special PK with HTM column in first position
-            constraints = self._tableIndices('DiaObjectIndexHtmFirst', info)
-        else:
-            constraints = self._tableIndices('DiaObject', info)
-        table = Table(self._prefix+'DiaObject', self._metadata,
-                      *(self._tableColumns('DiaObject') + constraints),
-                      mysql_engine=mysql_engine,
-                      info=info)
-        self.objects = table
-
-        if self._dia_object_nightly:
-            # Same as DiaObject but no index
-            table = Table(self._prefix+'DiaObjectNightly', self._metadata,
-                          *self._tableColumns('DiaObject'),
-                          mysql_engine=mysql_engine,
-                          info=info)
-            self.objects_nightly = table
-
-        if self._dia_object_index == 'last_object_table':
-            # Same as DiaObject but with special index
-            info2 = info.copy()
-            info2.update(oracle_iot=oracle_iot)
-            table = Table(self._prefix+'DiaObjectLast', self._metadata,
-                          *(self._tableColumns('DiaObjectLast') +
-                            self._tableIndices('DiaObjectLast', info)),
-                          mysql_engine=mysql_engine,
-                          info=info2)
-            self.objects_last = table
-
-        # for all other tables use index definitions in schema
-        for table_name in ('DiaSource', 'SSObject', 'DiaForcedSource', 'DiaObject_To_Object_Match'):
-            table = Table(self._prefix+table_name, self._metadata,
-                          *(self._tableColumns(table_name) +
-                            self._tableIndices(table_name, info)),
-                          mysql_engine=mysql_engine,
-                          info=info)
-            if table_name == 'DiaSource':
-                self.sources = table
-            elif table_name == 'DiaForcedSource':
-                self.forcedSources = table
-
-        # special table to track visits, only used by prototype
-        table = Table(self._prefix+'PpdbProtoVisits', self._metadata,
-                      Column('visitId', sqlalchemy.types.BigInteger, nullable=False),
-                      Column('visitTime', sqlalchemy.types.TIMESTAMP, nullable=False),
-                      PrimaryKeyConstraint('visitId', name=self._prefix+'PK_PpdbProtoVisits'),
-                      Index(self._prefix+'IDX_PpdbProtoVisits_vTime', 'visitTime', info=info),
-                      mysql_engine=mysql_engine,
-                      info=info)
-        self.visits = table
-
-    def makeSchema(self, drop=False, mysql_engine='InnoDB', oracle_tablespace=None, oracle_iot=False):
-        """Create or re-create all tables.
-
-        Parameters
-        ----------
-        drop : `bool`, optional
-            If True then drop tables before creating new ones.
-        mysql_engine : `str`, optional
-            MySQL engine type to use for new tables.
-        oracle_tablespace : `str`, optional
-            Name of Oracle tablespace, only useful with oracle
-        oracle_iot : `bool`, optional
-            Make Index-organized DiaObjectLast table.
-        """
-
-        # re-make table schema for all needed tables with possibly different options
-        _LOG.debug("clear metadata")
-        self._metadata.clear()
-        _LOG.debug("re-do schema mysql_engine=%r oracle_tablespace=%r",
-                   mysql_engine, oracle_tablespace)
-        self._makeTables(mysql_engine=mysql_engine, oracle_tablespace=oracle_tablespace,
-                         oracle_iot=oracle_iot)
-
-        # create all tables (optionally drop first)
-        if drop:
-            _LOG.info('dropping all tables')
-            self._metadata.drop_all()
-        _LOG.info('creating all tables')
-        self._metadata.create_all()
+        self.tableSchemas = self._buildSchemas(config.schema_file,
+                                               config.extra_schema_file,
+                                               afw_schemas)
+        self.afwSchemas = {}
 
     def getAfwSchema(self, table_name, columns=None):
         """Return afw schema for given table.
@@ -382,7 +203,12 @@ class PpdbSchema(object):
             Mapping of the table/result column names into schema key.
         """
 
-        table = self._schemas[table_name]
+        cacheKey = (table_name, frozenset(columns or []))
+        res = self.afwSchemas.get(cacheKey)
+        if res is not None:
+            return res
+
+        table = self.tableSchemas[table_name]
         col_map = self._column_map.get(table_name, {})
 
         # make a schema
@@ -430,6 +256,7 @@ class PpdbSchema(object):
                                           parse_strict="silent")
             col2afw[column.name] = key
 
+        self.afwSchemas[cacheKey] = (schema, col2afw)
         return schema, col2afw
 
     def getAfwColumns(self, table_name):
@@ -445,7 +272,7 @@ class PpdbSchema(object):
         column_map : `dict`
             Mapping of afw column names to `ColumnDef` instances.
         """
-        table = self._schemas[table_name]
+        table = self.tableSchemas[table_name]
         col_map = self._column_map.get(table_name, {})
 
         cmap = {}
@@ -467,7 +294,7 @@ class PpdbSchema(object):
         column_map : `dict`
             Mapping of column names to `ColumnDef` instances.
         """
-        table = self._schemas[table_name]
+        table = self.tableSchemas[table_name]
         cmap = {column.name: column for column in table.columns}
         return cmap
 
@@ -588,42 +415,6 @@ class PpdbSchema(object):
 
         return schemas
 
-    def _tableColumns(self, table_name):
-        """Return set of columns in a table
-
-        Parameters
-        ----------
-        table_name : `str`
-            Name of the table.
-
-        Returns
-        -------
-        column_defs : `list`
-            List of `Column` objects.
-        """
-
-        # get the list of columns in primary key, they are treated somewhat
-        # specially below
-        table_schema = self._schemas[table_name]
-        pkey_columns = set()
-        for index in table_schema.indices:
-            if index.type == 'PRIMARY':
-                pkey_columns = set(index.columns)
-                break
-
-        # convert all column dicts into alchemy Columns
-        column_defs = []
-        for column in table_schema.columns:
-            kwargs = dict(nullable=column.nullable)
-            if column.default is not None:
-                kwargs.update(server_default=str(column.default))
-            if column.name in pkey_columns:
-                kwargs.update(autoincrement=False)
-            ctype = self._type_map[column.type]
-            column_defs.append(Column(column.name, ctype, **kwargs))
-
-        return column_defs
-
     def _field2dict(self, field, table_name):
         """Convert afw schema field definition into a dict format.
 
@@ -647,61 +438,3 @@ class PpdbSchema(object):
         column = self._column_map_reverse[table_name].get(column, column)
         ctype = self._afw_type_map[field.getTypeString()]
         return dict(name=column, type=ctype, nullable=True)
-
-    def _tableIndices(self, table_name, info):
-        """Return set of constraints/indices in a table
-
-        Parameters
-        ----------
-        table_name : `str`
-            Name of the table.
-        info : `dict`
-            Additional options passed to SQLAlchemy index constructor.
-
-        Returns
-        -------
-        index_defs : `list`
-            List of SQLAlchemy index/constraint objects.
-        """
-
-        table_schema = self._schemas[table_name]
-
-        # convert all index dicts into alchemy Columns
-        index_defs = []
-        for index in table_schema.indices:
-            if index.type == "INDEX":
-                index_defs.append(Index(self._prefix+index.name, *index.columns, info=info))
-            else:
-                kwargs = {}
-                if index.name:
-                    kwargs['name'] = self._prefix+index.name
-                if index.type == "PRIMARY":
-                    index_defs.append(PrimaryKeyConstraint(*index.columns, **kwargs))
-                elif index.type == "UNIQUE":
-                    index_defs.append(UniqueConstraint(*index.columns, **kwargs))
-
-        return index_defs
-
-    def _getDoubleType(self):
-        """DOUBLE type is database-specific, select one based on dialect.
-
-        Returns
-        -------
-        type_object : `object`
-            Database-specific type definition.
-        """
-        if self._engine.name == 'mysql':
-            from sqlalchemy.dialects.mysql import DOUBLE
-            return DOUBLE(asdecimal=False)
-        elif self._engine.name == 'postgresql':
-            from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
-            return DOUBLE_PRECISION
-        elif self._engine.name == 'oracle':
-            from sqlalchemy.dialects.oracle import DOUBLE_PRECISION
-            return DOUBLE_PRECISION
-        elif self._engine.name == 'sqlite':
-            # all floats in sqlite are 8-byte
-            from sqlalchemy.dialects.sqlite import REAL
-            return REAL
-        else:
-            raise TypeError('cannot determine DOUBLE type, unexpected dialect: ' + self._engine.name)
