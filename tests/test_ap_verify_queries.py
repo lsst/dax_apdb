@@ -26,7 +26,7 @@ import lsst.afw.table as afwTable
 import lsst.afw.image as afwImage
 import lsst.geom as geom
 import lsst.daf.base as dafBase
-from lsst.dax.ppdb import Ppdb, PpdbConfig, countUnassociatedObjects, isVisitProcessed
+from lsst.dax.ppdb import Ppdb, PpdbConfig
 
 
 def createTestObjects(n_objects, extra_fields):
@@ -80,7 +80,7 @@ class TestApVerifyQueries(unittest.TestCase):
         del self.ppdb
 
     def test_count_zero_objects(self):
-        value = countUnassociatedObjects(self.ppdb)
+        value = self.ppdb.countUnassociatedObjects()
         self.assertEqual(value, 0)
 
     def test_count_objects(self):
@@ -92,7 +92,7 @@ class TestApVerifyQueries(unittest.TestCase):
         dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
         self.ppdb.storeDiaObjects(sources, dateTime.toPython())
 
-        value = countUnassociatedObjects(self.ppdb)
+        value = self.ppdb.countUnassociatedObjects()
         self.assertEqual(n_created - 1, value)
 
     @staticmethod
@@ -112,8 +112,8 @@ class TestApVerifyQueries(unittest.TestCase):
 
         self.ppdb.storeDiaSources(sources)
 
-        self.assertTrue(isVisitProcessed(self.ppdb, TestApVerifyQueries._makeVisitInfo(2381)))
-        self.assertFalse(isVisitProcessed(self.ppdb, TestApVerifyQueries._makeVisitInfo(42)))
+        self.assertTrue(self.ppdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(2381)))
+        self.assertFalse(self.ppdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(42)))
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):

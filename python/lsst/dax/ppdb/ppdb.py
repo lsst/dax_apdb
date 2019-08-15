@@ -776,6 +776,54 @@ class Ppdb(object):
                 table = self._schema.forcedSources
                 self._storeObjectsAfw(sources, conn, table, "DiaForcedSource")
 
+    def countUnassociatedObjects(self):
+        """Return the number of DiaObjects that have only one DiaSource associated
+        with them.
+
+        Used as part of ap_verify metrics.
+
+        Returns
+        -------
+        count : `int`
+            Number of DiaObjects with exactly one associated DiaSource.
+        """
+        # Retrieve the DiaObject table.
+        table = self._schema.objects
+
+        # Construct the sql statement.
+        stmt = sql.select([func.count()]).select_from(table).where(table.c.nDiaSources == 1)
+        stmt = stmt.where(table.c.validityEnd == None)  # noqa: E711
+
+        # Return the count.
+        count = self._engine.scalar(stmt)
+
+        return count
+
+    def isVisitProcessed(self, visitInfo):
+        """Test whether data from an image has been loaded into the database.
+
+        Used as part of ap_verify metrics.
+
+        Parameters
+        ----------
+        visitInfo : `lsst.afw.image.VisitInfo`
+            The metadata for the image of interest.
+
+        Returns
+        -------
+        isProcessed : `bool`
+            `True` if the data are present, `False` otherwise.
+        """
+        id = visitInfo.getExposureId()
+        table = self._schema.sources
+        idField = table.c.ccdVisitId
+
+        # Hopefully faster than SELECT DISTINCT
+        query = sql.select([idField]).select_from(table) \
+            .where(idField == id).limit(1)
+
+        return self._engine.scalar(query) is not None
+
     def dailyJob(self):
         """Implement daily activities like cleanup/vacuum.
 
