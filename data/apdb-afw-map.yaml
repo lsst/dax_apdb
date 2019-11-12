@@ -1,6 +1,6 @@
-# This file defines mapping between PPDB column names and afw.table column
+# This file defines mapping between APDB column names and afw.table column
 # names. Top-level structure is a dictionary indexed by table name and the
-# values are dictionaries where key is the name of column in PPDB and value
+# values are dictionaries where key is the name of column in APDB and value
 # is the name of the column in afw.table
 
 DiaObject:

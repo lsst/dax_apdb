@@ -1,4 +1,4 @@
 
-from .ppdb import *
-from .ppdbSchema import *
+from .apdb import *
+from .apdbSchema import *
 from .version import *

@@ -1,4 +1,4 @@
-# This file is part of dax_ppdb.
+# This file is part of dax_apdb.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
@@ -19,7 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Unit test for Ppdb class.
+"""Unit test for Apdb class.
 """
 
 import datetime
@@ -27,7 +27,7 @@ import pandas
 import unittest
 
 import lsst.afw.table as afwTable
-from lsst.dax.ppdb import (Ppdb, PpdbConfig, make_minimal_dia_object_schema,
+from lsst.dax.apdb import (Apdb, ApdbConfig, make_minimal_dia_object_schema,
                            make_minimal_dia_source_schema)
 from lsst.sphgeom import Angle, Circle, HtmPixelization, Vector3d, UnitVector3d
 from lsst.geom import SpherePoint
@@ -172,8 +172,8 @@ def _makeForcedSourceCatalogPandas(objects):
     return pandas.DataFrame(data=catalog), oids
 
 
-class PpdbTestCase(unittest.TestCase):
-    """A test case for Ppdb class
+class ApdbTestCase(unittest.TestCase):
+    """A test case for Apdb class
     """
 
     use_pandas = False
@@ -194,15 +194,15 @@ class PpdbTestCase(unittest.TestCase):
         self.assertEqual(len(catalog), size)
 
     def test_makeSchema(self):
-        """Test for making an instance of Ppdb using in-memory sqlite engine.
+        """Test for making an instance of Apdb using in-memory sqlite engine.
         """
         # sqlite does not support default READ_COMMITTED, for in-memory
         # database have to use connection pool
-        config = PpdbConfig(db_url="sqlite://",
+        config = ApdbConfig(db_url="sqlite://",
                             isolation_level="READ_UNCOMMITTED")
-        ppdb = Ppdb(config)
+        apdb = Apdb(config)
         # the essence of a test here is that there are no exceptions.
-        ppdb.makeSchema()
+        apdb.makeSchema()
 
     def test_emptyGetsBaseline0months(self):
         """Test for getting data from empty database.
@@ -212,29 +212,29 @@ class PpdbTestCase(unittest.TestCase):
         """
 
         # set read_sources_months to 0 so that Forced/Sources are None
-        config = PpdbConfig(db_url="sqlite:///",
+        config = ApdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=0,
                             read_forced_sources_months=0)
-        ppdb = Ppdb(config)
-        ppdb.makeSchema()
+        apdb = Apdb(config)
+        apdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=self.use_pandas)
         self.assertIs(res, None)
 
         # get sources by object ID, empty object list
-        res = ppdb.getDiaSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSources([], visit_time, return_pandas=self.use_pandas)
 
         # get forced sources by object ID, empty object list
-        res = ppdb.getDiaForcedSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources([], visit_time, return_pandas=self.use_pandas)
         self.assertIs(res, None)
 
     def test_emptyGetsBaseline(self):
@@ -245,38 +245,38 @@ class PpdbTestCase(unittest.TestCase):
         """
 
         # use non-zero months for Forced/Source fetching
-        config = PpdbConfig(db_url="sqlite:///",
+        config = ApdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
                             read_forced_sources_months=12)
-        ppdb = Ppdb(config)
-        ppdb.makeSchema()
+        apdb = Apdb(config)
+        apdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=self.use_pandas)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by object ID, empty object list, should return None
-        res = ppdb.getDiaSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSources([], visit_time, return_pandas=self.use_pandas)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = ppdb.getDiaSources([1, 2, 3], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSources([1, 2, 3], visit_time, return_pandas=self.use_pandas)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get forced sources by object ID, empty object list
-        res = ppdb.getDiaForcedSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources([], visit_time, return_pandas=self.use_pandas)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = ppdb.getDiaForcedSources([1, 2, 3], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources([1, 2, 3], visit_time, return_pandas=self.use_pandas)
         self._assertCatalog(res, 0, type=self.data_type)
 
     def test_emptyGetsObjectLast(self):
@@ -288,27 +288,27 @@ class PpdbTestCase(unittest.TestCase):
         """
 
         # don't care about sources.
-        config = PpdbConfig(db_url="sqlite:///",
+        config = ApdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             dia_object_index="last_object_table")
-        ppdb = Ppdb(config)
-        ppdb.makeSchema()
+        apdb = Apdb(config)
+        apdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
 
         # get objects by region
-        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
         self._assertCatalog(res, 0, type=self.data_type)
 
     def test_storeObjectsBaseline(self):
         """Store and retrieve DiaObjects."""
 
         # don't care about sources.
-        config = PpdbConfig(db_url="sqlite:///",
+        config = ApdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             dia_object_index="baseline")
-        ppdb = Ppdb(config)
-        ppdb.makeSchema()
+        apdb = Apdb(config)
+        apdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
@@ -320,21 +320,21 @@ class PpdbTestCase(unittest.TestCase):
             catalog = _makeObjectCatalog(pixel_ranges)
 
         # store catalog
-        ppdb.storeDiaObjects(catalog, visit_time)
+        apdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeObjectsLast(self):
         """Store and retrieve DiaObjects using DiaObjectLast table."""
         # don't care about sources.
-        config = PpdbConfig(db_url="sqlite:///",
+        config = ApdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             dia_object_index="last_object_table",
                             object_last_replace=True)
-        ppdb = Ppdb(config)
-        ppdb.makeSchema()
+        apdb = Apdb(config)
+        apdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
@@ -346,20 +346,20 @@ class PpdbTestCase(unittest.TestCase):
             catalog = _makeObjectCatalog(pixel_ranges)
 
         # store catalog
-        ppdb.storeDiaObjects(catalog, visit_time)
+        apdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = ppdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeSources(self):
         """Store and retrieve DiaSources."""
-        config = PpdbConfig(db_url="sqlite:///",
+        config = ApdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
                             read_forced_sources_months=12)
-        ppdb = Ppdb(config)
-        ppdb.makeSchema()
+        apdb = Apdb(config)
+        apdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
@@ -373,28 +373,28 @@ class PpdbTestCase(unittest.TestCase):
             catalog, oids = _makeSourceCatalog(objects)
 
         # save the objects
-        ppdb.storeDiaObjects(objects, visit_time)
+        apdb.storeDiaObjects(objects, visit_time)
 
         # save the sources
-        ppdb.storeDiaSources(catalog)
+        apdb.storeDiaSources(catalog)
 
         # read it back and check sizes
-        res = ppdb.getDiaSourcesInRegion(pixel_ranges, visit_time, self.use_pandas)
+        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time, self.use_pandas)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
         # read it back using different method
-        res = ppdb.getDiaSources(oids, visit_time, self.use_pandas)
+        res = apdb.getDiaSources(oids, visit_time, self.use_pandas)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeForcedSources(self):
         """Store and retrieve DiaForcedSources."""
 
-        config = PpdbConfig(db_url="sqlite:///",
+        config = ApdbConfig(db_url="sqlite:///",
                             isolation_level="READ_UNCOMMITTED",
                             read_sources_months=12,
                             read_forced_sources_months=12)
-        ppdb = Ppdb(config)
-        ppdb.makeSchema()
+        apdb = Apdb(config)
+        apdb.makeSchema()
 
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
@@ -407,18 +407,18 @@ class PpdbTestCase(unittest.TestCase):
             objects = _makeObjectCatalog(pixel_ranges)
             catalog, oids = _makeForcedSourceCatalog(objects)
 
-        ppdb.storeDiaObjects(objects, visit_time)
+        apdb.storeDiaObjects(objects, visit_time)
 
         # save them
-        ppdb.storeDiaForcedSources(catalog)
+        apdb.storeDiaForcedSources(catalog)
 
         # read it back and check sizes
-        res = ppdb.getDiaForcedSources(oids, visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources(oids, visit_time, return_pandas=self.use_pandas)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
 
-class PpdbPandasTestCase(PpdbTestCase):
-    """A test case for Ppdb using Pandas as the input/output"""
+class ApdbPandasTestCase(ApdbTestCase):
+    """A test case for Apdb using Pandas as the input/output"""
 
     use_pandas = True
     data_type = pandas.DataFrame

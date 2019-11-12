@@ -1,4 +1,4 @@
 # -*- python -*-
 from lsst.sconsUtils import scripts
 # Python-only package
-scripts.BasicSConstruct("dax_ppdb", disableCc=True)
+scripts.BasicSConstruct("dax_apdb", disableCc=True)
