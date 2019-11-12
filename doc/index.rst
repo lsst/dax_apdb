@@ -1,5 +1,5 @@
 ##############################
-dax_ppdb documentation preview
+dax_apdb documentation preview
 ##############################
 
 .. This page is for local development only. It isn't published to pipelines.lsst.io.
@@ -9,4 +9,4 @@ dax_ppdb documentation preview
 .. toctree::
    :maxdepth: 1
 
-   lsst.dax.ppdb/index
+   lsst.dax.apdb/index

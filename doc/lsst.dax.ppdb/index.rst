@@ -1,16 +1,16 @@
-.. py:currentmodule:: lsst.dax.ppdb
+.. py:currentmodule:: lsst.dax.apdb
 
-.. _lsst.dax.ppdb:
+.. _lsst.dax.apdb:
 
 #############
-lsst.dax.ppdb
+lsst.dax.apdb
 #############
 
 .. Paragraph that describes what this Python module does and links to related modules and frameworks.
 
-.. .. _lsst.dax.ppdb-using:
+.. .. _lsst.dax.apdb-using:
 
-.. Using lsst.dax.ppdb
+.. Using lsst.dax.apdb
 .. ===================
 
 .. toctree linking to topics related to using the module's APIs.
@@ -18,21 +18,21 @@ lsst.dax.ppdb
 .. .. toctree::
 ..    :maxdepth: 1
 
-.. _lsst.dax.ppdb-contributing:
+.. _lsst.dax.apdb-contributing:
 
 Contributing
 ============
 
-``lsst.dax.ppdb`` is developed at https://github.com/lsst/dax_ppdb.
-You can find Jira issues for this module under the `dax_ppdb <https://jira.lsstcorp.org/issues/?jql=project%20%3D%20DM%20AND%20component%20%3D%20dax_ppdb>`_ component.
+``lsst.dax.apdb`` is developed at https://github.com/lsst/dax_apdb.
+You can find Jira issues for this module under the `dax_apdb <https://jira.lsstcorp.org/issues/?jql=project%20%3D%20DM%20AND%20component%20%3D%20dax_apdb>`_ component.
 
 .. If there are topics related to developing this module (rather than using it), link to this from a toctree placed here.
 
-.. _lsst.dax.ppdb-pyapi:
+.. _lsst.dax.apdb-pyapi:
 
 Python API reference
 ====================
 
-.. automodapi:: lsst.dax.ppdb
+.. automodapi:: lsst.dax.apdb
    :no-main-docstr:
    :no-inheritance-diagram:
