@@ -1,4 +1,4 @@
-# This file is part of dax_ppdb.
+# This file is part of dax_apdb.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
@@ -26,11 +26,11 @@ import lsst.afw.table as afwTable
 import lsst.afw.image as afwImage
 import lsst.geom as geom
 import lsst.daf.base as dafBase
-from lsst.dax.ppdb import Ppdb, PpdbConfig
+from lsst.dax.apdb import Apdb, ApdbConfig
 
 
 def createTestObjects(n_objects, extra_fields):
-    """Create test objects to store in the Ppdb.
+    """Create test objects to store in the Apdb.
 
     Parameters
     ----------
@@ -64,23 +64,23 @@ def createTestObjects(n_objects, extra_fields):
 class TestApVerifyQueries(unittest.TestCase):
 
     def setUp(self):
-        self.ppdbCfg = PpdbConfig()
+        self.apdbCfg = ApdbConfig()
         # Create DB in memory.
-        self.ppdbCfg.db_url = 'sqlite://'
-        self.ppdbCfg.isolation_level = "READ_UNCOMMITTED"
-        self.ppdbCfg.dia_object_index = "baseline"
-        self.ppdbCfg.dia_object_columns = []
-        self.ppdb = Ppdb(
-            config=self.ppdbCfg,
+        self.apdbCfg.db_url = 'sqlite://'
+        self.apdbCfg.isolation_level = "READ_UNCOMMITTED"
+        self.apdbCfg.dia_object_index = "baseline"
+        self.apdbCfg.dia_object_columns = []
+        self.apdb = Apdb(
+            config=self.apdbCfg,
             afw_schemas=dict(DiaObject=afwTable.SourceTable.makeMinimalSchema(),
                              DiaSource=afwTable.SourceTable.makeMinimalSchema()))
-        self.ppdb._schema.makeSchema()
+        self.apdb._schema.makeSchema()
 
     def tearDown(self):
-        del self.ppdb
+        del self.apdb
 
     def test_count_zero_objects(self):
-        value = self.ppdb.countUnassociatedObjects()
+        value = self.apdb.countUnassociatedObjects()
         self.assertEqual(value, 0)
 
     def test_count_objects(self):
@@ -90,9 +90,9 @@ class TestApVerifyQueries(unittest.TestCase):
 
         # nsecs must be an integer, not 1.4e18
         dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
-        self.ppdb.storeDiaObjects(sources, dateTime.toPython())
+        self.apdb.storeDiaObjects(sources, dateTime.toPython())
 
-        value = self.ppdb.countUnassociatedObjects()
+        value = self.apdb.countUnassociatedObjects()
         self.assertEqual(n_created - 1, value)
 
     @staticmethod
@@ -110,10 +110,10 @@ class TestApVerifyQueries(unittest.TestCase):
         for source in sources:
             source['ccdVisitId'] = 2381
 
-        self.ppdb.storeDiaSources(sources)
+        self.apdb.storeDiaSources(sources)
 
-        self.assertTrue(self.ppdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(2381)))
-        self.assertFalse(self.ppdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(42)))
+        self.assertTrue(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(2381)))
+        self.assertFalse(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(42)))
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):

@@ -1,4 +1,4 @@
-# This file is part of dax_ppdb.
+# This file is part of dax_apdb.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
@@ -19,12 +19,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Module responsible for PPDB schema operations.
+"""Module responsible for APDB schema operations.
 """
 
 __all__ = ["ColumnDef", "IndexDef", "TableDef",
            "make_minimal_dia_object_schema", "make_minimal_dia_source_schema",
-           "PpdbSchema"]
+           "ApdbSchema"]
 
 from collections import namedtuple
 import logging
@@ -158,8 +158,8 @@ def _add_suffixes_idx(element, compiler, **kw):
     return text
 
 
-class PpdbSchema(object):
-    """Class for management of PPDB schema.
+class ApdbSchema(object):
+    """Class for management of APDB schema.
 
     Attributes
     ----------
@@ -174,14 +174,14 @@ class PpdbSchema(object):
     forcedSources : `sqlalchemy.Table`
         DiaForcedSource table instance
     visits : `sqlalchemy.Table`
-        PpdbProtoVisits table instance
+        ApdbProtoVisits table instance
 
     Parameters
     ----------
     engine : `sqlalchemy.engine.Engine`
         SQLAlchemy engine instance
     dia_object_index : `str`
-        Indexing mode for DiaObject table, see `PpdbConfig.dia_object_index`
+        Indexing mode for DiaObject table, see `ApdbConfig.dia_object_index`
         for details.
     dia_object_nightly : `bool`
         If `True` then create per-night DiaObject table as well.
@@ -193,7 +193,7 @@ class PpdbSchema(object):
         Name of the YAML file with column mappings.
     afw_schemas : `dict`, optional
         Dictionary with table name for a key and `afw.table.Schema`
-        for a value. Columns in schema will be added to standard PPDB
+        for a value. Columns in schema will be added to standard APDB
         schema (only if standard schema does not have matching column).
     prefix : `str`, optional
         Prefix to add to all scheam elements.
@@ -325,11 +325,11 @@ class PpdbSchema(object):
                 self.forcedSources = table
 
         # special table to track visits, only used by prototype
-        table = Table(self._prefix+'PpdbProtoVisits', self._metadata,
+        table = Table(self._prefix+'ApdbProtoVisits', self._metadata,
                       Column('visitId', sqlalchemy.types.BigInteger, nullable=False),
                       Column('visitTime', sqlalchemy.types.TIMESTAMP, nullable=False),
-                      PrimaryKeyConstraint('visitId', name=self._prefix+'PK_PpdbProtoVisits'),
-                      Index(self._prefix+'IDX_PpdbProtoVisits_vTime', 'visitTime', info=info),
+                      PrimaryKeyConstraint('visitId', name=self._prefix+'PK_ApdbProtoVisits'),
+                      Index(self._prefix+'IDX_ApdbProtoVisits_vTime', 'visitTime', info=info),
                       mysql_engine=mysql_engine,
                       info=info)
         self.visits = table
@@ -370,7 +370,7 @@ class PpdbSchema(object):
         Parameters
         ----------
         table_name : `str`
-            One of known PPDB table names.
+            One of known APDB table names.
         columns : `list` of `str`, optional
             Include only given table columns in schema, by default all columns
             are included.
@@ -438,7 +438,7 @@ class PpdbSchema(object):
         Parameters
         ----------
         table_name : `str`
-            One of known PPDB table names.
+            One of known APDB table names.
 
         Returns
         -------
@@ -460,7 +460,7 @@ class PpdbSchema(object):
         Parameters
         ----------
         table_name : `str`
-            One of known PPDB table names.
+            One of known APDB table names.
 
         Returns
         -------
@@ -485,7 +485,7 @@ class PpdbSchema(object):
             Name of YAML file with extra table information or `None`.
         afw_schemas : `dict`, optional
             Dictionary with table name for a key and `afw.table.Schema`
-            for a value. Columns in schema will be added to standard PPDB
+            for a value. Columns in schema will be added to standard APDB
             schema (only if standard schema does not have matching column).
 
         Returns

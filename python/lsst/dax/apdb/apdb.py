@@ -1,4 +1,4 @@
-# This file is part of dax_ppdb.
+# This file is part of dax_apdb.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
@@ -19,10 +19,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Module defining Ppdb class and related methods.
+"""Module defining Apdb class and related methods.
 """
 
-__all__ = ["PpdbConfig", "Ppdb", "Visit"]
+__all__ = ["ApdbConfig", "Apdb", "Visit"]
 
 from collections import namedtuple
 from contextlib import contextmanager
@@ -40,7 +40,7 @@ from lsst.utils import getPackageDir
 import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
-from . import timer, ppdbSchema
+from . import timer, apdbSchema
 
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
@@ -124,10 +124,10 @@ def _ansi_session(engine):
 def _data_file_name(basename):
     """Return path name of a data file.
     """
-    return os.path.join(getPackageDir("dax_ppdb"), "data", basename)
+    return os.path.join(getPackageDir("dax_apdb"), "data", basename)
 
 
-class PpdbConfig(pexConfig.Config):
+class ApdbConfig(pexConfig.Config):
 
     db_url = Field(dtype=str, doc="SQLAlchemy database connection URI")
     isolation_level = ChoiceField(dtype=str,
@@ -173,13 +173,13 @@ class PpdbConfig(pexConfig.Config):
                                 default=True)
     schema_file = Field(dtype=str,
                         doc="Location of (YAML) configuration file with standard schema",
-                        default=_data_file_name("ppdb-schema.yaml"))
+                        default=_data_file_name("apdb-schema.yaml"))
     extra_schema_file = Field(dtype=str,
                               doc="Location of (YAML) configuration file with extra schema",
-                              default=_data_file_name("ppdb-schema-extra.yaml"))
+                              default=_data_file_name("apdb-schema-extra.yaml"))
     column_map = Field(dtype=str,
                        doc="Location of (YAML) configuration file with column mapping",
-                       default=_data_file_name("ppdb-afw-map.yaml"))
+                       default=_data_file_name("apdb-afw-map.yaml"))
     prefix = Field(dtype=str,
                    doc="Prefix to add to table names and index names",
                    default="")
@@ -203,24 +203,24 @@ class PpdbConfig(pexConfig.Config):
     def validate(self):
         super().validate()
         if self.isolation_level == "READ_COMMITTED" and self.db_url.startswith("sqlite"):
-            raise ValueError("Attempting to run Ppdb with SQLITE and isolation level 'READ_COMMITTED.' "
+            raise ValueError("Attempting to run Apdb with SQLITE and isolation level 'READ_COMMITTED.' "
                              "Use 'READ_UNCOMMITTED' instead.")
 
 
-class Ppdb(object):
+class Apdb(object):
     """Interface to L1 database, hides all database access details.
 
     The implementation is configured via standard ``pex_config`` mechanism
-    using `PpdbConfig` configuration class. For an example of different
+    using `ApdbConfig` configuration class. For an example of different
     configurations check config/ folder.
 
     Parameters
     ----------
-    config : `PpdbConfig`
+    config : `ApdbConfig`
     afw_schemas : `dict`, optional
         Dictionary with table name for a key and `afw.table.Schema`
         for a value. Columns in schema will be added to standard
-        PPDB schema.
+        APDB schema.
     """
 
     def __init__(self, config, afw_schemas=None):
@@ -228,7 +228,7 @@ class Ppdb(object):
         self.config = config
 
         # logging.getLogger('sqlalchemy').setLevel(logging.INFO)
-        _LOG.debug("PPDB Configuration:")
+        _LOG.debug("APDB Configuration:")
         _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
         _LOG.debug("    dia_object_nightly: %s", self.config.dia_object_nightly)
         _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
@@ -256,7 +256,7 @@ class Ppdb(object):
         kw.update(connect_args=conn_args)
         self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
 
-        self._schema = ppdbSchema.PpdbSchema(engine=self._engine,
+        self._schema = apdbSchema.ApdbSchema(engine=self._engine,
                                              dia_object_index=self.config.dia_object_index,
                                              dia_object_nightly=self.config.dia_object_nightly,
                                              schema_file=self.config.schema_file,
@@ -269,7 +269,7 @@ class Ppdb(object):
         """Returns last visit information or `None` if visits table is empty.
 
         Visits table is used by ap_proto to track visit information, it is
-        not a part of the regular PPDB schema.
+        not a part of the regular APDB schema.
 
         Returns
         -------
@@ -349,7 +349,7 @@ class Ppdb(object):
         when calculating pixelization indices.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of PPDB table. Re-mapping of the column names is done for
+        the schema of APDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types
         or units are not changed.
 
@@ -431,7 +431,7 @@ class Ppdb(object):
         when calculating pixelization indices.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of PPDB table. Re-mapping of the column names is done for
+        the schema of APDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types or
         units are not changed.
 
@@ -485,7 +485,7 @@ class Ppdb(object):
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of PPDB table. Re-mapping of the column names is done for
+        the schema of APDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types or
         units are not changed.
 
@@ -609,7 +609,7 @@ class Ppdb(object):
         """Store catalog of DiaObjects from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
-        compatible with the schema of PPDB table:
+        compatible with the schema of APDB table:
 
           - column names must correspond to database table columns
           - some columns names are re-mapped based on column map passed to

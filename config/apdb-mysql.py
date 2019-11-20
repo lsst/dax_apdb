@@ -1,8 +1,8 @@
-import lsst.dax.ppdb.ppdb
-assert type(config)==lsst.dax.ppdb.ppdb.PpdbConfig, 'config is of type %s.%s instead of lsst.dax.ppdb.ppdb.PpdbConfig' % (type(config).__module__, type(config).__name__)
+import lsst.dax.apdb.apdb
+assert type(config)==lsst.dax.apdb.apdb.ApdbConfig, 'config is of type %s.%s instead of lsst.dax.apdb.apdb.ApdbConfig' % (type(config).__module__, type(config).__name__)
 
 # SQLAlchemy database connection URI
-config.db_url="postgresql:///ppdbproto"
+config.db_url="mysql://localhost/apdbproto?unix_socket=/var/lib/mysql/mysql.sock"
 
 # Transaction isolation level
 # Allowed values:
@@ -48,13 +48,13 @@ config.dia_object_columns = [
 config.object_last_replace=True
 
 # Location of (YAML) configuration file with standard schema
-# config.schema_file = 'data/ppdb-schema.yaml'
+# config.schema_file = 'data/apdb-schema.yaml'
 
 # Location of (YAML) configuration file with extra schema
-# config.extra_schema_file = 'data/ppdb-schema-extra.yaml'
+# config.extra_schema_file = 'data/apdb-schema-extra.yaml'
 
 # Location of (YAML) configuration file with column mapping
-# config.column_map = 'data/ppdb-afw-map.yaml'
+# config.column_map = 'data/apdb-afw-map.yaml'
 
 # Prefix to add to table names and index names
 config.prefix=''
