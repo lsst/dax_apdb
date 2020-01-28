@@ -29,18 +29,16 @@ from contextlib import contextmanager
 from datetime import datetime
 import logging
 import numpy as np
-import os
 import pandas
 
 import lsst.geom as geom
 import lsst.afw.table as afwTable
-import lsst.pex.config as pexConfig
 from lsst.pex.config import Field, ChoiceField, ListField
-from lsst.utils import getPackageDir
 import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
-from . import timer, apdbSchema
+from . import timer
+from .apdbSqlSchema import ApdbSqlSchema, ApdbSqlSchemaConfig
 
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
@@ -121,13 +119,7 @@ def _ansi_session(engine):
     return
 
 
-def _data_file_name(basename):
-    """Return path name of a data file.
-    """
-    return os.path.join(getPackageDir("dax_apdb"), "data", basename)
-
-
-class ApdbConfig(pexConfig.Config):
+class ApdbConfig(ApdbSqlSchemaConfig):
 
     db_url = Field(dtype=str, doc="SQLAlchemy database connection URI")
     isolation_level = ChoiceField(dtype=str,
@@ -150,15 +142,6 @@ class ApdbConfig(pexConfig.Config):
     sql_echo = Field(dtype=bool,
                      doc="If True then pass SQLAlchemy echo option.",
                      default=False)
-    dia_object_index = ChoiceField(dtype=str,
-                                   doc="Indexing mode for DiaObject table",
-                                   allowed={'baseline': "Index defined in baseline schema",
-                                            'pix_id_iov': "(pixelId, objectId, iovStart) PK",
-                                            'last_object_table': "Separate DiaObjectLast table"},
-                                   default='baseline')
-    dia_object_nightly = Field(dtype=bool,
-                               doc="Use separate nightly table for DiaObject",
-                               default=False)
     read_sources_months = Field(dtype=int,
                                 doc="Number of months of history to read from DiaSource",
                                 default=12)
@@ -171,18 +154,6 @@ class ApdbConfig(pexConfig.Config):
     object_last_replace = Field(dtype=bool,
                                 doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
                                 default=True)
-    schema_file = Field(dtype=str,
-                        doc="Location of (YAML) configuration file with standard schema",
-                        default=_data_file_name("apdb-schema.yaml"))
-    extra_schema_file = Field(dtype=str,
-                              doc="Location of (YAML) configuration file with extra schema",
-                              default=_data_file_name("apdb-schema-extra.yaml"))
-    column_map = Field(dtype=str,
-                       doc="Location of (YAML) configuration file with column mapping",
-                       default=_data_file_name("apdb-afw-map.yaml"))
-    prefix = Field(dtype=str,
-                   doc="Prefix to add to table names and index names",
-                   default="")
     explain = Field(dtype=bool,
                     doc="If True then run EXPLAIN SQL command on each executed query",
                     default=False)
@@ -207,7 +178,7 @@ class ApdbConfig(pexConfig.Config):
                              "Use 'READ_UNCOMMITTED' instead.")
 
 
-class Apdb(object):
+class Apdb:
     """Interface to L1 database, hides all database access details.
 
     The implementation is configured via standard ``pex_config`` mechanism
@@ -256,14 +227,9 @@ class Apdb(object):
         kw.update(connect_args=conn_args)
         self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
 
-        self._schema = apdbSchema.ApdbSchema(engine=self._engine,
-                                             dia_object_index=self.config.dia_object_index,
-                                             dia_object_nightly=self.config.dia_object_nightly,
-                                             schema_file=self.config.schema_file,
-                                             extra_schema_file=self.config.extra_schema_file,
-                                             column_map=self.config.column_map,
-                                             afw_schemas=afw_schemas,
-                                             prefix=self.config.prefix)
+        self._schema = ApdbSqlSchema(engine=self._engine,
+                                     config=self.config,
+                                     afw_schemas=afw_schemas)
 
     def lastVisit(self):
         """Returns last visit information or `None` if visits table is empty.

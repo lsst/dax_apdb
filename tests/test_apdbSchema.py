@@ -19,14 +19,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Unit test for ApdbSchema class.
+"""Unit test for APDB schema classes.
 """
 
 import os
 import unittest
 
 import lsst.afw.table as afwTable
-from lsst.dax.apdb import ApdbSchema, make_minimal_dia_object_schema, make_minimal_dia_source_schema
+from lsst.dax.apdb import (ApdbSqlSchema, ApdbSqlSchemaConfig,
+                           make_minimal_dia_object_schema, make_minimal_dia_source_schema)
 from lsst.utils import getPackageDir
 import lsst.utils.tests
 from sqlalchemy import create_engine
@@ -52,13 +53,17 @@ def _data_file_name(basename):
     return os.path.join(getPackageDir("dax_apdb"), "data", basename)
 
 
-class ApdbSchemaTestCase(unittest.TestCase):
+def _make_sql_schema_config(**kw):
+    """Make config instance and fill it from keyword arguments.
+    """
+    config = ApdbSqlSchemaConfig()
+    config.update(**kw)
+    return config
+
+
+class ApdbSqlSchemaTestCase(unittest.TestCase):
     """A test case for ApdbSchema class
     """
-
-    @classmethod
-    def setUpClass(cls):
-        pass
 
     def _assertTable(self, table, name, ncol):
         """validation for tables schema.
@@ -84,10 +89,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=None)
+        schema = ApdbSqlSchema(engine=engine, config=config)
         schema.makeSchema()
         self._assertTable(schema.objects, "DiaObject", 92)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -97,11 +103,13 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # create schema using prefix
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            prefix="Pfx")
+
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         prefix="Pfx")
+        schema = ApdbSqlSchema(engine=engine, config=config)
         # Drop existing tables (but we don't check it here)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "PfxDiaObject", 92)
@@ -111,11 +119,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 7)
 
         # use different indexing for DiaObject, need extra schema for that
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="pix_id_iov",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+        config = _make_sql_schema_config(dia_object_index="pix_id_iov",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+        schema = ApdbSqlSchema(engine=engine, config=config)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 3)
@@ -125,11 +133,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # use DiaObjectLast table for DiaObject, need extra schema for that
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="last_object_table",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+        config = _make_sql_schema_config(dia_object_index="last_object_table",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+        schema = ApdbSqlSchema(engine=engine, config=config)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -140,10 +148,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
 
         # baseline schema with nightly DiaObject
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=True,
-                            schema_file=_data_file_name("apdb-schema.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=True,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=None)
+        schema = ApdbSqlSchema(engine=engine, config=config)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 92)
         self._assertTable(schema.objects_nightly, "DiaObjectNightly", 92)
@@ -166,12 +175,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
                            DiaSource=make_minimal_dia_source_schema())
         # column case mismatch should cause exception in constructor
         with self.assertRaises(ValueError):
-            ApdbSchema(engine=engine,
-                       dia_object_index="baseline",
-                       dia_object_nightly=False,
-                       schema_file=_data_file_name("apdb-schema.yaml"),
-                       column_map=_data_file_name("apdb-afw-map.yaml"),
-                       afw_schemas=afw_schemas)
+            config = _make_sql_schema_config(dia_object_index="baseline",
+                                             dia_object_nightly=False,
+                                             schema_file=_data_file_name("apdb-schema.yaml"),
+                                             column_map=_data_file_name("apdb-afw-map.yaml"))
+            ApdbSqlSchema(engine=engine, config=config, afw_schemas=afw_schemas)
 
     def test_getAfwSchema(self):
         """Test for getAfwSchema method.
@@ -182,11 +190,12 @@ class ApdbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema, but use afw column map
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            column_map=_data_file_name("apdb-afw-map.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         column_map=_data_file_name("apdb-afw-map.yaml"))
+        schema = ApdbSqlSchema(engine=engine, config=config)
         schema.makeSchema()
 
         afw_schema, col_map = schema.getAfwSchema("DiaObject")
@@ -225,12 +234,12 @@ class ApdbSchemaTestCase(unittest.TestCase):
         # create standard (baseline) schema, but use afw column map
         afw_schemas = dict(DiaObject=make_minimal_dia_object_schema(),
                            DiaSource=make_minimal_dia_source_schema())
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            column_map=_data_file_name("apdb-afw-map.yaml"),
-                            afw_schemas=afw_schemas)
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         column_map=_data_file_name("apdb-afw-map.yaml"))
+        schema = ApdbSqlSchema(engine=engine, config=config, afw_schemas=afw_schemas)
         schema.makeSchema()
 
         afw_schema, col_map = schema.getAfwSchema("DiaObject")
@@ -267,11 +276,12 @@ class ApdbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema, but use afw column map
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            column_map=_data_file_name("apdb-afw-map.yaml"))
+        config = _make_sql_schema_config(dia_object_index="baseline",
+                                         dia_object_nightly=False,
+                                         schema_file=_data_file_name("apdb-schema.yaml"),
+                                         extra_schema_file=None,
+                                         column_map=_data_file_name("apdb-afw-map.yaml"))
+        schema = ApdbSqlSchema(engine=engine, config=config)
         schema.makeSchema()
 
         col_map = schema.getAfwColumns("DiaObject")
