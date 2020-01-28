@@ -148,7 +148,9 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
     keyspace = Field(dtype=str,
                      doc="Default keyspace for operations.",
                      default="APDB")
-
+    protocol_version = Field(dtype=int,
+                             doc="Cassandra protocol version to use, default is V4",
+                             default=cassandra.ProtocolVersion.V4)
     read_sources_months = Field(dtype=int,
                                 doc="Number of months of history to read from DiaSource",
                                 default=12)
@@ -194,7 +196,8 @@ class ApdbCassandra:
         _LOG.debug("    schema prefix: %s", self.config.prefix)
 
         self._cluster = Cluster(contact_points=self.config.contact_points,
-                                load_balancing_policy=RoundRobinPolicy())
+                                load_balancing_policy=RoundRobinPolicy(),
+                                protocol_version=self.config.protocol_version)
         self._session = self._cluster.connect(keyspace=config.keyspace)
         self._session.row_factory = cassandra.query.named_tuple_factory
 
