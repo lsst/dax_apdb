@@ -28,6 +28,8 @@ from collections import namedtuple
 from datetime import datetime, timedelta
 import logging
 import numpy as np
+import random
+import string
 
 from cassandra.cluster import Cluster
 from cassandra.policies import RoundRobinPolicy
@@ -163,6 +165,10 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
     timer = Field(dtype=bool,
                   doc="If True then print/log timing information",
                   default=False)
+    fillEmptyFields = Field(dtype=bool,
+                            doc=("If True then store random values for fields not explicitly filled, "
+                                 "for testing only"),
+                            default=False)
 
 
 class ApdbCassandra:
@@ -627,15 +633,18 @@ class ApdbCassandra:
                 pass
             elif isinstance(v, datetime):
                 v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1))*1000
-            elif isinstance(v, str):
+            elif isinstance(v, (bytes, str)):
                 pass
             elif isinstance(v, geom.Angle):
                 v = v.asDegrees()
                 if not np.isfinite(v):
                     v = None
             else:
-                if not np.isfinite(v):
-                    v = None
+                try:
+                    if not np.isfinite(v):
+                        v = None
+                except TypeError:
+                    pass
             return v
 
         def quoteId(columnName):
@@ -663,7 +672,15 @@ class ApdbCassandra:
         part_columns = [column for column in part_columns if column not in fields]
         fields += part_columns
 
-        qfields = ','.join([quoteId(field) for field in fields])
+        # set of columns to fill with random values
+        random_columns = []
+        random_column_names = []
+        if self.config.fillEmptyFields:
+            fieldsSet = frozenset(fields)
+            random_columns = [col for col in column_map.values() if col.name not in fieldsSet]
+            random_column_names = [col.name for col in random_columns]
+
+        qfields = ','.join([quoteId(field) for field in fields + random_column_names])
 
         with Timer(table_name + ' query build', self.config.timer):
             queries = cassandra.query.BatchStatement()
@@ -683,6 +700,19 @@ class ApdbCassandra:
                 if part_columns:
                     part_values = self._partitionValues(rec, table_name, part_columns, extra_columns)
                     values += [qValue(value) for value in part_values]
+                for col in random_columns:
+                    if col.type in ("FLOAT", "DOUBLE"):
+                        value = random.random()
+                    elif "INT" in col.type:
+                        value = random.randint(0, 1000)
+                    elif col.type == "DATETIME":
+                        value = random.randint(0, 1000000000)
+                    elif col.type == "BLOB":
+                        # random byte sequence
+                        value = ''.join(random.sample(string.ascii_letters, random.randint(10, 30))).encode()
+                    else:
+                        value = ""
+                    values.append(qValue(value))
                 holders = ','.join(['%s'] * len(values))
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(
                         self._schema.tableName(table_name), qfields, holders)
