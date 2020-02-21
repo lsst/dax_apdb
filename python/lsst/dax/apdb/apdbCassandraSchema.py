@@ -144,8 +144,8 @@ class ApdbCassandraSchema(ApdbBaseSchema):
             column_defs = ['"apdb_part" INT',
                            '"visitId" INT',
                            '"visitTime" TIMESTAMP',
-                           '"lastObjectId" INT',
-                           '"lastSourceId" INT',
+                           '"lastObjectId" BIGINT',
+                           '"lastSourceId" BIGINT',
                            'PRIMARY KEY ("apdb_part", "visitId")']
             return column_defs
 
