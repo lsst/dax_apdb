@@ -24,6 +24,7 @@
 
 __all__ = ["ApdbCassandraSchema", "ApdbCassandraSchemaConfig"]
 
+from datetime import datetime, timedelta
 import logging
 
 from lsst.pex.config import Field
@@ -31,11 +32,16 @@ from .apdbBaseSchema import ApdbBaseSchema, ApdbBaseSchemaConfig
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
+SECONDS_IN_MONTH = 30*24*3600
+
 
 class ApdbCassandraSchemaConfig(ApdbBaseSchemaConfig):
     prefix = Field(dtype=str,
                    doc="Prefix to add to table names",
                    default="")
+    per_month_tables = Field(dtype=bool,
+                             doc="Use per-month tables for sources instead of paritioning by month",
+                             default=False)
 
 
 class ApdbCassandraSchema(ApdbBaseSchema):
@@ -59,6 +65,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
 
         self._session = session
         self._prefix = config.prefix
+        self._per_month_tables = config.per_month_tables
 
         self.visitTableName = self._prefix + "ApdbProtoVisits"
         self.objectTableName = self._prefix + "DiaObject"
@@ -118,18 +125,31 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         for table in tables:
             _LOG.debug("Making table %s", table)
 
+            fullTable = self.tableName(table)
+
+            table_list = [fullTable]
+            if self._per_month_tables and \
+                    table in ("DiaSource", "DiaForcedSource"):
+                # TODO: this should not be hardcoded
+                start_time = datetime(2020, 1, 1)
+                seconds0 = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
+                month0 = seconds0 // SECONDS_IN_MONTH
+                months = range(month0-13, month0+24)
+                table_list = [f"{fullTable}_{month}" for month in months]
+
             if drop:
-                query = 'DROP TABLE IF EXISTS "{}{}"'.format(self._prefix, table)
+                query = 'DROP TABLE IF EXISTS "{}"'.format(fullTable)
                 self._session.execute(query)
 
-            query = "CREATE TABLE "
-            if not drop:
-                query += "IF NOT EXISTS "
-            query += '"{}" ('.format(self.tableName(table))
-            query += ", ".join(self._tableColumns(table))
-            query += ")"
-            _LOG.debug("query: %s", query)
-            self._session.execute(query)
+            for table_name in table_list:
+                query = "CREATE TABLE "
+                if not drop:
+                    query += "IF NOT EXISTS "
+                query += '"{}" ('.format(table_name)
+                query += ", ".join(self._tableColumns(table))
+                query += ")"
+                _LOG.debug("query: %s", query)
+                self._session.execute(query)
 
     def _tableColumns(self, table_name):
         """Return set of columns in a table
