@@ -24,6 +24,7 @@
 
 __all__ = ["ApdbCassandraSchema"]
 
+from datetime import datetime, timedelta
 import logging
 from typing import Optional
 
@@ -31,6 +32,8 @@ from .apdbBaseSchema import ApdbBaseSchema
 
 
 _LOG = logging.getLogger(__name__)
+
+SECONDS_IN_MONTH = 30*24*3600
 
 
 class ApdbCassandraSchema(ApdbBaseSchema):
@@ -60,12 +63,14 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                      BOOL="BOOLEAN")
     """Map YAML column types to Cassandra"""
 
-    def __init__(self, session, schema_file: str, extra_schema_file: Optional[str] = None, prefix: str = ""):
+    def __init__(self, session, schema_file: str, extra_schema_file: Optional[str] = None,
+                 prefix: str = "", per_month_tables: bool = False):
 
         super().__init__(schema_file, extra_schema_file)
 
         self._session = session
         self._prefix = prefix
+        self._per_month_tables = per_month_tables
 
         self.visitTableName = self._prefix + "ApdbProtoVisits"
         self.objectTableName = self._prefix + "DiaObject"
@@ -113,18 +118,31 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         for table in tables:
             _LOG.debug("Making table %s", table)
 
+            fullTable = self.tableName(table)
+
+            table_list = [fullTable]
+            if self._per_month_tables and \
+                    table in ("DiaSource", "DiaForcedSource"):
+                # TODO: this should not be hardcoded
+                start_time = datetime(2020, 1, 1)
+                seconds0 = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
+                month0 = seconds0 // SECONDS_IN_MONTH
+                months = range(month0-13, month0+24)
+                table_list = [f"{fullTable}_{month}" for month in months]
+
             if drop:
-                query = 'DROP TABLE IF EXISTS "{}{}"'.format(self._prefix, table)
+                query = 'DROP TABLE IF EXISTS "{}"'.format(fullTable)
                 self._session.execute(query)
 
-            query = "CREATE TABLE "
-            if not drop:
-                query += "IF NOT EXISTS "
-            query += '"{}" ('.format(self.tableName(table))
-            query += ", ".join(self._tableColumns(table))
-            query += ")"
-            _LOG.debug("query: %s", query)
-            self._session.execute(query)
+            for table_name in table_list:
+                query = "CREATE TABLE "
+                if not drop:
+                    query += "IF NOT EXISTS "
+                query += '"{}" ('.format(table_name)
+                query += ", ".join(self._tableColumns(table))
+                query += ")"
+                _LOG.debug("query: %s", query)
+                self._session.execute(query)
 
     def _tableColumns(self, table_name):
         """Return set of columns in a table
