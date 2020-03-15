@@ -337,7 +337,7 @@ class ApdbCassandra:
                 else:
                     query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
                 queries += [(cassandra.query.SimpleStatement(query), values)]
-        _LOG.debug("getDiaObjects: #queries: %s", len(queries))
+        _LOG.info("getDiaObjects: #queries: %s", len(queries))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
 
         objects = None
@@ -445,12 +445,17 @@ class ApdbCassandra:
         if months == 0 or len(object_ids) == 0:
             return None
 
-        months_list = []
+        months_list = ''
+        tables = [table_name]
         if months > 0:
             seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
             month_now = seconds_now // SECONDS_IN_MONTH
-            months_list = ','.join([str(i) for i in range(month_now-months, month_now+1)])
-            _LOG.debug("_getSources: months_list: %s", months_list)
+            months = list(range(month_now-months, month_now+1))
+            if self.config.per_month_tables:
+                tables = [f"{table_name}_{month}" for month in months]
+            else:
+                months_list = ','.join([str(i) for i in range(month_now-months, month_now+1)])
+                _LOG.debug("_getSources: months_list: %s", months_list)
 
         # Need a separate query for each partition and pixelId range
         queries = []
@@ -459,16 +464,17 @@ class ApdbCassandra:
             part_low = _pixelId2partition(lower)
             part_high = _pixelId2partition(upper-1)
             for part in range(part_low, part_high+1):
-                query = 'SELECT * from "{}" WHERE "apdb_part" = %(part)s AND'.format(table_name)
-                if months_list:
-                    query += ' "apdb_month" IN ({}) AND'.format(months_list)
-                values = dict(part=part, lower=lower, upper=upper)
-                if lower + 1 == upper:
-                    query += ' "pixelId" = %(lower)s'
-                else:
-                    query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
-                queries += [(cassandra.query.SimpleStatement(query), values)]
-        _LOG.debug("_getSources: #queries: %s", len(queries))
+                for table in tables:
+                    query = 'SELECT * from "{}" WHERE "apdb_part" = %(part)s AND'.format(table)
+                    if months_list:
+                        query += ' "apdb_month" IN ({}) AND'.format(months_list)
+                    values = dict(part=part, lower=lower, upper=upper)
+                    if lower + 1 == upper:
+                        query += ' "pixelId" = %(lower)s'
+                    else:
+                        query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
+                    queries += [(cassandra.query.SimpleStatement(query), values)]
+        _LOG.info("_getSources %s: #queries: %s", table_name, len(queries))
         # _LOG.debug("_getSources: queries: %s", queries)
 
         catalog = None
@@ -509,7 +515,7 @@ class ApdbCassandra:
         extra_columns = dict(lastNonForcedSource=dt)
         self._storeObjectsAfw(objs, "DiaObjectLast", extra_columns=extra_columns)
 
-        extra_columns = dict(lastNonForcedSource=dt, validityStart=dt, validityEnd=None)
+        extra_columns = dict(lastNonForcedSource=dt, validityStart=dt)
         self._storeObjectsAfw(objs, "DiaObject", extra_columns=extra_columns)
 
     def storeDiaSources(self, sources, dt):
@@ -533,9 +539,15 @@ class ApdbCassandra:
         dt : `datetime.datetime`
             Tiemstamp used to fill ``midPointTai`` column.
         """
+
+        month = None
+        if self.config.per_month_tables:
+            seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
+            month = seconds_now // SECONDS_IN_MONTH
+
         # this is a lie of course
         extra_columns = dict(midPointTai=dt)
-        self._storeObjectsAfw(sources, "DiaSource", extra_columns=extra_columns)
+        self._storeObjectsAfw(sources, "DiaSource", extra_columns=extra_columns, month=month)
 
     def storeDiaForcedSources(self, sources, dt):
         """Store a set of DIAForcedSources from current visit.
@@ -558,8 +570,13 @@ class ApdbCassandra:
         dt : `datetime.datetime`
             Tiemstamp used to fill ``midPointTai`` column.
         """
+        month = None
+        if self.config.per_month_tables:
+            seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
+            month = seconds_now // SECONDS_IN_MONTH
+
         extra_columns = dict(midPointTai=dt)
-        self._storeObjectsAfw(sources, "DiaForcedSource", extra_columns=extra_columns)
+        self._storeObjectsAfw(sources, "DiaForcedSource", extra_columns=extra_columns, month=month)
 
     def dailyJob(self):
         """Implement daily activities like cleanup/vacuum.
@@ -611,7 +628,7 @@ class ApdbCassandra:
 
         return catalog
 
-    def _storeObjectsAfw(self, objects, table_name, extra_columns=None):
+    def _storeObjectsAfw(self, objects, table_name, extra_columns=None, month=None):
         """Generic store method.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -714,8 +731,10 @@ class ApdbCassandra:
                         value = ""
                     values.append(qValue(value))
                 holders = ','.join(['%s'] * len(values))
-                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(
-                        self._schema.tableName(table_name), qfields, holders)
+                table = self._schema.tableName(table_name)
+                if month is not None:
+                    table = f"{table}_{month}"
+                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
                 # _LOG.debug("query: %r", query)
                 # _LOG.debug("values: %s", values)
                 query = cassandra.query.SimpleStatement(query)
@@ -747,14 +766,12 @@ class ApdbCassandra:
             List of column values.
         """
 
-        if table_name in ("DiaObject", "DiaObjectLast"):
-            if part_columns != ["apdb_part"]:
-                raise ValueError("unexpected partitionig columns for {}: {}".format(
-                    table_name, part_columns))
-            # TODO: expecting level=20 for HTM, need to check
-            part = _pixelId2partition(rec["pixelId"])
-            return [part]
-        if table_name in ("DiaSource", "DiaForcedSource"):
+        part_by_month = False
+        if not self.config.per_month_tables and \
+                table_name in ("DiaSource", "DiaForcedSource"):
+            part_by_month = True
+
+        if part_by_month:
             if part_columns != ["apdb_part", "apdb_month"]:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
                     table_name, part_columns))
@@ -764,4 +781,9 @@ class ApdbCassandra:
             month = value // SECONDS_IN_MONTH
             return [part, month]
         else:
-            raise ValueError("unexpected table {}".format(table_name))
+            if part_columns != ["apdb_part"]:
+                raise ValueError("unexpected partitionig columns for {}: {}".format(
+                    table_name, part_columns))
+            # TODO: expecting level=20 for HTM, need to check
+            part = _pixelId2partition(rec["pixelId"])
+            return [part]
