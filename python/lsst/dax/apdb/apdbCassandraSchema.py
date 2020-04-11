@@ -131,8 +131,9 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                 table_list = [f"{fullTable}_{month}" for month in months]
 
             if drop:
-                query = 'DROP TABLE IF EXISTS "{}"'.format(fullTable)
-                self._session.execute(query)
+                for table_name in table_list:
+                    query = 'DROP TABLE IF EXISTS "{}"'.format(table_name)
+                    self._session.execute(query)
 
             for table_name in table_list:
                 query = "CREATE TABLE "
