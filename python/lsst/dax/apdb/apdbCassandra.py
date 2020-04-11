@@ -36,7 +36,8 @@ from cassandra.policies import RoundRobinPolicy
 import cassandra.query
 import lsst.afw.table as afwTable
 import lsst.geom as geom
-from lsst.pex.config import Field, ListField
+from lsst.pex.config import ChoiceField, Field, ListField
+from lsst.sphgeom import HtmPixelization, Mq3cPixelization, Q3cPixelization
 from . import timer
 from .apdbCassandraSchema import ApdbCassandraSchema, ApdbCassandraSchemaConfig
 
@@ -162,6 +163,14 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
     dia_object_columns = ListField(dtype=str,
                                    doc="List of columns to read from DiaObject, by default read all columns",
                                    default=[])
+    part_pixelization = ChoiceField(dtype=str,
+                                    allowed=dict(htm="HTM pixelization", q3c="Q3C pixelization",
+                                                 mq3c="MQ3C pixelization"),
+                                    doc="Pixelization used for patitioning index.",
+                                    default="mq3c")
+    part_pix_level = Field(dtype=int,
+                           doc="Pixelization level used for patitioning index.",
+                           default=10)
     timer = Field(dtype=bool,
                   doc="If True then print/log timing information",
                   default=False)
@@ -169,6 +178,51 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
                             doc=("If True then store random values for fields not explicitly filled, "
                                  "for testing only"),
                             default=False)
+
+
+class Partitioner:
+    """Class that caclulates indices of the objects for paritioning.
+
+    Used internally by `ApdbCassandra`
+
+    Parameters
+    ----------
+    config : `ApdbCassandraConfig`
+    """
+    def __init__(self, config):
+        pix = config.part_pixelization
+        if pix == "htm":
+            self.pixelator = HtmPixelization(config.part_pix_level)
+        elif pix == "q3c":
+            self.pixelator = Q3cPixelization(config.part_pix_level)
+        elif pix == "mq3c":
+            self.pixelator = Mq3cPixelization(config.part_pix_level)
+        else:
+            raise ValueError(f"unknown pixelization: {pix}")
+
+    def pixels(self, region):
+        """Compute set of the pixel indices for given region.
+
+        Parameters
+        ----------
+        region : `lsst.sphgeom.Region`
+        """
+        # we want finest set of pixels, so ask as many pixel as possible
+        ranges = self.pixelator.envelope(region, 1_000_000)
+        indices = []
+        for lower, upper in ranges:
+            indices += list(range(lower, upper))
+        return indices
+
+    def pixel(self, direction):
+        """Compute the index of the pixel for given direction.
+
+        Parameters
+        ----------
+        direction : `lsst.sphgeom.UnitVector3d`
+        """
+        index = self.pixelator.index(direction)
+        return index
 
 
 class ApdbCassandra:
@@ -200,6 +254,10 @@ class ApdbCassandra:
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
         _LOG.debug("    column_map: %s", self.config.column_map)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
+        _LOG.debug("    part_pixelization: %s", self.config.part_pixelization)
+        _LOG.debug("    part_pix_level: %s", self.config.part_pix_level)
+
+        self._partitioner = Partitioner(config)
 
         self._cluster = Cluster(contact_points=self.config.contact_points,
                                 load_balancing_policy=RoundRobinPolicy(),
@@ -294,13 +352,11 @@ class ApdbCassandra:
         # We probably do not want it ever implemented for Cassandra
         return {}
 
-    def getDiaObjects(self, pixel_ranges, return_pandas=False):
+    def getDiaObjects(self, region, return_pandas=False):
         """Returns catalog of DiaObject instances from given region.
 
-        Objects are searched based on pixelization index and region is
-        determined by the set of indices. There is no assumption on a
-        particular type of index, client is responsible for consistency
-        when calculating pixelization indices.
+        Returned catalog can contain DiaObjects that are outside specified
+        region, it is client responsibility to filter objects if necessary.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of APDB table. Re-mapping of the column names is done for
@@ -311,9 +367,8 @@ class ApdbCassandra:
 
         Parameters
         ----------
-        pixel_ranges : `list` of `tuple`
-            Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
-            This defines set of pixel indices to be included in result.
+        region : `lsst.sphgeom.Region`
+            Spherical region.
         return_pandas : `bool`
             Return a `pandas.DataFrame` instead of
             `lsst.afw.table.SourceCatalog`.
@@ -323,20 +378,14 @@ class ApdbCassandra:
         catalog : `lsst.afw.table.SourceCatalog` or `pandas.DataFrame`
             Catalog containing DiaObject records.
         """
-        # Need a separate query for each partition and pixelId range
+
+        pixels = self._partitioner.pixels(region)
+        _LOG.info("getDiaObjects: #partitions: %s", len(pixels))
+        pixels = ",".join([str(pix) for pix in pixels])
+
         queries = []
-        for lower, upper in pixel_ranges:
-            # need to be careful with inclusive/exclusive ranges
-            part_low = _pixelId2partition(lower)
-            part_high = _pixelId2partition(upper-1)
-            for part in range(part_low, part_high+1):
-                query = 'SELECT * from "DiaObjectLast" WHERE "apdb_part" = %(part)s AND'
-                values = dict(part=part, lower=lower, upper=upper)
-                if lower + 1 == upper:
-                    query += ' "pixelId" = %(lower)s'
-                else:
-                    query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
-                queries += [(cassandra.query.SimpleStatement(query), values)]
+        query = f'SELECT * from "DiaObjectLast" WHERE "apdb_part" IN ({pixels})'
+        queries += [(cassandra.query.SimpleStatement(query), {})]
         _LOG.info("getDiaObjects: #queries: %s", len(queries))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
 
@@ -350,8 +399,9 @@ class ApdbCassandra:
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
-    def getDiaSources(self, pixel_ranges, object_ids, dt, return_pandas=False):
-        """Returns catalog of DiaSource instances given set of DiaObject IDs.
+    def getDiaSources(self, region, object_ids, dt, return_pandas=False):
+        """Returns catalog of DiaSource instances given a region and a set of
+        DiaObject IDs.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of APDB table. Re-mapping of the column names is done for
@@ -360,9 +410,8 @@ class ApdbCassandra:
 
         Parameters
         ----------
-        pixel_ranges : `list` of `tuple`
-            Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
-            This defines set of pixel indices to be included in result.
+        region : `lsst.sphgeom.Region`
+            Spherical region.
         object_ids :
             Collection of DiaObject IDs
         dt : `datetime.datetime`
@@ -377,13 +426,21 @@ class ApdbCassandra:
             Catalog contaning DiaSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
+
+        Note
+        ----
+        Implementation can chose to query database using either region or
+        Object IDs (or both). For performance reasons returned set of sources
+        can contain instances that are either ouside of the region or do not
+        match DiaObject IDs in the input set. It is client responsibility to
+        filter the returned catalog if necessary.
         """
-        return self._getSources(pixel_ranges, object_ids, dt, "DiaSource",
+        return self._getSources(region, object_ids, dt, "DiaSource",
                                 self.config.read_sources_months, return_pandas)
 
-    def getDiaForcedSources(self, pixel_ranges, object_ids, dt, return_pandas=False):
-        """Returns catalog of DiaForcedSource instances matching given
-        DiaObjects.
+    def getDiaForcedSources(self, region, object_ids, dt, return_pandas=False):
+        """Returns catalog of DiaForcedSource instances given a region and a
+        set of DiaObject IDs.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
         the schema of L1 database table. Re-mapping of the column names may
@@ -392,6 +449,8 @@ class ApdbCassandra:
 
         Parameters
         ----------
+        region : `lsst.sphgeom.Region`
+            Spherical region.
         object_ids :
             Collection of DiaObject IDs
         dt : `datetime.datetime`
@@ -406,11 +465,19 @@ class ApdbCassandra:
             Catalog contaning DiaForcedSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
+
+        Note
+        ----
+        Implementation can chose to query database using either region or
+        Object IDs (or both). For performance reasons returned set of sources
+        can contain instances that are either ouside of the region or do not
+        match DiaObject IDs in the input set. It is client responsibility to
+        filter the returned catalog if necessary.
         """
-        return self._getSources(pixel_ranges, object_ids, dt, "DiaForcedSource",
+        return self._getSources(region, object_ids, dt, "DiaForcedSource",
                                 self.config.read_forced_sources_months, return_pandas)
 
-    def _getSources(self, pixel_ranges, object_ids, dt, table_name, months, return_pandas=False):
+    def _getSources(self, region, object_ids, dt, table_name, months, return_pandas=False):
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
@@ -420,9 +487,8 @@ class ApdbCassandra:
 
         Parameters
         ----------
-        pixel_ranges : `list` of `tuple`
-            Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
-            This defines set of pixel indices to be included in result.
+        region : `lsst.sphgeom.Region`
+            Spherical region.
         object_ids :
             Collection of DiaObject IDs
         dt : `datetime.datetime`
@@ -457,23 +523,16 @@ class ApdbCassandra:
                 months_list = ','.join([str(i) for i in range(month_now-months, month_now+1)])
                 _LOG.debug("_getSources: months_list: %s", months_list)
 
-        # Need a separate query for each partition and pixelId range
+        pixels = self._partitioner.pixels(region)
+        _LOG.info("_getSources: %s #partitions: %s", table_name, len(pixels))
+        pixels = ",".join([str(pix) for pix in pixels])
+
         queries = []
-        for lower, upper in pixel_ranges:
-            # need to be careful with inclusive/exclusive ranges
-            part_low = _pixelId2partition(lower)
-            part_high = _pixelId2partition(upper-1)
-            for part in range(part_low, part_high+1):
-                for table in tables:
-                    query = 'SELECT * from "{}" WHERE "apdb_part" = %(part)s AND'.format(table)
-                    if months_list:
-                        query += ' "apdb_month" IN ({}) AND'.format(months_list)
-                    values = dict(part=part, lower=lower, upper=upper)
-                    if lower + 1 == upper:
-                        query += ' "pixelId" = %(lower)s'
-                    else:
-                        query += ' "pixelId" >= %(lower)s AND "pixelId" < %(upper)s'
-                    queries += [(cassandra.query.SimpleStatement(query), values)]
+        for table in tables:
+            query = f'SELECT * from "{table}" WHERE "apdb_part" IN ({pixels})'
+            if months_list:
+                query += f' AND "apdb_month" IN ({months_list})'
+            queries += [(cassandra.query.SimpleStatement(query), {})]
         _LOG.info("_getSources %s: #queries: %s", table_name, len(queries))
         # _LOG.debug("_getSources: queries: %s", queries)
 
@@ -488,7 +547,7 @@ class ApdbCassandra:
         _LOG.debug("found %d %ss", len(catalog), table_name)
         return catalog
 
-    def storeDiaObjects(self, objs, dt):
+    def storeDiaObjects(self, objs, dt, pos_func):
         """Store catalog of DiaObjects from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -511,14 +570,17 @@ class ApdbCassandra:
             Catalog with DiaObject records
         dt : `datetime.datetime`
             Time of the visit
+        pos_func : callable
+            Function of single argument which takes one catalog record as
+            input and returns its position (`lsst.sphgeom.UnitVector3d`).
         """
         extra_columns = dict(lastNonForcedSource=dt)
-        self._storeObjectsAfw(objs, "DiaObjectLast", extra_columns=extra_columns)
+        self._storeObjectsAfw(objs, "DiaObjectLast", dt, pos_func, extra_columns=extra_columns)
 
         extra_columns = dict(lastNonForcedSource=dt, validityStart=dt)
-        self._storeObjectsAfw(objs, "DiaObject", extra_columns=extra_columns)
+        self._storeObjectsAfw(objs, "DiaObject", dt, pos_func, extra_columns=extra_columns)
 
-    def storeDiaSources(self, sources, dt):
+    def storeDiaSources(self, sources, dt, pos_func):
         """Store catalog of DIASources from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -537,7 +599,10 @@ class ApdbCassandra:
         sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaSource records
         dt : `datetime.datetime`
-            Tiemstamp used to fill ``midPointTai`` column.
+            Time of the visit
+        pos_func : callable
+            Function of single argument which takes one catalog record as
+            input and returns its position (`lsst.sphgeom.UnitVector3d`).
         """
 
         month = None
@@ -547,9 +612,9 @@ class ApdbCassandra:
 
         # this is a lie of course
         extra_columns = dict(midPointTai=dt)
-        self._storeObjectsAfw(sources, "DiaSource", extra_columns=extra_columns, month=month)
+        self._storeObjectsAfw(sources, "DiaSource", dt, pos_func, extra_columns=extra_columns, month=month)
 
-    def storeDiaForcedSources(self, sources, dt):
+    def storeDiaForcedSources(self, sources, dt, pos_func):
         """Store a set of DIAForcedSources from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -568,7 +633,10 @@ class ApdbCassandra:
         sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
             Catalog containing DiaForcedSource records
         dt : `datetime.datetime`
-            Tiemstamp used to fill ``midPointTai`` column.
+            Time of the visit
+        pos_func : callable
+            Function of single argument which takes one catalog record as
+            input and returns its position (`lsst.sphgeom.UnitVector3d`).
         """
         month = None
         if self.config.per_month_tables:
@@ -576,7 +644,8 @@ class ApdbCassandra:
             month = seconds_now // SECONDS_IN_MONTH
 
         extra_columns = dict(midPointTai=dt)
-        self._storeObjectsAfw(sources, "DiaForcedSource", extra_columns=extra_columns, month=month)
+        self._storeObjectsAfw(sources, "DiaForcedSource", dt, pos_func,
+                              extra_columns=extra_columns, month=month)
 
     def dailyJob(self):
         """Implement daily activities like cleanup/vacuum.
@@ -628,7 +697,7 @@ class ApdbCassandra:
 
         return catalog
 
-    def _storeObjectsAfw(self, objects, table_name, extra_columns=None, month=None):
+    def _storeObjectsAfw(self, objects, table_name, dt, pos_func, extra_columns=None, month=None):
         """Generic store method.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -639,9 +708,16 @@ class ApdbCassandra:
             Catalog containing object records
         table_name : `str`
             Name of the table as defined in APDB schema.
+        dt : `datetime.datetime`
+            Time of the visit
+        pos_func : callable
+            Function of single argument which takes one catalog record as
+            input and returns its position (`lsst.sphgeom.UnitVector3d`).
         extra_columns : `dict`, optional
             Mapping (column_name, column_value) which gives column values to add
             to every row, only if column is missing in catalog records.
+        month : `int`, optional
+            of not `None` then insert into a per-month table.
         """
 
         def qValue(v):
@@ -715,7 +791,7 @@ class ApdbCassandra:
                     value = extra_columns[field]
                     values.append(qValue(value))
                 if part_columns:
-                    part_values = self._partitionValues(rec, table_name, part_columns, extra_columns)
+                    part_values = self._partitionValues(rec, table_name, part_columns, dt, pos_func)
                     values += [qValue(value) for value in part_values]
                 for col in random_columns:
                     if col.type in ("FLOAT", "DOUBLE"):
@@ -745,7 +821,7 @@ class ApdbCassandra:
         with Timer(table_name + ' insert', self.config.timer):
             self._session.execute(queries)
 
-    def _partitionValues(self, rec, table_name, part_columns, extra_columns=None):
+    def _partitionValues(self, rec, table_name, part_columns, dt, pos_func):
         """Return values of partition columns for a record.
 
         Parameters
@@ -756,9 +832,11 @@ class ApdbCassandra:
             Table name as defined in APDB schema.
         part_columns : `list` of `str`
             Names of the columns for which to return values.
-        extra_columns : `dict`, optional
-            Mapping (column_name, column_value) which gives column values to add
-            to every row, only if column is missing in catalog records.
+        dt : `datetime.datetime`
+            Time of the visit
+        pos_func : callable
+            Function of single argument which takes one catalog record as
+            input and returns its position (`lsst.sphgeom.UnitVector3d`).
 
         Returns
         -------
@@ -770,20 +848,22 @@ class ApdbCassandra:
         if not self.config.per_month_tables and \
                 table_name in ("DiaSource", "DiaForcedSource"):
             part_by_month = True
+        if table_name == "DiaObject":
+            part_by_month = True
 
         if part_by_month:
             if part_columns != ["apdb_part", "apdb_month"]:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
                     table_name, part_columns))
-            # TODO: expecting level=20 for HTM, need to check
-            part = _pixelId2partition(rec["pixelId"])
-            value = int((extra_columns["midPointTai"] - datetime.utcfromtimestamp(0)).total_seconds())
+            pos = pos_func(rec)
+            part = self._partitioner.pixel(pos)
+            value = int((dt - datetime.utcfromtimestamp(0)).total_seconds())
             month = value // SECONDS_IN_MONTH
             return [part, month]
         else:
             if part_columns != ["apdb_part"]:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
                     table_name, part_columns))
-            # TODO: expecting level=20 for HTM, need to check
-            part = _pixelId2partition(rec["pixelId"])
+            pos = pos_func(rec)
+            part = self._partitioner.pixel(pos)
             return [part]
