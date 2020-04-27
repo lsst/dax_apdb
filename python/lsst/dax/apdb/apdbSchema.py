@@ -306,8 +306,8 @@ class ApdbSchema(object):
             info2 = info.copy()
             info2.update(oracle_iot=oracle_iot)
             table = Table(self._prefix+'DiaObjectLast', self._metadata,
-                          *(self._tableColumns('DiaObjectLast') +
-                            self._tableIndices('DiaObjectLast', info)),
+                          *(self._tableColumns('DiaObjectLast')
+                            + self._tableIndices('DiaObjectLast', info)),
                           mysql_engine=mysql_engine,
                           info=info2)
             self.objects_last = table
@@ -315,8 +315,8 @@ class ApdbSchema(object):
         # for all other tables use index definitions in schema
         for table_name in ('DiaSource', 'SSObject', 'DiaForcedSource', 'DiaObject_To_Object_Match'):
             table = Table(self._prefix+table_name, self._metadata,
-                          *(self._tableColumns(table_name) +
-                            self._tableIndices(table_name, info)),
+                          *(self._tableColumns(table_name)
+                            + self._tableIndices(table_name, info)),
                           mysql_engine=mysql_engine,
                           info=info)
             if table_name == 'DiaSource':
