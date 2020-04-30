@@ -30,8 +30,9 @@ import numpy as np
 import random
 import string
 
+from cassandra import ConsistencyLevel
 from cassandra.cluster import Cluster
-from cassandra.policies import RoundRobinPolicy
+from cassandra.policies import RoundRobinPolicy, WhiteListRoundRobinPolicy, AddressTranslator
 import cassandra.query
 import lsst.afw.table as afwTable
 import lsst.geom as geom
@@ -144,9 +145,15 @@ class ApdbCassandraConfig(ApdbConfig):
     contact_points = ListField(dtype=str,
                                doc="The list of contact points to try connecting for cluster discovery.",
                                default=["127.0.0.1"])
+    private_ips = ListField(dtype=str,
+                            doc="List of internal IP addresses for contact_points.",
+                            default=[])
     keyspace = Field(dtype=str,
                      doc="Default keyspace for operations.",
                      default="APDB")
+    consistency = Field(dtype=str,
+                        doc="Name for consistency level, defalut: ONE, try QUORUM.",
+                        default="ONE")
     protocol_version = Field(dtype=int,
                              doc="Cassandra protocol version to use, default is V4",
                              default=cassandra.ProtocolVersion.V4)
@@ -227,6 +234,14 @@ class Partitioner:
         return index
 
 
+class _AddressTranslator(AddressTranslator):
+    def __init__(self, public_ips, private_ips):
+        self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
+
+    def translate(self, private_ip):
+        return self._map.get(private_ip, private_ip)
+
+
 class ApdbCassandra:
     """Implementation of APDB database on to of Apache Cassandra.
 
@@ -261,8 +276,18 @@ class ApdbCassandra:
 
         self._partitioner = Partitioner(config)
 
+        if config.private_ips:
+            loadBalancePolicy = WhiteListRoundRobinPolicy(hosts=config.contact_points)
+            addressTranslator = _AddressTranslator(config.contact_points, config.private_ips)
+        else:
+            loadBalancePolicy = RoundRobinPolicy()
+            addressTranslator = None
+
+        self._consistency = getattr(ConsistencyLevel, config.consistency)
+
         self._cluster = Cluster(contact_points=self.config.contact_points,
-                                load_balancing_policy=RoundRobinPolicy(),
+                                load_balancing_policy=loadBalancePolicy,
+                                address_translator=addressTranslator,
                                 protocol_version=self.config.protocol_version)
         self._session = self._cluster.connect(keyspace=config.keyspace)
         self._session.row_factory = cassandra.query.named_tuple_factory
@@ -329,7 +354,7 @@ class ApdbCassandra:
 
         queries = []
         query = f'SELECT * from "DiaObjectLast" WHERE "apdb_part" IN ({pixels})'
-        queries += [(cassandra.query.SimpleStatement(query), {})]
+        queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._consistency), {})]
         _LOG.info("getDiaObjects: #queries: %s", len(queries))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
 
@@ -476,7 +501,7 @@ class ApdbCassandra:
             query = f'SELECT * from "{table}" WHERE "apdb_part" IN ({pixels})'
             if months_list:
                 query += f' AND "apdb_month" IN ({months_list})'
-            queries += [(cassandra.query.SimpleStatement(query), {})]
+            queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._consistency), {})]
         _LOG.info("_getSources %s: #queries: %s", table_name, len(queries))
         # _LOG.debug("_getSources: queries: %s", queries)
 
@@ -720,7 +745,7 @@ class ApdbCassandra:
         qfields = ','.join([quoteId(field) for field in fields + random_column_names])
 
         with Timer(table_name + ' query build', self.config.timer):
-            queries = cassandra.query.BatchStatement()
+            queries = cassandra.query.BatchStatement(consistency_level=self._consistency)
             for rec in objects:
                 values = []
                 for field in afw_fields:
@@ -757,7 +782,7 @@ class ApdbCassandra:
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
                 # _LOG.debug("query: %r", query)
                 # _LOG.debug("values: %s", values)
-                query = cassandra.query.SimpleStatement(query)
+                query = cassandra.query.SimpleStatement(query, consistency_level=self._consistency)
                 queries.add(query, values)
 
         # _LOG.debug("query: %s", query)
