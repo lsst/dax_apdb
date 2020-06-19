@@ -155,9 +155,12 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
     keyspace = Field(dtype=str,
                      doc="Default keyspace for operations.",
                      default="APDB")
-    consistency = Field(dtype=str,
-                        doc="Name for consistency level, defalut: ONE, try QUORUM.",
-                        default="ONE")
+    read_consistency = Field(dtype=str,
+                             doc="Name for consistency level of read operations, defalut: ONE, try QUORUM.",
+                             default="ONE")
+    write_consistency = Field(dtype=str,
+                              doc="Name for consistency level of write operations, defalut: ONE, try QUORUM.",
+                              default="ONE")
     protocol_version = Field(dtype=int,
                              doc="Cassandra protocol version to use, default is V4",
                              default=cassandra.ProtocolVersion.V4)
@@ -281,7 +284,8 @@ class ApdbCassandra:
             loadBalancePolicy = RoundRobinPolicy()
             addressTranslator = None
 
-        self._consistency = getattr(ConsistencyLevel, config.consistency)
+        self._read_consistency = getattr(ConsistencyLevel, config.read_consistency)
+        self._write_consistency = getattr(ConsistencyLevel, config.write_consistency)
 
         self._cluster = Cluster(contact_points=self.config.contact_points,
                                 load_balancing_policy=loadBalancePolicy,
@@ -410,7 +414,7 @@ class ApdbCassandra:
 
         queries = []
         query = f'SELECT * from "DiaObjectLast" WHERE "apdb_part" IN ({pixels})'
-        queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._consistency), {})]
+        queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})]
         _LOG.info("getDiaObjects: #queries: %s", len(queries))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
 
@@ -557,7 +561,10 @@ class ApdbCassandra:
             query = f'SELECT * from "{table}" WHERE "apdb_part" IN ({pixels})'
             if months_list:
                 query += f' AND "apdb_month" IN ({months_list})'
-            queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._consistency), {})]
+            queries += [(
+                cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency),
+                {}
+            )]
         _LOG.info("_getSources %s: #queries: %s", table_name, len(queries))
         # _LOG.debug("_getSources: queries: %s", queries)
 
@@ -801,7 +808,7 @@ class ApdbCassandra:
         qfields = ','.join([quoteId(field) for field in fields + random_column_names])
 
         with Timer(table_name + ' query build', self.config.timer):
-            queries = cassandra.query.BatchStatement(consistency_level=self._consistency)
+            queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
             for rec in objects:
                 values = []
                 for field in afw_fields:
@@ -838,7 +845,7 @@ class ApdbCassandra:
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
                 # _LOG.debug("query: %r", query)
                 # _LOG.debug("values: %s", values)
-                query = cassandra.query.SimpleStatement(query, consistency_level=self._consistency)
+                query = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
                 queries.add(query, values)
 
         # _LOG.debug("query: %s", query)
