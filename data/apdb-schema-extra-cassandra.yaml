@@ -1,0 +1,137 @@
+# Extra schema definitions compared to `cat` schema used by PPDB implementation.
+
+# DiaObject needs a special column for time of last seen DiaSource
+table: DiaObject
+columns:
+- name: lastNonForcedSource
+  type: DATETIME
+  nullable: false
+  description: Last time when non-forced DIASource was seen for this object.
+- name: nDiaSources
+  type: INT
+  nullable: true
+  description: Total number of associated DiaSources across all bands.
+  default: null
+
+---
+# DiaObjectLast uses subset of columns from DiaObject and different index
+table: DiaObjectLast
+columns:
+- name: apdb_part
+  type: INT
+  nullable: false
+  description: Special column used for partitioning, typically some spatial index.
+- name: diaObjectId
+  type: BIGINT
+  nullable: false
+  description: Unique id.
+  ucd: meta.id;src
+- name: lastNonForcedSource
+  type: DATETIME
+  nullable: false
+  description: Last time when non-forced DIASource was seen for this object.
+- name: ra
+  type: DOUBLE
+  nullable: false
+  description: RA-coordinate of the position of the object at time radecTai.
+  ucd: pos.eq.ra
+  unit: deg
+- name: raErr
+  type: FLOAT
+  nullable: false
+  description: Uncertainty of ra.
+  ucd: stat.error;pos.eq.ra
+  unit: deg
+- name: decl
+  type: DOUBLE
+  nullable: false
+  description: Decl-coordinate of the position of the object at time radecTai.
+  ucd: pos.eq.dec
+  unit: deg
+- name: declErr
+  type: FLOAT
+  nullable: false
+  description: Uncertainty of decl.
+  ucd: stat.error;pos.eq.dec
+  unit: deg
+- name: ra_decl_Cov
+  type: FLOAT
+  nullable: false
+  description: Covariance between ra and decl.
+  unit: deg^2
+- name: radecTai
+  type: DOUBLE
+  nullable: false
+  description: Time at which the object was at a position ra/decl.
+  ucd: time.epoch
+- name: pmRa
+  type: FLOAT
+  nullable: false
+  description: Proper motion (ra).
+  ucd: pos.pm
+  unit: mas/yr
+- name: pmRaErr
+  type: FLOAT
+  nullable: false
+  description: Uncertainty of pmRa.
+  ucd: stat.error;pos.pm
+  unit: mas/yr
+- name: pmDecl
+  type: FLOAT
+  nullable: false
+  description: Proper motion (decl).
+  ucd: pos.pm
+  unit: mas/yr
+- name: pmDeclErr
+  type: FLOAT
+  nullable: false
+  description: Uncertainty of pmDecl.
+  ucd: stat.error;pos.pm
+  unit: mas/yr
+- name: parallax
+  type: FLOAT
+  nullable: false
+  description: Parallax.
+  ucd: pos.parallax
+  unit: mas
+- name: parallaxErr
+  type: FLOAT
+  nullable: false
+  description: Uncertainty of parallax.
+  ucd: stat.error;pos.parallax
+  unit: mas
+- name: pmRa_pmDecl_Cov
+  type: FLOAT
+  nullable: false
+  description: Covariance of pmRa and pmDecl.
+  ucd: stat.covariance;pos.eq
+  unit: (mas/yr)^2
+- name: pmRa_parallax_Cov
+  type: FLOAT
+  nullable: false
+  description: Covariance of pmRa and parallax.
+  ucd: stat.covariance
+  unit: mas^2/yr
+- name: pmDecl_parallax_Cov
+  type: FLOAT
+  nullable: false
+  description: Covariance of pmDecl and parallax.
+  ucd: stat.covariance
+  unit: mas^2/yr
+- name: pixelId
+  type: BIGINT
+  nullable: false
+  description: HTM index.
+indices:
+- name: Part_DiaObjectLast
+  columns: [apdb_part]
+  type: PARTITION
+- name: PK_DiaObjectLast
+  columns:
+  - pixelId
+  - diaObjectId
+  type: PRIMARY
+- name: IDX_DiaObjLast_diaObjId
+  columns:
+  - diaObjectId
+  type: INDEX
