@@ -163,12 +163,14 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
     keyspace = Field(dtype=str,
                      doc="Default keyspace for operations.",
                      default="apdb")
-    read_consistency = Field(dtype=str,
-                             doc="Name for consistency level of read operations, defalut: QUORUM, can be ONE.",
-                             default="QUORUM")
-    write_consistency = Field(dtype=str,
-                              doc="Name for consistency level of write operations, defalut: QUORUM, can be ONE.",
-                              default="QUORUM")
+    read_consistency = Field(
+        dtype=str,
+        doc="Name for consistency level of read operations, defalut: QUORUM, can be ONE.",
+        default="QUORUM")
+    write_consistency = Field(
+        dtype=str,
+        doc="Name for consistency level of write operations, defalut: QUORUM, can be ONE.",
+        default="QUORUM")
     protocol_version = Field(dtype=int,
                              doc="Cassandra protocol version to use, default is V4",
                              default=cassandra.ProtocolVersion.V4)
