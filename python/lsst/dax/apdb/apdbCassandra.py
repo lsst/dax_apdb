@@ -999,7 +999,7 @@ class ApdbCassandra:
         df_fields = [column for column in objects.columns
                      if column not in extra_fields]
 
-        column_map = self._schema.getAfwColumns(table_name)
+        column_map = self._schema.getColumnMap(table_name)
         # list of columns (as in cat schema)
         fields = [column_map[field].name for field in df_fields if field in column_map]
         fields += extra_fields
