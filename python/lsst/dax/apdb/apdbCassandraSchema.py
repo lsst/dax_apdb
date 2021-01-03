@@ -41,7 +41,7 @@ class ApdbCassandraSchemaConfig(ApdbBaseSchemaConfig):
                    default="")
     per_month_tables = Field(dtype=bool,
                              doc="Use per-month tables for sources instead of paritioning by month",
-                             default=False)
+                             default=True)
 
 
 class ApdbCassandraSchema(ApdbBaseSchema):

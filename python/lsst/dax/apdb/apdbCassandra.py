@@ -28,6 +28,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta
 import logging
 import numpy as np
+import pandas
 import random
 import string
 
@@ -78,6 +79,13 @@ def _filterObjectIds(rows, object_ids):
     for row in rows:
         if row.diaObjectId in object_id_set:
             yield row
+
+
+def _nrows(table):
+    if isinstance(table, pandas.DataFrame):
+        return table.shape[0]
+    else:
+        return len(table)
 
 
 class Timer(object):
@@ -154,13 +162,15 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
                             default=[])
     keyspace = Field(dtype=str,
                      doc="Default keyspace for operations.",
-                     default="APDB")
-    read_consistency = Field(dtype=str,
-                             doc="Name for consistency level of read operations, defalut: ONE, try QUORUM.",
-                             default="ONE")
-    write_consistency = Field(dtype=str,
-                              doc="Name for consistency level of write operations, defalut: ONE, try QUORUM.",
-                              default="ONE")
+                     default="apdb")
+    read_consistency = Field(
+        dtype=str,
+        doc="Name for consistency level of read operations, defalut: QUORUM, can be ONE.",
+        default="QUORUM")
+    write_consistency = Field(
+        dtype=str,
+        doc="Name for consistency level of write operations, defalut: QUORUM, can be ONE.",
+        default="QUORUM")
     protocol_version = Field(dtype=int,
                              doc="Cassandra protocol version to use, default is V4",
                              default=cassandra.ProtocolVersion.V4)
@@ -236,11 +246,36 @@ class Partitioner:
 
 
 class _AddressTranslator(AddressTranslator):
+    """Translate internal IP address to external.
+
+    Only used for docker-based setup, not viable long-term solution.
+    """
     def __init__(self, public_ips, private_ips):
         self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
 
     def translate(self, private_ip):
         return self._map.get(private_ip, private_ip)
+
+
+class _PandasRowFactory:
+    """Create pandas DataFrame from Cassandra result set.
+    """
+    def __call__(self, colnames, rows):
+        """Convert result set into output catalog.
+
+        Parameters
+        ----------
+        colname : `list` for `str`
+            Names of the columns.
+        rows : `list` of `tuple`
+            Result rows
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            DataFrame with the result set.
+        """
+        return pandas.DataFrame.from_records(rows, columns=colnames)
 
 
 class ApdbCassandra:
@@ -319,6 +354,8 @@ class ApdbCassandra:
         visit : `Visit` or `None`
             Last stored visit info or `None` if there was nothing stored yet.
         """
+        self._session.row_factory = cassandra.query.tuple_factory
+
         query = 'SELECT MAX("visitId") FROM "{}" WHERE "apdb_part" = 0'.format(
                 self._schema.visitTableName)
         rows = self._session.execute(query)
@@ -381,7 +418,7 @@ class ApdbCassandra:
         # We probably do not want it ever implemented for Cassandra
         return {}
 
-    def getDiaObjects(self, region, return_pandas=False):
+    def getDiaObjects(self, region, return_pandas=True):
         """Returns catalog of DiaObject instances from given region.
 
         Returned catalog can contain DiaObjects that are outside specified
@@ -407,6 +444,11 @@ class ApdbCassandra:
         catalog : `lsst.afw.table.SourceCatalog` or `pandas.DataFrame`
             Catalog containing DiaObject records.
         """
+        if return_pandas:
+            self._session.row_factory = _PandasRowFactory()
+        else:
+            self._session.row_factory = cassandra.query.named_tuple_factory
+        self._session.default_fetch_size = None
 
         pixels = self._partitioner.pixels(region)
         _LOG.info("getDiaObjects: #partitions: %s", len(pixels))
@@ -420,15 +462,25 @@ class ApdbCassandra:
 
         objects = None
         with Timer('DiaObject select', self.config.timer):
+            # submit all queries
             futures = [self._session.execute_async(query, values, timeout=120.) for query, values in queries]
-            for future in futures:
-                rows = future.result()
-                objects = self._convertResult(rows, "DiaObject", catalog=objects)
+            if return_pandas:
+                # TODO: This orders result processing which is not very efficient
+                dataframes = [future.result()._current_rows for future in futures]
+                # concatenate all frames
+                if len(dataframes) == 1:
+                    objects = dataframes[0]
+                else:
+                    objects = pandas.concat(dataframes)
+            else:
+                for future in futures:
+                    rows = future.result()
+                    objects = self._convertResult(rows, "DiaObject", catalog=objects)
 
-        _LOG.debug("found %s DiaObjects", len(objects))
+        _LOG.debug("found %s DiaObjects", _nrows(objects))
         return objects
 
-    def getDiaSources(self, region, object_ids, dt, return_pandas=False):
+    def getDiaSources(self, region, object_ids, dt, return_pandas=True):
         """Returns catalog of DiaSource instances given a region and a set of
         DiaObject IDs.
 
@@ -540,6 +592,12 @@ class ApdbCassandra:
         if months == 0 or len(object_ids) == 0:
             return None
 
+        if return_pandas:
+            self._session.row_factory = _PandasRowFactory()
+        else:
+            self._session.row_factory = cassandra.query.named_tuple_factory
+        self._session.default_fetch_size = None
+
         months_list = ''
         tables = [table_name]
         if months > 0:
@@ -570,13 +628,25 @@ class ApdbCassandra:
 
         catalog = None
         with Timer(table_name + ' select', self.config.timer):
+            # submit all queries
             futures = [self._session.execute_async(query, values, timeout=120.) for query, values in queries]
-            for future in futures:
-                rows = future.result()
-                rows = _filterObjectIds(rows, object_ids)
-                catalog = self._convertResult(rows, table_name, catalog=catalog)
+            if return_pandas:
+                # TODO: This orders result processing which is not very efficient
+                dataframes = [future.result()._current_rows for future in futures]
+                # concatenate all frames
+                if len(dataframes) == 1:
+                    catalog = dataframes[0]
+                else:
+                    catalog = pandas.concat(dataframes)
+                # filter by given object IDs
+                catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
+            else:
+                for future in futures:
+                    rows = future.result()
+                    rows = _filterObjectIds(rows, object_ids)
+                    catalog = self._convertResult(rows, table_name, catalog=catalog)
 
-        _LOG.debug("found %d %ss", len(catalog), table_name)
+        _LOG.debug("found %d %ss", _nrows(catalog), table_name)
         return catalog
 
     def storeDiaObjects(self, objs, dt, pos_func):
@@ -606,11 +676,21 @@ class ApdbCassandra:
             Function of single argument which takes one catalog record as
             input and returns its position (`lsst.sphgeom.UnitVector3d`).
         """
-        extra_columns = dict(lastNonForcedSource=dt)
-        self._storeObjectsAfw(objs, "DiaObjectLast", dt, pos_func, extra_columns=extra_columns)
+        if isinstance(objs, pandas.DataFrame):
 
-        extra_columns = dict(lastNonForcedSource=dt, validityStart=dt)
-        self._storeObjectsAfw(objs, "DiaObject", dt, pos_func, extra_columns=extra_columns)
+            extra_columns = dict(lastNonForcedSource=dt)
+            self._storeObjectsPandas(objs, "DiaObjectLast", dt, pos_func, extra_columns=extra_columns)
+
+            extra_columns = dict(lastNonForcedSource=dt, validityStart=dt)
+            self._storeObjectsPandas(objs, "DiaObject", dt, pos_func, extra_columns=extra_columns)
+
+        else:
+
+            extra_columns = dict(lastNonForcedSource=dt)
+            self._storeObjectsAfw(objs, "DiaObjectLast", dt, pos_func, extra_columns=extra_columns)
+
+            extra_columns = dict(lastNonForcedSource=dt, validityStart=dt)
+            self._storeObjectsAfw(objs, "DiaObject", dt, pos_func, extra_columns=extra_columns)
 
     def storeDiaSources(self, sources, dt, pos_func):
         """Store catalog of DIASources from current visit.
@@ -644,7 +724,12 @@ class ApdbCassandra:
 
         # this is a lie of course
         extra_columns = dict(midPointTai=dt)
-        self._storeObjectsAfw(sources, "DiaSource", dt, pos_func, extra_columns=extra_columns, month=month)
+        if isinstance(sources, pandas.DataFrame):
+            self._storeObjectsPandas(sources, "DiaSource", dt, pos_func,
+                                     extra_columns=extra_columns, month=month)
+        else:
+            self._storeObjectsAfw(sources, "DiaSource", dt, pos_func,
+                                  extra_columns=extra_columns, month=month)
 
     def storeDiaForcedSources(self, sources, dt, pos_func):
         """Store a set of DIAForcedSources from current visit.
@@ -676,8 +761,12 @@ class ApdbCassandra:
             month = seconds_now // SECONDS_IN_MONTH
 
         extra_columns = dict(midPointTai=dt)
-        self._storeObjectsAfw(sources, "DiaForcedSource", dt, pos_func,
-                              extra_columns=extra_columns, month=month)
+        if isinstance(sources, pandas.DataFrame):
+            self._storeObjectsPandas(sources, "DiaForcedSource", dt, pos_func,
+                                     extra_columns=extra_columns, month=month)
+        else:
+            self._storeObjectsAfw(sources, "DiaForcedSource", dt, pos_func,
+                                  extra_columns=extra_columns, month=month)
 
     def dailyJob(self):
         """Implement daily activities like cleanup/vacuum.
@@ -850,6 +939,129 @@ class ApdbCassandra:
 
         # _LOG.debug("query: %s", query)
         _LOG.info("%s: will store %d records", self._schema.tableName(table_name), len(objects))
+        with Timer(table_name + ' insert', self.config.timer):
+            self._session.execute(queries)
+
+    def _storeObjectsPandas(self, objects, table_name, dt, pos_func, extra_columns=None, month=None):
+        """Generic store method.
+
+        Takes catalog of records and stores a bunch of objects in a table.
+
+        Parameters
+        ----------
+        objects : `pandas.DataFrame`
+            Catalog containing object records
+        table_name : `str`
+            Name of the table as defined in APDB schema.
+        dt : `datetime.datetime`
+            Time of the visit
+        pos_func : callable
+            Function of single argument which takes one catalog record as
+            input and returns its position (`lsst.sphgeom.UnitVector3d`).
+        extra_columns : `dict`, optional
+            Mapping (column_name, column_value) which gives column values to add
+            to every row, only if column is missing in catalog records.
+        month : `int`, optional
+            of not `None` then insert into a per-month table.
+        """
+
+        def qValue(v):
+            """Transform object into a value for query"""
+            if v is None:
+                pass
+            elif isinstance(v, datetime):
+                v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1))*1000
+            elif isinstance(v, (bytes, str)):
+                pass
+            elif isinstance(v, geom.Angle):
+                v = v.asDegrees()
+                if not np.isfinite(v):
+                    v = None
+            else:
+                try:
+                    if not np.isfinite(v):
+                        v = None
+                except TypeError:
+                    pass
+            return v
+
+        def quoteId(columnName):
+            """Smart quoting for column names.
+            Lower-case names are not quoted.
+            """
+            if not columnName.islower():
+                columnName = '"' + columnName + '"'
+            return columnName
+
+        # use extra columns if specified
+        extra_fields = list((extra_columns or {}).keys())
+
+        df_fields = [column for column in objects.columns
+                     if column not in extra_fields]
+
+        column_map = self._schema.getColumnMap(table_name)
+        # list of columns (as in cat schema)
+        fields = [column_map[field].name for field in df_fields if field in column_map]
+        fields += extra_fields
+
+        # some partioning columns may not be in dataframe, they need to be added explicitly
+        part_columns = self._schema.partitionColumns(table_name)
+        part_columns = [column for column in part_columns if column not in fields]
+        fields += part_columns
+
+        # set of columns to fill with random values
+        random_columns = []
+        random_column_names = []
+        if self.config.fillEmptyFields:
+            fieldsSet = frozenset(fields)
+            random_columns = [col for col in column_map.values() if col.name not in fieldsSet]
+            random_column_names = [col.name for col in random_columns]
+
+        qfields = ','.join([quoteId(field) for field in fields + random_column_names])
+
+        with Timer(table_name + ' query build', self.config.timer):
+            queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
+            for rec in objects.itertuples(index=False):
+                values = []
+                for field in df_fields:
+                    if field not in column_map:
+                        continue
+                    value = getattr(rec, field)
+                    if column_map[field].type == "DATETIME" and np.isfinite(value):
+                        # Cassandra datetime is in milliseconds
+                        value = int(value * 1000)
+                    values.append(qValue(value))
+                for field in extra_fields:
+                    value = extra_columns[field]
+                    values.append(qValue(value))
+                if part_columns:
+                    part_values = self._partitionValues(rec, table_name, part_columns, dt, pos_func)
+                    values += [qValue(value) for value in part_values]
+                for col in random_columns:
+                    if col.type in ("FLOAT", "DOUBLE"):
+                        value = random.random()
+                    elif "INT" in col.type:
+                        value = random.randint(0, 1000)
+                    elif col.type == "DATETIME":
+                        value = random.randint(0, 1000000000)
+                    elif col.type == "BLOB":
+                        # random byte sequence
+                        value = ''.join(random.sample(string.ascii_letters, random.randint(10, 30))).encode()
+                    else:
+                        value = ""
+                    values.append(qValue(value))
+                holders = ','.join(['%s'] * len(values))
+                table = self._schema.tableName(table_name)
+                if month is not None:
+                    table = f"{table}_{month}"
+                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
+                # _LOG.debug("query: %r", query)
+                # _LOG.debug("values: %s", values)
+                query = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
+                queries.add(query, values)
+
+        # _LOG.debug("query: %s", query)
+        _LOG.info("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
         with Timer(table_name + ' insert', self.config.timer):
             self._session.execute(queries)
 
