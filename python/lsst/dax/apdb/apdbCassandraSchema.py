@@ -131,10 +131,14 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                 table_list = [f"{fullTable}_{month}" for month in months]
 
             if drop:
-                for table_name in table_list:
-                    query = 'DROP TABLE IF EXISTS "{}"'.format(table_name)
-                    self._session.execute(query)
+                queries = [f'DROP TABLE IF EXISTS "{table_name}"' for table_name in table_list]
+                futures = [self._session.execute_async(query, timeout=None) for query in queries]
+                for future in futures:
+                    _LOG.debug("wait for query: %s", future.query)
+                    future.result()
+                    _LOG.debug("query finished: %s", future.query)
 
+            queries = []
             for table_name in table_list:
                 query = "CREATE TABLE "
                 if not drop:
@@ -143,7 +147,12 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                 query += ", ".join(self._tableColumns(table))
                 query += ")"
                 _LOG.debug("query: %s", query)
-                self._session.execute(query)
+                queries.append(query)
+            futures = [self._session.execute_async(query, timeout=None) for query in queries]
+            for future in futures:
+                _LOG.debug("wait for query: %s", future.query)
+                future.result()
+                _LOG.debug("query finished: %s", future.query)
 
     def _tableColumns(self, table_name):
         """Return set of columns in a table
