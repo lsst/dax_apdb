@@ -2,11 +2,11 @@ import os
 import lsst.dax.apdb.apdbCassandra
 assert type(config)==lsst.dax.apdb.apdbCassandra.ApdbCassandraConfig, 'config is of type %s.%s instead of lsst.dax.apdb.apdbCassandra.ApdbCassandraConfig' % (type(config).__module__, type(config).__name__)
 
-per_month_tables = True
+time_partition_tables = True
 data_dir = os.path.join(os.environ['DAX_APDB_DIR'], 'data')
 
 # Location of (YAML) configuration file with standard schema
-config.schema_file=os.path.join(data_dir, 'apdb-schema-cassandra-per-month.yaml' if per_month_tables else 'apdb-schema-cassandra.yaml')
+config.schema_file=os.path.join(data_dir, 'apdb-schema-cassandra-per-month.yaml' if time_partition_tables else 'apdb-schema-cassandra.yaml')
 
 # Location of (YAML) configuration file with extra schema
 config.extra_schema_file=os.path.join(data_dir, 'apdb-schema-extra-cassandra.yaml')
@@ -17,8 +17,11 @@ config.column_map=os.path.join(data_dir, 'apdb-afw-map.yaml')
 # Prefix to add to table names
 config.prefix=''
 
-# Use per-month tables for sources instead of paritioning by month
-config.per_month_tables=per_month_tables
+# Use per-partition tables for sources instead of paritioning by time
+config.time_partition_tables=time_partition_tables
+
+# Time partitoning granularity in days
+config.time_partition_days=30
 
 # The list of contact points to try connecting for cluster discovery.
 config.contact_points=['127.0.0.1']

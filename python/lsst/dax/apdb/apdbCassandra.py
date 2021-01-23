@@ -46,7 +46,7 @@ from .apdbCassandraSchema import ApdbCassandraSchema, ApdbCassandraSchemaConfig
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
-SECONDS_IN_MONTH = 30*24*3600
+SECONDS_IN_DAY = 24 * 3600
 
 
 def _pixelId2partition(pixelId):
@@ -587,7 +587,7 @@ class ApdbCassandra:
         -------
         catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
             Catalog contaning DiaSource records. `None` is returned if
-            ``months`` 0 or when ``object_ids`` is empty.
+            ``months`` is 0 or when ``object_ids`` is empty.
         """
         if months == 0 or len(object_ids) == 0:
             return None
@@ -598,17 +598,19 @@ class ApdbCassandra:
             self._session.row_factory = cassandra.query.named_tuple_factory
         self._session.default_fetch_size = None
 
-        months_list = ''
+        time_part_list = ''
         tables = [table_name]
         if months > 0:
             seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
-            month_now = seconds_now // SECONDS_IN_MONTH
-            months = list(range(month_now-months, month_now+1))
-            if self.config.per_month_tables:
-                tables = [f"{table_name}_{month}" for month in months]
+            seconds_begin = seconds_now - months * 30 * SECONDS_IN_DAY
+            time_part_now = seconds_now // (self.config.time_partition_days * SECONDS_IN_DAY)
+            time_part_begin = seconds_begin // (self.config.time_partition_days * SECONDS_IN_DAY)
+            time_parts = list(range(time_part_begin, time_part_now + 1))
+            if self.config.time_partition_tables:
+                tables = [f"{table_name}_{part}" for part in time_parts]
             else:
-                months_list = ','.join([str(i) for i in range(month_now-months, month_now+1)])
-                _LOG.debug("_getSources: months_list: %s", months_list)
+                time_part_list = ','.join([str(i) for i in time_parts])
+                _LOG.debug("_getSources: time_part_list: %s", time_part_list)
 
         pixels = self._partitioner.pixels(region)
         _LOG.info("_getSources: %s #partitions: %s", table_name, len(pixels))
@@ -617,8 +619,8 @@ class ApdbCassandra:
         queries = []
         for table in tables:
             query = f'SELECT * from "{table}" WHERE "apdb_part" IN ({pixels})'
-            if months_list:
-                query += f' AND "apdb_month" IN ({months_list})'
+            if time_part_list:
+                query += f' AND "apdb_time_part" IN ({time_part_list})'
             queries += [(
                 cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency),
                 {}
@@ -716,20 +718,19 @@ class ApdbCassandra:
             Function of single argument which takes one catalog record as
             input and returns its position (`lsst.sphgeom.UnitVector3d`).
         """
-
-        month = None
-        if self.config.per_month_tables:
+        time_part = None
+        if self.config.time_partition_tables:
             seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
-            month = seconds_now // SECONDS_IN_MONTH
+            time_part = seconds_now // (self.config.time_partition_days * SECONDS_IN_DAY)
 
         # this is a lie of course
         extra_columns = dict(midPointTai=dt)
         if isinstance(sources, pandas.DataFrame):
             self._storeObjectsPandas(sources, "DiaSource", dt, pos_func,
-                                     extra_columns=extra_columns, month=month)
+                                     extra_columns=extra_columns, time_part=time_part)
         else:
             self._storeObjectsAfw(sources, "DiaSource", dt, pos_func,
-                                  extra_columns=extra_columns, month=month)
+                                  extra_columns=extra_columns, time_part=time_part)
 
     def storeDiaForcedSources(self, sources, dt, pos_func):
         """Store a set of DIAForcedSources from current visit.
@@ -755,18 +756,18 @@ class ApdbCassandra:
             Function of single argument which takes one catalog record as
             input and returns its position (`lsst.sphgeom.UnitVector3d`).
         """
-        month = None
-        if self.config.per_month_tables:
+        time_part = None
+        if self.config.time_partition_tables:
             seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
-            month = seconds_now // SECONDS_IN_MONTH
+            time_part = seconds_now // (self.config.time_partition_days * SECONDS_IN_DAY)
 
         extra_columns = dict(midPointTai=dt)
         if isinstance(sources, pandas.DataFrame):
             self._storeObjectsPandas(sources, "DiaForcedSource", dt, pos_func,
-                                     extra_columns=extra_columns, month=month)
+                                     extra_columns=extra_columns, time_part=time_part)
         else:
             self._storeObjectsAfw(sources, "DiaForcedSource", dt, pos_func,
-                                  extra_columns=extra_columns, month=month)
+                                  extra_columns=extra_columns, time_part=time_part)
 
     def dailyJob(self):
         """Implement daily activities like cleanup/vacuum.
@@ -818,7 +819,7 @@ class ApdbCassandra:
 
         return catalog
 
-    def _storeObjectsAfw(self, objects, table_name, dt, pos_func, extra_columns=None, month=None):
+    def _storeObjectsAfw(self, objects, table_name, dt, pos_func, extra_columns=None, time_part=None):
         """Generic store method.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -837,8 +838,8 @@ class ApdbCassandra:
         extra_columns : `dict`, optional
             Mapping (column_name, column_value) which gives column values to add
             to every row, only if column is missing in catalog records.
-        month : `int`, optional
-            of not `None` then insert into a per-month table.
+        time_part : `int`, optional
+            If not `None` then insert into a per-partition table.
         """
 
         def qValue(v):
@@ -929,8 +930,8 @@ class ApdbCassandra:
                     values.append(qValue(value))
                 holders = ','.join(['%s'] * len(values))
                 table = self._schema.tableName(table_name)
-                if month is not None:
-                    table = f"{table}_{month}"
+                if time_part is not None:
+                    table = f"{table}_{time_part}"
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
                 # _LOG.debug("query: %r", query)
                 # _LOG.debug("values: %s", values)
@@ -942,7 +943,7 @@ class ApdbCassandra:
         with Timer(table_name + ' insert', self.config.timer):
             self._session.execute(queries)
 
-    def _storeObjectsPandas(self, objects, table_name, dt, pos_func, extra_columns=None, month=None):
+    def _storeObjectsPandas(self, objects, table_name, dt, pos_func, extra_columns=None, time_part=None):
         """Generic store method.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -961,8 +962,8 @@ class ApdbCassandra:
         extra_columns : `dict`, optional
             Mapping (column_name, column_value) which gives column values to add
             to every row, only if column is missing in catalog records.
-        month : `int`, optional
-            of not `None` then insert into a per-month table.
+        time_part : `int`, optional
+            If not `None` then insert into a per-partition table.
         """
 
         def qValue(v):
@@ -1052,8 +1053,8 @@ class ApdbCassandra:
                     values.append(qValue(value))
                 holders = ','.join(['%s'] * len(values))
                 table = self._schema.tableName(table_name)
-                if month is not None:
-                    table = f"{table}_{month}"
+                if time_part is not None:
+                    table = f"{table}_{time_part}"
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
                 # _LOG.debug("query: %r", query)
                 # _LOG.debug("values: %s", values)
@@ -1088,22 +1089,22 @@ class ApdbCassandra:
             List of column values.
         """
 
-        part_by_month = False
-        if not self.config.per_month_tables and \
+        part_by_time = False
+        if not self.config.time_partition_tables and \
                 table_name in ("DiaSource", "DiaForcedSource"):
-            part_by_month = True
+            part_by_time = True
         if table_name == "DiaObject":
-            part_by_month = True
+            part_by_time = True
 
-        if part_by_month:
-            if part_columns != ["apdb_part", "apdb_month"]:
+        if part_by_time:
+            if part_columns != ["apdb_part", "apdb_time_part"]:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
                     table_name, part_columns))
             pos = pos_func(rec)
             part = self._partitioner.pixel(pos)
             value = int((dt - datetime.utcfromtimestamp(0)).total_seconds())
-            month = value // SECONDS_IN_MONTH
-            return [part, month]
+            time_part = value // (self.config.time_partition_days * SECONDS_IN_DAY)
+            return [part, time_part]
         else:
             if part_columns != ["apdb_part"]:
                 raise ValueError("unexpected partitionig columns for {}: {}".format(
