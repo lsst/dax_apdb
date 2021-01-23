@@ -33,7 +33,7 @@ from .apdbBaseSchema import ApdbBaseSchema
 
 _LOG = logging.getLogger(__name__)
 
-SECONDS_IN_MONTH = 30*24*3600
+SECONDS_IN_DAY = 24 * 3600
 
 
 class ApdbCassandraSchema(ApdbBaseSchema):
@@ -64,13 +64,14 @@ class ApdbCassandraSchema(ApdbBaseSchema):
     """Map YAML column types to Cassandra"""
 
     def __init__(self, session, schema_file: str, extra_schema_file: Optional[str] = None,
-                 prefix: str = "", per_month_tables: bool = False):
+                 prefix: str = "", time_partition_tables: bool = False, time_partition_days: int = 30):
 
         super().__init__(schema_file, extra_schema_file)
 
         self._session = session
         self._prefix = prefix
-        self._per_month_tables = per_month_tables
+        self._time_partition_tables = time_partition_tables
+        self._time_partition_days = time_partition_days
 
         self.visitTableName = self._prefix + "ApdbProtoVisits"
         self.objectTableName = self._prefix + "DiaObject"
@@ -121,14 +122,17 @@ class ApdbCassandraSchema(ApdbBaseSchema):
             fullTable = self.tableName(table)
 
             table_list = [fullTable]
-            if self._per_month_tables and \
+            if self._time_partition_tables and \
                     table in ("DiaSource", "DiaForcedSource"):
                 # TODO: this should not be hardcoded
                 start_time = datetime(2020, 1, 1)
                 seconds0 = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
-                month0 = seconds0 // SECONDS_IN_MONTH
-                months = range(month0-13, month0+24)
-                table_list = [f"{fullTable}_{month}" for month in months]
+                seconds1 = seconds0 + 24 * 30 * SECONDS_IN_DAY
+                seconds0 -= 13 * 30 * SECONDS_IN_DAY
+                part0 = seconds0 // (self._time_partition_days * SECONDS_IN_DAY)
+                part1 = seconds1 // (self._time_partition_days * SECONDS_IN_DAY)
+                partitions = range(part0, part1 + 1)
+                table_list = [f"{fullTable}_{part}" for part in partitions]
 
             if drop:
                 queries = [f'DROP TABLE IF EXISTS "{table_name}"' for table_name in table_list]
