@@ -32,16 +32,25 @@ from .apdbBaseSchema import ApdbBaseSchema, ApdbBaseSchemaConfig
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
-SECONDS_IN_MONTH = 30*24*3600
+SECONDS_IN_DAY = 24 * 3600
 
 
 class ApdbCassandraSchemaConfig(ApdbBaseSchemaConfig):
-    prefix = Field(dtype=str,
-                   doc="Prefix to add to table names",
-                   default="")
-    per_month_tables = Field(dtype=bool,
-                             doc="Use per-month tables for sources instead of paritioning by month",
-                             default=True)
+    prefix = Field(
+        dtype=str,
+        doc="Prefix to add to table names",
+        default=""
+    )
+    time_partition_tables = Field(
+        dtype=bool,
+        doc="Use per-partition tables for sources instead of paritioning by time",
+        default=True
+    )
+    time_partition_days = Field(
+        dtype=int,
+        doc="Time partitoning granularity in days",
+        default=30
+    )
 
 
 class ApdbCassandraSchema(ApdbBaseSchema):
@@ -65,7 +74,8 @@ class ApdbCassandraSchema(ApdbBaseSchema):
 
         self._session = session
         self._prefix = config.prefix
-        self._per_month_tables = config.per_month_tables
+        self._time_partition_tables = config.time_partition_tables
+        self._time_partition_days = config.time_partition_days
 
         self.visitTableName = self._prefix + "ApdbProtoVisits"
         self.objectTableName = self._prefix + "DiaObject"
@@ -128,14 +138,17 @@ class ApdbCassandraSchema(ApdbBaseSchema):
             fullTable = self.tableName(table)
 
             table_list = [fullTable]
-            if self._per_month_tables and \
+            if self._time_partition_tables and \
                     table in ("DiaSource", "DiaForcedSource"):
                 # TODO: this should not be hardcoded
                 start_time = datetime(2020, 1, 1)
                 seconds0 = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
-                month0 = seconds0 // SECONDS_IN_MONTH
-                months = range(month0-13, month0+24)
-                table_list = [f"{fullTable}_{month}" for month in months]
+                seconds1 = seconds0 + 24 * 30 * SECONDS_IN_DAY
+                seconds0 -= 13 * 30 * SECONDS_IN_DAY
+                part0 = seconds0 // (self._time_partition_days * SECONDS_IN_DAY)
+                part1 = seconds1 // (self._time_partition_days * SECONDS_IN_DAY)
+                partitions = range(part0, part1 + 1)
+                table_list = [f"{fullTable}_{part}" for part in partitions]
 
             if drop:
                 queries = [f'DROP TABLE IF EXISTS "{table_name}"' for table_name in table_list]

@@ -8,6 +8,10 @@ columns:
   type: INT
   nullable: false
   description: Special column used for partitioning, typically some spatial index.
+- name: apdb_time_part
+  type: INT
+  nullable: false
+  description: Special column used for partitioning, used for partitioning in time.
 - name: diaObjectId
   type: BIGINT
   nullable: false
@@ -511,7 +515,7 @@ columns:
   description: HTM index.
 indices:
 - name: Part_DiaObject
-  columns: [apdb_part]
+  columns: [apdb_part, apdb_time_part]
   type: PARTITION
 - name: PK_DiaObject
   columns:
@@ -968,10 +972,10 @@ columns:
   type: INT
   nullable: false
   description: Special column used for partitioning, typically some spatial index.
-- name: apdb_month
+- name: apdb_time_part
   type: INT
   nullable: false
-  description: Special column used for partitioning, typically hold year and month combined (e.g. 202010).
+  description: Special column used for partitioning, used for partitioning in time.
 - name: diaSourceId
   type: BIGINT
   nullable: false
@@ -1576,7 +1580,7 @@ columns:
   description: HTM index.
 indices:
 - name: Part_DiaSource
-  columns: [apdb_part, apdb_month]
+  columns: [apdb_part, apdb_time_part]
   type: PARTITION
 - name: PK_DiaSource
   columns:
@@ -1608,10 +1612,10 @@ columns:
   type: INT
   nullable: false
   description: Special column used for partitioning, typically some spatial index.
-- name: apdb_month
+- name: apdb_time_part
   type: INT
   nullable: false
-  description: Special column used for partitioning, typically hold year and month combined (e.g. 202010).
+  description: Special column used for partitioning, used for partitioning in time.
 - name: diaObjectId
   type: BIGINT
   nullable: false
@@ -1665,7 +1669,7 @@ columns:
   unit: d
 indices:
 - name: Part_DiaForcedSource
-  columns: [apdb_part, apdb_month]
+  columns: [apdb_part, apdb_time_part]
   type: PARTITION
 - name: PK_DiaForcedSource
   columns:
