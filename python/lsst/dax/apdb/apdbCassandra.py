@@ -198,6 +198,21 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
                             doc=("If True then store random values for fields not explicitly filled, "
                                  "for testing only"),
                             default=False)
+    query_per_time_part = Field(
+        dtype=bool,
+        default=False,
+        doc=(
+            "If True then build separate query for each time partition, otherwise build one single query. "
+            "This is only used when time_partition_tables is False in schema config."
+        )
+    )
+    query_per_spatial_part = Field(
+        dtype=bool,
+        default=False,
+        doc=(
+            "If True then build one query per spacial partition, otherwise build single query. "
+        )
+    )
 
 
 class Partitioner:
@@ -300,6 +315,8 @@ class ApdbCassandra:
 
         # logging.getLogger('sqlalchemy').setLevel(logging.INFO)
         _LOG.debug("ApdbCassandra Configuration:")
+        _LOG.debug("    read_consistency: %s", self.config.read_consistency)
+        _LOG.debug("    write_consistency: %s", self.config.write_consistency)
         _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
         _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
         _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
@@ -309,6 +326,8 @@ class ApdbCassandra:
         _LOG.debug("    schema prefix: %s", self.config.prefix)
         _LOG.debug("    part_pixelization: %s", self.config.part_pixelization)
         _LOG.debug("    part_pix_level: %s", self.config.part_pix_level)
+        _LOG.debug("    query_per_time_part: %s", self.config.query_per_time_part)
+        _LOG.debug("    query_per_spatial_part: %s", self.config.query_per_spatial_part)
 
         self._partitioner = Partitioner(config)
 
@@ -578,7 +597,8 @@ class ApdbCassandra:
             Name of the table, either "DiaSource" or "DiaForcedSource"
         months : `int`
             Number of months of history to return, if negative returns whole
-            history.
+            history (Note: negative does not work with table-per-partition
+            case)
         return_pandas : `bool`
             Return a `pandas.DataFrame` instead of
             `lsst.afw.table.SourceCatalog`.
@@ -598,7 +618,23 @@ class ApdbCassandra:
             self._session.row_factory = cassandra.query.named_tuple_factory
         self._session.default_fetch_size = None
 
-        time_part_list = ''
+        # spatial pixels included into query
+        pixels = self._partitioner.pixels(region)
+        _LOG.info("_getSources: %s #partitions: %s", table_name, len(pixels))
+
+        # spatial part of WHERE
+        spatial_where = []
+        if self.config.query_per_spatial_part:
+            spatial_where = [f'"apdb_part" = {pixel}' for pixel in pixels]
+        else:
+            pixels_str = ",".join([str(pix) for pix in pixels])
+            spatial_where = [f'"apdb_part" IN ({pixels_str})']
+
+        # temporal part of WHERE, can be empty
+        temporal_where = []
+        # time partitions and table names to query, there may be multiple
+        # tables depending on configuration
+        time_parts = []
         tables = [table_name]
         if months > 0:
             seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
@@ -609,24 +645,29 @@ class ApdbCassandra:
             if self.config.time_partition_tables:
                 tables = [f"{table_name}_{part}" for part in time_parts]
             else:
-                time_part_list = ','.join([str(i) for i in time_parts])
-                _LOG.debug("_getSources: time_part_list: %s", time_part_list)
+                if self.config.query_per_time_part:
+                    temporal_where = [f'"apdb_time_part" = {time_part}' for time_part in time_parts]
+                else:
+                    time_part_list = ",".join([str(part) for part in time_parts])
+                    temporal_where = [f'"apdb_time_part" IN ({time_part_list})']
 
-        pixels = self._partitioner.pixels(region)
-        _LOG.info("_getSources: %s #partitions: %s", table_name, len(pixels))
-        pixels = ",".join([str(pix) for pix in pixels])
-
+        # Build all queries
         queries = []
         for table in tables:
-            query = f'SELECT * from "{table}" WHERE "apdb_part" IN ({pixels})'
-            if time_part_list:
-                query += f' AND "apdb_time_part" IN ({time_part_list})'
-            queries += [(
-                cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency),
-                {}
-            )]
-        _LOG.info("_getSources %s: #queries: %s", table_name, len(queries))
+            query = f'SELECT * from "{table}" WHERE '
+            for spacial in spatial_where:
+                if temporal_where:
+                    for temporal in temporal_where:
+                        queries.append(query + spacial + " AND " + temporal)
+                else:
+                    queries.append(query + spacial)
         # _LOG.debug("_getSources: queries: %s", queries)
+
+        queries = [
+            (cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})
+            for query in queries
+        ]
+        _LOG.info("_getSources %s: #queries: %s", table_name, len(queries))
 
         catalog = None
         with Timer(table_name + ' select', self.config.timer):
