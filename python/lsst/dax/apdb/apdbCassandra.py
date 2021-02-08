@@ -34,6 +34,7 @@ import string
 
 from cassandra import ConsistencyLevel
 from cassandra.cluster import Cluster
+from cassandra.concurrent import execute_concurrent
 from cassandra.policies import RoundRobinPolicy, WhiteListRoundRobinPolicy, AddressTranslator
 import cassandra.query
 import lsst.afw.table as afwTable
@@ -213,6 +214,13 @@ class ApdbCassandraConfig(ApdbCassandraSchemaConfig):
             "If True then build one query per spacial partition, otherwise build single query. "
         )
     )
+    pandas_delay_conv = Field(
+        dtype=bool,
+        default=True,
+        doc=(
+            "If True then combine result rows before converting to pandas. "
+        )
+    )
 
 
 class Partitioner:
@@ -291,6 +299,29 @@ class _PandasRowFactory:
             DataFrame with the result set.
         """
         return pandas.DataFrame.from_records(rows, columns=colnames)
+
+
+class _RawRowFactory:
+    """Row factory that makes no conversions.
+    """
+    def __call__(self, colnames, rows):
+        """Return parameters without change.
+
+        Parameters
+        ----------
+        colname : `list` of `str`
+            Names of the columns.
+        rows : `list` of `tuple`
+            Result rows
+
+        Returns
+        -------
+        colname : `list` of `str`
+            Names of the columns.
+        rows : `list` of `tuple`
+            Result rows
+        """
+        return (colnames, rows)
 
 
 class ApdbCassandra:
@@ -613,7 +644,10 @@ class ApdbCassandra:
             return None
 
         if return_pandas:
-            self._session.row_factory = _PandasRowFactory()
+            if self.config.pandas_delay_conv:
+                self._session.row_factory = _RawRowFactory()
+            else:
+                self._session.row_factory = _PandasRowFactory()
         else:
             self._session.row_factory = cassandra.query.named_tuple_factory
         self._session.default_fetch_size = None
@@ -672,20 +706,49 @@ class ApdbCassandra:
         catalog = None
         with Timer(table_name + ' select', self.config.timer):
             # submit all queries
-            futures = [self._session.execute_async(query, values, timeout=120.) for query, values in queries]
+            results = execute_concurrent(self._session, queries, concurrency=500)
             if return_pandas:
-                # TODO: This orders result processing which is not very efficient
-                dataframes = [future.result()._current_rows for future in futures]
-                # concatenate all frames
-                if len(dataframes) == 1:
-                    catalog = dataframes[0]
+                if self.config.pandas_delay_conv:
+                    _LOG.debug("making pandas data frame out of rows/columns")
+                    columns = None
+                    rows = []
+                    for success, result in results:
+                        result = result._current_rows
+                        if success:
+                            if columns is None:
+                                columns = result[0]
+                            elif columns != result[0]:
+                                _LOG.error("diferent columns returned by queries: %s and %s",
+                                           columns, result[0])
+                                raise ValueError(
+                                    f"diferent columns returned by queries: {columns} and {result[0]}"
+                                )
+                            rows += result[1]
+                        else:
+                            _LOG.error("error returned by query: %s", result)
+                            raise result
+                    catalog = pandas.DataFrame.from_records(rows, columns=columns)
                 else:
-                    catalog = pandas.concat(dataframes)
+                    _LOG.debug("making pandas data frame out of set of data frames")
+                    dataframes = []
+                    for success, result in results:
+                        if success:
+                            dataframes.append(result._current_rows)
+                        else:
+                            _LOG.error("error returned by query: %s", result)
+                            raise result
+                    # concatenate all frames
+                    if len(dataframes) == 1:
+                        catalog = dataframes[0]
+                    else:
+                        catalog = pandas.concat(dataframes)
                 # filter by given object IDs
                 catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
             else:
-                for future in futures:
-                    rows = future.result()
+                for success, rows in results:
+                    if not success:
+                        _LOG.error("error returned by query: %s", result)
+                        raise result
                     rows = _filterObjectIds(rows, object_ids)
                     catalog = self._convertResult(rows, table_name, catalog=catalog)
 
