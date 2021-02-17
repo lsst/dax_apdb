@@ -282,8 +282,10 @@ class _AddressTranslator(AddressTranslator):
         return self._map.get(private_ip, private_ip)
 
 
-def _unpack(colnames, rows, packedColumns):
-    """Unpack BLOBs that were packed on insert.
+def _rows_to_pandas(colnames, rows, packedColumns):
+    """Convert result rows to pandas.
+
+    Unpacks BLOBs that were packed on insert.
 
     Parameters
     ----------
@@ -296,35 +298,37 @@ def _unpack(colnames, rows, packedColumns):
 
     Returns
     -------
-    colname : `list` [ `str` ]
-        Names of the columns.
-    rows : `list` of `tuple`
-        Result rows.
+    catalog : `pandas.DataFrame`
+        DataFrame with the result set.
     """
     try:
         idx = colnames.index("apdb_packed")
     except ValueError:
-        return colnames, rows
+        # no packed columns
+        return pandas.DataFrame.from_records(rows, columns=colnames)
 
-    colnames = list(colnames)
-    del colnames[idx]
-    colnames += [col.name for col in packedColumns]
-    unpacked_rows = []
+    # make data frame for non-packed columns
+    df = pandas.DataFrame.from_records(rows, columns=colnames, exclude=["apdb_packed"])
+
+    # make records with packed data only as dicts
+    packed_rows = []
     for row in rows:
-        row = list(row)
-        blob = row.pop(idx)
-        # _LOG.debug("blob: %r", blob)
+        blob = row[idx]
         if blob[:5] == b"cbor:":
             blob = cbor.loads(blob[5:])
         else:
             raise ValueError("Unexpected BLOB format: %r", blob)
-        for col in packedColumns:
-            value = blob.get(col.name)
-            if value is not None and col.type == "DATETIME":
-                value = datetime(1970, 1, 1) + timedelta(milliseconds=value)
-            row.append(value)
-        unpacked_rows.append(tuple(row))
-    return colnames, unpacked_rows
+        packed_rows.append(blob)
+
+    # make data frome from packed data
+    packed = pandas.DataFrame.from_records(packed_rows, columns=[col.name for col in packedColumns])
+
+    # convert timestamps which are integer milliseconds into datetime
+    for col in packedColumns:
+        if col.type == "DATETIME":
+            packed[col.name] = pandas.to_datetime(packed[col.name], unit="ms", origin="unix")
+
+    return pandas.concat([df, packed], axis=1)
 
 
 class _PandasRowFactory:
@@ -353,8 +357,7 @@ class _PandasRowFactory:
         catalog : `pandas.DataFrame`
             DataFrame with the result set.
         """
-        colnames, rows = _unpack(colnames, rows, self.packedColumns)
-        return pandas.DataFrame.from_records(rows, columns=colnames)
+        return _rows_to_pandas(colnames, rows, self.packedColumns)
 
 
 class _RawRowFactory:
@@ -385,7 +388,6 @@ class _RawRowFactory:
         rows : `list` of `tuple`
             Result rows
         """
-        colnames, rows = _unpack(colnames, rows, self.packedColumns)
         return (colnames, rows)
 
 
@@ -794,7 +796,7 @@ class ApdbCassandra:
                         else:
                             _LOG.error("error returned by query: %s", result)
                             raise result
-                    catalog = pandas.DataFrame.from_records(rows, columns=columns)
+                    catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
                 else:
                     _LOG.debug("making pandas data frame out of set of data frames")
                     dataframes = []
@@ -809,6 +811,7 @@ class ApdbCassandra:
                         catalog = dataframes[0]
                     else:
                         catalog = pandas.concat(dataframes)
+                _LOG.debug("pandas catalog shape: %s", catalog.shape)
                 # filter by given object IDs
                 catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
             else:
