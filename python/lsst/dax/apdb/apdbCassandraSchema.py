@@ -248,7 +248,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
 
         return column_defs
 
-    @functools.lru_cache
+    @functools.lru_cache(maxsize=16)
     def packedColumns(self, table_name):
         """Return set of columns that are packed into BLOB.
 
