@@ -25,6 +25,7 @@
 __all__ = ["ApdbCassandraSchema"]
 
 from datetime import datetime, timedelta
+import functools
 import logging
 from typing import Optional
 
@@ -64,7 +65,8 @@ class ApdbCassandraSchema(ApdbBaseSchema):
     """Map YAML column types to Cassandra"""
 
     def __init__(self, session, schema_file: str, extra_schema_file: Optional[str] = None,
-                 prefix: str = "", time_partition_tables: bool = False, time_partition_days: int = 30):
+                 prefix: str = "", time_partition_tables: bool = False, time_partition_days: int = 30,
+                 packing: str = "none"):
 
         super().__init__(schema_file, extra_schema_file)
 
@@ -72,6 +74,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         self._prefix = prefix
         self._time_partition_tables = time_partition_tables
         self._time_partition_days = time_partition_days
+        self._packing = packing
 
         self.visitTableName = self._prefix + "ApdbProtoVisits"
         self.objectTableName = self._prefix + "DiaObject"
@@ -186,11 +189,13 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         # must have partition columns and clustering columns
         part_columns = []
         clust_columns = []
+        index_columns = set()
         for index in table_schema.indices:
             if index.type == 'PARTITION':
                 part_columns = index.columns
             elif index.type == 'PRIMARY':
                 clust_columns = index.columns
+            index_columns.update(index.columns)
         _LOG.debug("part_columns: %s", part_columns)
         _LOG.debug("clust_columns: %s", clust_columns)
         if not part_columns:
@@ -201,8 +206,15 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         # all columns
         column_defs = []
         for column in table_schema.columns:
+            if self._packing != "none" and column.name not in index_columns:
+                # when packing all non-index columns are replaced by a BLOB
+                continue
             ctype = self._type_map[column.type]
             column_defs.append('"{}" {}'.format(column.name, ctype))
+
+        # packed content goes to a single blob column
+        if self._packing != "none":
+            column_defs.append('"apdb_packed" blob')
 
         # primary key definition
         part_columns = ['"{}"'.format(col) for col in part_columns]
@@ -214,3 +226,30 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         column_defs.append('PRIMARY KEY ({})'.format(", ".join(pkey)))
 
         return column_defs
+
+    @functools.lru_cache(maxsize=16)
+    def packedColumns(self, table_name):
+        """Return set of columns that are packed into BLOB.
+
+        Parameters
+        ----------
+        table_name : `str`
+            Name of the table.
+
+        Returns
+        -------
+        columns : `list` [ `ColumnDef` ]
+            List of column definitions. Empty list is returned if packing is
+            not configured.
+        """
+        if self._packing == "none":
+            return []
+
+        table_schema = self.tableSchemas[table_name]
+
+        # index columns
+        index_columns = set()
+        for index in table_schema.indices:
+            index_columns.update(index.columns)
+
+        return [column for column in table_schema.columns if column.name not in index_columns]
