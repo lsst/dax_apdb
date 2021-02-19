@@ -241,6 +241,13 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Packing method for table records.",
         default="none"
     )
+    pandas_raw_src = Field(
+        dtype=bool,
+        default=False,
+        doc=(
+            "Return raw Cassandra data instead of pandas data frame."
+        )
+    )
 
 
 class Partitioner:
@@ -674,7 +681,7 @@ class ApdbCassandra:
 
         if return_pandas:
             packedColumns = self._schema.packedColumns(table_name)
-            if self.config.pandas_delay_conv:
+            if self.config.pandas_delay_conv or self.config.pandas_raw_src:
                 self._session.row_factory = _RawRowFactory(packedColumns)
             else:
                 self._session.row_factory = _PandasRowFactory(packedColumns)
@@ -738,7 +745,7 @@ class ApdbCassandra:
             # submit all queries
             results = execute_concurrent(self._session, queries, concurrency=500)
             if return_pandas:
-                if self.config.pandas_delay_conv:
+                if self.config.pandas_delay_conv or self.config.pandas_raw_src:
                     _LOG.debug("making pandas data frame out of rows/columns")
                     columns = None
                     rows = []
@@ -757,7 +764,15 @@ class ApdbCassandra:
                         else:
                             _LOG.error("error returned by query: %s", result)
                             raise result
-                    catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
+                    if self.config.pandas_raw_src:
+                        catalog = rows
+                        shape = len(rows), len(columns)
+                        _LOG.debug("pandas catalog shape: %s", shape)
+                    else:
+                        catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
+                        _LOG.debug("pandas catalog shape: %s", catalog.shape)
+                        # filter by given object IDs
+                        catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
                 else:
                     _LOG.debug("making pandas data frame out of set of data frames")
                     dataframes = []
@@ -772,9 +787,9 @@ class ApdbCassandra:
                         catalog = dataframes[0]
                     else:
                         catalog = pandas.concat(dataframes)
-                _LOG.debug("pandas catalog shape: %s", catalog.shape)
-                # filter by given object IDs
-                catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
+                    _LOG.debug("pandas catalog shape: %s", catalog.shape)
+                    # filter by given object IDs
+                    catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
             else:
                 for success, rows in results:
                     if not success:
