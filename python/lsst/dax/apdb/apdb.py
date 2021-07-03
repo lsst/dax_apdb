@@ -36,7 +36,6 @@ import lsst.geom as geom
 import lsst.afw.table as afwTable
 import lsst.pex.config as pexConfig
 from lsst.pex.config import Field, ChoiceField, ListField
-from lsst.utils import getPackageDir
 import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
@@ -124,7 +123,7 @@ def _ansi_session(engine):
 def _data_file_name(basename):
     """Return path name of a data file.
     """
-    return os.path.join(getPackageDir("dax_apdb"), "data", basename)
+    return os.path.join("${DAX_APDB_DIR}", "data", basename)
 
 
 class ApdbConfig(pexConfig.Config):

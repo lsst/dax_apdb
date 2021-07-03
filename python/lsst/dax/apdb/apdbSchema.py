@@ -28,6 +28,7 @@ __all__ = ["ColumnDef", "IndexDef", "TableDef",
 
 from collections import namedtuple
 import logging
+import os
 import yaml
 
 import sqlalchemy
@@ -234,6 +235,7 @@ class ApdbSchema(object):
         self.visits = None
 
         if column_map:
+            column_map = os.path.expandvars(column_map)
             _LOG.debug("Reading column map file %s", column_map)
             with open(column_map) as yaml_stream:
                 # maps cat column name to afw column name
@@ -494,6 +496,7 @@ class ApdbSchema(object):
             Mapping of table names to `TableDef` instances.
         """
 
+        schema_file = os.path.expandvars(schema_file)
         _LOG.debug("Reading schema file %s", schema_file)
         with open(schema_file) as yaml_stream:
             tables = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
@@ -501,6 +504,7 @@ class ApdbSchema(object):
         _LOG.debug("Read %d tables from schema", len(tables))
 
         if extra_schema_file:
+            extra_schema_file = os.path.expandvars(extra_schema_file)
             _LOG.debug("Reading extra schema file %s", extra_schema_file)
             with open(extra_schema_file) as yaml_stream:
                 extras = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
