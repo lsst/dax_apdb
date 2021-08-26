@@ -105,6 +105,13 @@ def _split(seq, nItems):
         del seq[:nItems]
 
 
+def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
+    """Change type of the uint64 columns to int64, return copy of data frame.
+    """
+    names = [c[0] for c in df.dtypes.items() if c[1] == np.uint64]
+    return df.astype({name: np.int64 for name in names})
+
+
 # Information about single visit
 Visit = namedtuple('Visit', 'visitId visitTime lastObjectId lastSourceId')
 
@@ -668,6 +675,7 @@ class Apdb(object):
                 extra_columns = dict(lastNonForcedSource=dt)
                 if isinstance(objs, pandas.DataFrame):
                     with Timer("DiaObjectLast insert", self.config.timer):
+                        objs = _coerce_uint64(objs)
                         for col, data in extra_columns.items():
                             objs[col] = data
                         objs.to_sql("DiaObjectLast", conn, if_exists='append',
@@ -705,6 +713,7 @@ class Apdb(object):
                                  validityEnd=None)
             if isinstance(objs, pandas.DataFrame):
                 with Timer("DiaObject insert", self.config.timer):
+                    objs = _coerce_uint64(objs)
                     for col, data in extra_columns.items():
                         objs[col] = data
                     objs.to_sql("DiaObject", conn, if_exists='append',
@@ -738,6 +747,7 @@ class Apdb(object):
 
             if isinstance(sources, pandas.DataFrame):
                 with Timer("DiaSource insert", self.config.timer):
+                    sources = _coerce_uint64(sources)
                     sources.to_sql("DiaSource", conn, if_exists='append',
                                    index=False)
             else:
@@ -769,6 +779,7 @@ class Apdb(object):
 
             if isinstance(sources, pandas.DataFrame):
                 with Timer("DiaForcedSource insert", self.config.timer):
+                    sources = _coerce_uint64(sources)
                     sources.to_sql("DiaForcedSource", conn, if_exists='append',
                                    index=False)
             else:
