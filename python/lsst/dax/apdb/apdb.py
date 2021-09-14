@@ -22,9 +22,8 @@
 """Module defining Apdb class and related methods.
 """
 
-__all__ = ["ApdbConfig", "Apdb", "Visit"]
+__all__ = ["ApdbConfig", "Apdb"]
 
-from collections import namedtuple
 from contextlib import contextmanager
 from datetime import datetime
 import logging
@@ -42,7 +41,7 @@ from sqlalchemy.pool import NullPool
 from . import timer, apdbSchema
 
 
-_LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
+_LOG = logging.getLogger(__name__)
 
 
 class Timer(object):
@@ -110,10 +109,6 @@ def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
     """
     names = [c[0] for c in df.dtypes.items() if c[1] == np.uint64]
     return df.astype({name: np.int64 for name in names})
-
-
-# Information about single visit
-Visit = namedtuple('Visit', 'visitId visitTime lastObjectId lastSourceId')
 
 
 @contextmanager
@@ -270,59 +265,6 @@ class Apdb(object):
                                              column_map=self.config.column_map,
                                              afw_schemas=afw_schemas,
                                              prefix=self.config.prefix)
-
-    def lastVisit(self):
-        """Returns last visit information or `None` if visits table is empty.
-
-        Visits table is used by ap_proto to track visit information, it is
-        not a part of the regular APDB schema.
-
-        Returns
-        -------
-        visit : `Visit` or `None`
-            Last stored visit info or `None` if there was nothing stored yet.
-        """
-
-        with self._engine.begin() as conn:
-
-            stmnt = sql.select([sql.func.max(self._schema.visits.c.visitId),
-                                sql.func.max(self._schema.visits.c.visitTime)])
-            res = conn.execute(stmnt)
-            row = res.fetchone()
-            if row[0] is None:
-                return None
-
-            visitId = row[0]
-            visitTime = row[1]
-            _LOG.info("lastVisit: visitId: %s visitTime: %s (%s)", visitId,
-                      visitTime, type(visitTime))
-
-            # get max IDs from corresponding tables
-            stmnt = sql.select([sql.func.max(self._schema.objects.c.diaObjectId)])
-            lastObjectId = conn.scalar(stmnt)
-            stmnt = sql.select([sql.func.max(self._schema.sources.c.diaSourceId)])
-            lastSourceId = conn.scalar(stmnt)
-
-            return Visit(visitId=visitId, visitTime=visitTime,
-                         lastObjectId=lastObjectId, lastSourceId=lastSourceId)
-
-    def saveVisit(self, visitId, visitTime):
-        """Store visit information.
-
-        This method is only used by ``ap_proto`` script from ``l1dbproto``
-        and is not intended for production pipelines.
-
-        Parameters
-        ----------
-        visitId : `int`
-            Visit identifier
-        visitTime : `datetime.datetime`
-            Visit timestamp.
-        """
-
-        ins = self._schema.visits.insert().values(visitId=visitId,
-                                                  visitTime=visitTime)
-        self._engine.execute(ins)
 
     def tableRowCount(self):
         """Returns dictionary with the table names and row counts.

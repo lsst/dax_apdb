@@ -39,7 +39,7 @@ from sqlalchemy.ext.compiler import compiles
 import lsst.afw.table as afwTable
 
 
-_LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
+_LOG = logging.getLogger(__name__)
 
 # Classes for representing schema
 
@@ -174,8 +174,6 @@ class ApdbSchema(object):
         DiaSource table instance
     forcedSources : `sqlalchemy.Table`
         DiaForcedSource table instance
-    visits : `sqlalchemy.Table`
-        ApdbProtoVisits table instance
 
     Parameters
     ----------
@@ -232,7 +230,6 @@ class ApdbSchema(object):
         self.objects_last = None
         self.sources = None
         self.forcedSources = None
-        self.visits = None
 
         if column_map:
             column_map = os.path.expandvars(column_map)
@@ -325,16 +322,6 @@ class ApdbSchema(object):
                 self.sources = table
             elif table_name == 'DiaForcedSource':
                 self.forcedSources = table
-
-        # special table to track visits, only used by prototype
-        table = Table(self._prefix+'ApdbProtoVisits', self._metadata,
-                      Column('visitId', sqlalchemy.types.BigInteger, nullable=False),
-                      Column('visitTime', sqlalchemy.types.TIMESTAMP, nullable=False),
-                      PrimaryKeyConstraint('visitId', name=self._prefix+'PK_ApdbProtoVisits'),
-                      Index(self._prefix+'IDX_ApdbProtoVisits_vTime', 'visitTime', info=info),
-                      mysql_engine=mysql_engine,
-                      info=info)
-        self.visits = table
 
     def makeSchema(self, drop=False, mysql_engine='InnoDB', oracle_tablespace=None, oracle_iot=False):
         """Create or re-create all tables.
