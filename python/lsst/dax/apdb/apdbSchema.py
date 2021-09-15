@@ -37,8 +37,6 @@ import yaml
 import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
                         UniqueConstraint, Table)
-from sqlalchemy.schema import CreateTable, CreateIndex
-from sqlalchemy.ext.compiler import compiles
 import lsst.afw.table as afwTable
 
 
@@ -109,57 +107,6 @@ def make_minimal_dia_source_schema() -> afwTable.SourceTable:
     schema.addField("pixelId", type='L',
                     doc='Unique spherical pixelization identifier.')
     return schema
-
-
-@compiles(CreateTable, "oracle")
-def _add_suffixes_tbl(element: Any, compiler: Any, **kw: Any) -> str:
-    """Add all needed suffixed for Oracle CREATE TABLE statement.
-
-    This is a special compilation method for CreateTable clause which
-    registers itself with SQLAlchemy using @compiles decotrator. Exact method
-    name does not matter. Client can pass a dict to ``info`` keyword argument
-    of Table constructor. If the dict has a key "oracle_tablespace" then its
-    value is used as tablespace name. If the dict has a key "oracle_iot" with
-    true value then IOT table is created. This method generates additional
-    clauses for CREATE TABLE statement which specify tablespace name and
-    "ORGANIZATION INDEX" for IOT.
-
-    .. seealso:: https://docs.sqlalchemy.org/en/latest/core/compiler.html
-    """
-    text = compiler.visit_create_table(element, **kw)
-    _LOG.debug("text: %r", text)
-    oracle_tablespace = element.element.info.get("oracle_tablespace")
-    oracle_iot = element.element.info.get("oracle_iot", False)
-    _LOG.debug("oracle_tablespace: %r", oracle_tablespace)
-    if oracle_iot:
-        text += " ORGANIZATION INDEX"
-    if oracle_tablespace:
-        text += " TABLESPACE " + oracle_tablespace
-    _LOG.debug("text: %r", text)
-    return text
-
-
-@compiles(CreateIndex, "oracle")
-def _add_suffixes_idx(element: Any, compiler: Any, **kw: Any) -> str:
-    """Add all needed suffixed for Oracle CREATE INDEX statement.
-
-    This is a special compilation method for CreateIndex clause which
-    registers itself with SQLAlchemy using @compiles decotrator. Exact method
-    name does not matter. Client can pass a dict to ``info`` keyword argument
-    of Index constructor. If the dict has a key "oracle_tablespace" then its
-    value is used as tablespace name. This method generates additional
-    clause for CREATE INDEX statement which specifies tablespace name.
-
-    .. seealso:: https://docs.sqlalchemy.org/en/latest/core/compiler.html
-    """
-    text = compiler.visit_create_index(element, **kw)
-    _LOG.debug("text: %r", text)
-    oracle_tablespace = element.element.info.get("oracle_tablespace")
-    _LOG.debug("oracle_tablespace: %r", oracle_tablespace)
-    if oracle_tablespace:
-        text += " TABLESPACE " + oracle_tablespace
-    _LOG.debug("text: %r", text)
-    return text
 
 
 class ApdbSchema(object):
@@ -271,21 +218,16 @@ class ApdbSchema(object):
         # generate schema for all tables, must be called last
         self._makeTables()
 
-    def _makeTables(self, mysql_engine: str = 'InnoDB', oracle_tablespace: Optional[str] = None,
-                    oracle_iot: bool = False) -> None:
+    def _makeTables(self, mysql_engine: str = 'InnoDB') -> None:
         """Generate schema for all tables.
 
         Parameters
         ----------
         mysql_engine : `str`, optional
             MySQL engine type to use for new tables.
-        oracle_tablespace : `str`, optional
-            Name of Oracle tablespace, only useful with oracle
-        oracle_iot : `bool`, optional
-            Make Index-organized DiaObjectLast table.
         """
 
-        info: Dict[str, Any] = dict(oracle_tablespace=oracle_tablespace)
+        info: Dict[str, Any] = {}
 
         if self._dia_object_index == 'pix_id_iov':
             # Special PK with HTM column in first position
@@ -308,13 +250,11 @@ class ApdbSchema(object):
 
         if self._dia_object_index == 'last_object_table':
             # Same as DiaObject but with special index
-            info2 = info.copy()
-            info2.update(oracle_iot=oracle_iot)
             table = Table(self._prefix+'DiaObjectLast', self._metadata,
                           *(self._tableColumns('DiaObjectLast')
                             + self._tableIndices('DiaObjectLast', info)),
                           mysql_engine=mysql_engine,
-                          info=info2)
+                          info=info)
             self.objects_last = table
 
         # for all other tables use index definitions in schema
@@ -329,8 +269,7 @@ class ApdbSchema(object):
             elif table_name == 'DiaForcedSource':
                 self.forcedSources = table
 
-    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB',
-                   oracle_tablespace: Optional[str] = None, oracle_iot: bool = False) -> None:
+    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB') -> None:
         """Create or re-create all tables.
 
         Parameters
@@ -339,19 +278,13 @@ class ApdbSchema(object):
             If True then drop tables before creating new ones.
         mysql_engine : `str`, optional
             MySQL engine type to use for new tables.
-        oracle_tablespace : `str`, optional
-            Name of Oracle tablespace, only useful with oracle
-        oracle_iot : `bool`, optional
-            Make Index-organized DiaObjectLast table.
         """
 
         # re-make table schema for all needed tables with possibly different options
         _LOG.debug("clear metadata")
         self._metadata.clear()
-        _LOG.debug("re-do schema mysql_engine=%r oracle_tablespace=%r",
-                   mysql_engine, oracle_tablespace)
-        self._makeTables(mysql_engine=mysql_engine, oracle_tablespace=oracle_tablespace,
-                         oracle_iot=oracle_iot)
+        _LOG.debug("re-do schema mysql_engine=%r", mysql_engine)
+        self._makeTables(mysql_engine=mysql_engine)
 
         # create all tables (optionally drop first)
         if drop:

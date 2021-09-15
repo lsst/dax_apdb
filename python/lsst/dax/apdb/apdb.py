@@ -193,10 +193,6 @@ class ApdbConfig(pexConfig.Config):
     timer = Field(dtype=bool,
                   doc="If True then print/log timing information",
                   default=False)
-    diaobject_index_hint = Field(dtype=str,
-                                 doc="Name of the index to use with Oracle index hint",
-                                 default=None,
-                                 optional=True)
     dynamic_sampling_hint = Field(dtype=int,
                                   doc="If non-zero then use dynamic_sampling hint",
                                   default=0)
@@ -335,9 +331,6 @@ class Apdb(object):
             columns = [table.c[col] for col in self.config.dia_object_columns]
             query = sql.select(columns)
 
-        if self.config.diaobject_index_hint:
-            val = self.config.diaobject_index_hint
-            query = query.with_hint(table, 'index_rs_asc(%(name)s "{}")'.format(val))
         if self.config.dynamic_sampling_hint > 0:
             val = self.config.dynamic_sampling_hint
             query = query.with_hint(table, 'dynamic_sampling(%(name)s {})'.format(val))
@@ -815,8 +808,7 @@ class Apdb(object):
             cursor = connection.cursor()
             cursor.execute("VACUUM ANALYSE")
 
-    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB',
-                   oracle_tablespace: Optional[str] = None, oracle_iot: bool = False) -> None:
+    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB') -> None:
         """Create or re-create all tables.
 
         Parameters
@@ -825,14 +817,8 @@ class Apdb(object):
             If True then drop tables before creating new ones.
         mysql_engine : `str`, optional
             Name of the MySQL engine to use for new tables.
-        oracle_tablespace : `str`, optional
-            Name of Oracle tablespace.
-        oracle_iot : `bool`, optional
-            Make Index-organized DiaObjectLast table.
         """
-        self._schema.makeSchema(drop=drop, mysql_engine=mysql_engine,
-                                oracle_tablespace=oracle_tablespace,
-                                oracle_iot=oracle_iot)
+        self._schema.makeSchema(drop=drop, mysql_engine=mysql_engine)
 
     def _explain(self, query: str, conn: sqlalchemy.engine.Connection) -> None:
         """Run the query with explain
@@ -908,9 +894,7 @@ class Apdb(object):
             return columnName
 
         if conn.engine.name == "oracle":
-            return self._storeObjectsAfwOracle(objects, conn, table,
-                                               schema_table_name, replace,
-                                               extra_columns)
+            raise RuntimeError("Oracle backend is not supported")
 
         schema = objects.getSchema()
         # use extra columns if specified
@@ -965,107 +949,6 @@ class Apdb(object):
         _LOG.info("%s: will store %d records", table.name, len(objects))
         with Timer(table.name + ' insert', self.config.timer):
             res = conn.execute(sql.text(query))
-        _LOG.debug("inserted %s intervals", res.rowcount)
-
-    def _storeObjectsAfwOracle(self, objects: afwTable.BaseCatalog, conn: sqlalchemy.engine.Connection,
-                               table: sqlalchemy.schema.Table, schema_table_name: str,
-                               replace: bool = False, extra_columns: Optional[Mapping[str, Any]] = None
-                               ) -> None:
-        """Store method for Oracle.
-
-        Takes catalog of records and stores a bunch of objects in a table.
-
-        Parameters
-        ----------
-        objects : `lsst.afw.table.BaseCatalog`
-            Catalog containing object records
-        conn :
-            Database connection
-        table : `sqlalchemy.Table`
-            Database table
-        schema_table_name : `str`
-            Name of the table to be used for finding table schema.
-        replace : `boolean`
-            If `True` then use replace instead of INSERT (should be more efficient)
-        extra_columns : `dict`, optional
-            Mapping (column_name, column_value) which gives column values to add
-            to every row, only if column is missing in catalog records.
-        """
-
-        def quoteId(columnName: str) -> str:
-            """Smart quoting for column names.
-            Lower-case naems are not quoted (Oracle backend needs them unquoted).
-            """
-            if not columnName.islower():
-                columnName = '"' + columnName + '"'
-            return columnName
-
-        schema = objects.getSchema()
-
-        # use extra columns that as overrides always.
-        extra_fields = list((extra_columns or {}).keys())
-
-        afw_fields = [field.getName() for key, field in schema
-                      if field.getName() not in extra_fields]
-        # _LOG.info("afw_fields: %s", afw_fields)
-
-        column_map = self._schema.getAfwColumns(schema_table_name)
-        # _LOG.info("column_map: %s", column_map)
-
-        # list of columns (as in cat schema)
-        fields = [column_map[field].name for field in afw_fields
-                  if field in column_map]
-        # _LOG.info("fields: %s", fields)
-
-        qfields = [quoteId(field) for field in fields + extra_fields]
-
-        if not replace:
-            vals = [":col{}".format(i) for i in range(len(fields))]
-            vals += [":extcol{}".format(i) for i in range(len(extra_fields))]
-            query = 'INSERT INTO ' + quoteId(table.name)
-            query += ' (' + ','.join(qfields) + ') VALUES'
-            query += ' (' + ','.join(vals) + ')'
-        else:
-            qvals = [":col{} {}".format(i, quoteId(field)) for i, field in enumerate(fields)]
-            qvals += [":extcol{} {}".format(i, quoteId(field)) for i, field in enumerate(extra_fields)]
-            pks = ('pixelId', 'diaObjectId')
-            onexpr = ["SRC.{col} = DST.{col}".format(col=quoteId(col)) for col in pks]
-            setexpr = ["DST.{col} = SRC.{col}".format(col=quoteId(col))
-                       for col in fields + extra_fields if col not in pks]
-            vals = ["SRC.{col}".format(col=quoteId(col)) for col in fields + extra_fields]
-            query = "MERGE INTO {} DST ".format(quoteId(table.name))
-            query += "USING (SELECT {} FROM DUAL) SRC ".format(", ".join(qvals))
-            query += "ON ({}) ".format(" AND ".join(onexpr))
-            query += "WHEN MATCHED THEN UPDATE SET {} ".format(" ,".join(setexpr))
-            query += "WHEN NOT MATCHED THEN INSERT "
-            query += "({}) VALUES ({})".format(','.join(qfields), ','.join(vals))
-        # _LOG.info("query: %s", query)
-
-        values = []
-        for rec in objects:
-            row = {}
-            col = 0
-            for field in afw_fields:
-                if field not in column_map:
-                    continue
-                value = rec[field]
-                if column_map[field].type == "DATETIME" and not np.isnan(value):
-                    # convert seconds into datetime
-                    value = datetime.utcfromtimestamp(value)
-                elif isinstance(value, geom.Angle):
-                    value = str(value.asDegrees())
-                elif not np.isfinite(value):
-                    value = None
-                row["col{}".format(col)] = value
-                col += 1
-            for i, field in enumerate(extra_fields):
-                row["extcol{}".format(i)] = extra_columns[field]  # type: ignore
-            values.append(row)
-
-        # _LOG.debug("query: %s", query)
-        _LOG.info("%s: will store %d records", table.name, len(objects))
-        with Timer(table.name + ' insert', self.config.timer):
-            res = conn.execute(sql.text(query), values)
         _LOG.debug("inserted %s intervals", res.rowcount)
 
     def _convertResult(self, res: sqlalchemy.Result, table_name: str,

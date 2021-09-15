@@ -64,12 +64,3 @@ config.explain=False
 
 # If True then print/log timing information
 # config.timer=False
-
-# Name of the index to use with Oracle index hint
-# config.diaobject_index_hint=None
-
-# If non-zero then use dynamic_sampling hint
-# config.dynamic_sampling_hint=0
-
-# If non-zero then use cardinality hint
-# config.cardinality_hint=0
