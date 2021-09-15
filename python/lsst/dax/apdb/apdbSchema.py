@@ -28,10 +28,9 @@ __all__ = ["ColumnDef", "IndexDef", "TableDef",
            "make_minimal_dia_object_schema", "make_minimal_dia_source_schema",
            "ApdbSchema"]
 
-from collections import namedtuple
 import logging
 import os
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Type
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Tuple, Type
 import yaml
 
 import sqlalchemy
@@ -42,30 +41,49 @@ import lsst.afw.table as afwTable
 
 _LOG = logging.getLogger(__name__)
 
-# Classes for representing schema
 
-# Column description:
-#    name : column name
-#    type : name of cat type (INT, FLOAT, etc.)
-#    nullable : True or False
-#    default : default value for column, can be None
-#    description : documentation, can be None or empty
-#    unit : string with unit name, can be None
-#    ucd : string with ucd, can be None
-ColumnDef = namedtuple('ColumnDef', 'name type nullable default description unit ucd')
+class ColumnDef(NamedTuple):
+    """Column representation in schema.
+    """
+    name: str
+    """column name"""
+    type: str
+    """name of cat type (INT, FLOAT, etc.)"""
+    nullable: bool
+    """True for nullable columns"""
+    default: Any
+    """default value for column, can be None"""
+    description: Optional[str]
+    """documentation, can be None or empty"""
+    unit: Optional[str]
+    """string with unit name, can be None"""
+    ucd: Optional[str]
+    """string with ucd, can be None"""
 
-# Index description:
-#    name : index name, can be None or empty
-#    type : one of "PRIMARY", "UNIQUE", "INDEX"
-#    columns : list of column names in index
-IndexDef = namedtuple('IndexDef', 'name type columns')
 
-# Table description:
-#    name : table name
-#    description : documentation, can be None or empty
-#    columns : list of ColumnDef instances
-#    indices : list of IndexDef instances, can be empty or None
-TableDef = namedtuple('TableDef', 'name description columns indices')
+class IndexDef(NamedTuple):
+    """Index description.
+    """
+    name: Optional[str]
+    """index name, can be None or empty"""
+    type: str
+    """one of "PRIMARY", "UNIQUE", "INDEX"
+    """
+    columns: List[str]
+    """list of column names in index"""
+
+
+class TableDef(NamedTuple):
+    """Table description
+    """
+    name: str
+    """table name"""
+    description: Optional[str]
+    """documentation, can be None or empty"""
+    columns: List[ColumnDef]
+    """list of ColumnDef instances"""
+    indices: Optional[List[IndexDef]]
+    """list of IndexDef instances, can be empty or None"""
 
 
 def make_minimal_dia_object_schema() -> afwTable.SourceTable:
