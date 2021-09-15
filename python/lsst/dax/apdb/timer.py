@@ -25,16 +25,18 @@ This was developed as a part of a prototype for performance studies. It
 could probably be removed in the production system.
 """
 
+from __future__ import annotations
 
 import logging
 import resource
 import time
+from typing import Any, Optional, Type
 
 
-_LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
+_LOG = logging.getLogger(__name__)
 
 
-class Timer(object):
+class Timer:
     """
     Instance of this class can be used to track consumed time.
 
@@ -48,22 +50,26 @@ class Timer(object):
             engine.execute('SELECT ...')
 
     """
-    def __init__(self, name="", doPrint=True):
+    def __init__(self, name: str = "", doPrint: bool = True):
         """
-        @param name:  Time name, will be printed together with statistics
-        @param doPrint: if True then print statistics on exist from context
+        Parameters
+        ----------
+        name : `str`
+            Timer name, will be printed together with statistics.
+        doPrint : `bool`
+            If True then print statistics on exist from context.
         """
         self._name = name
         self._print = doPrint
 
-        self._startReal = None
-        self._startUser = None
-        self._startSys = None
+        self._startReal = -1.
+        self._startUser = -1.
+        self._startSys = -1.
         self._sumReal = 0.
         self._sumUser = 0.
         self._sumSys = 0.
 
-    def start(self):
+    def start(self) -> Timer:
         """
         Start timer.
         """
@@ -73,32 +79,32 @@ class Timer(object):
         self._startSys = ru.ru_stime
         return self
 
-    def stop(self):
+    def stop(self) -> Timer:
         """
         Stop timer.
         """
-        if self._startReal is not None:
+        if self._startReal > 0:
             self._sumReal += time.time() - self._startReal
             ru = resource.getrusage(resource.RUSAGE_SELF)
             self._sumUser += ru.ru_utime - self._startUser
             self._sumSys += ru.ru_stime - self._startSys
-            self._startReal = None
-            self._startUser = None
-            self._startSys = None
+            self._startReal = -1.
+            self._startUser = -1.
+            self._startSys = -1.
         return self
 
-    def dump(self):
+    def dump(self) -> Timer:
         """
         Dump timer statistics
         """
         _LOG.info("%s", self)
         return self
 
-    def __str__(self):
+    def __str__(self) -> str:
         real = self._sumReal
         user = self._sumUser
         sys = self._sumSys
-        if self._startReal is not None:
+        if self._startReal > 0:
             real += time.time() - self._startReal
             ru = resource.getrusage(resource.RUSAGE_SELF)
             user += ru.ru_utime - self._startUser
@@ -108,14 +114,14 @@ class Timer(object):
             info = self._name + ": " + info
         return info
 
-    def __enter__(self):
+    def __enter__(self) -> Timer:
         """
         Enter context, start timer
         """
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Optional[Type], exc_val: Any, exc_tb: Any) -> Any:
         """
         Exit context, stop and dump timer
         """

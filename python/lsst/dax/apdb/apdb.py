@@ -22,6 +22,8 @@
 """Module defining Apdb class and related methods.
 """
 
+from __future__ import annotations
+
 __all__ = ["ApdbConfig", "Apdb"]
 
 from contextlib import contextmanager
@@ -30,6 +32,7 @@ import logging
 import numpy as np
 import os
 import pandas
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple, Type, Union
 
 import lsst.geom as geom
 import lsst.afw.table as afwTable
@@ -44,7 +47,7 @@ from . import timer, apdbSchema
 _LOG = logging.getLogger(__name__)
 
 
-class Timer(object):
+class Timer:
     """Timer class defining context manager which tracks execution timing.
 
     Typical use:
@@ -56,13 +59,13 @@ class Timer(object):
 
     See also :py:mod:`timer` module.
     """
-    def __init__(self, name, do_logging=True, log_before_cursor_execute=False):
+    def __init__(self, name: str, do_logging: bool = True, log_before_cursor_execute: bool = False):
         self._log_before_cursor_execute = log_before_cursor_execute
         self._do_logging = do_logging
         self._timer1 = timer.Timer(name)
         self._timer2 = timer.Timer(name + " (before/after cursor)")
 
-    def __enter__(self):
+    def __enter__(self) -> Timer:
         """
         Enter context, start timer
         """
@@ -71,7 +74,7 @@ class Timer(object):
         self._timer1.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Optional[Type], exc_val: Any, exc_tb: Any) -> Any:
         """
         Exit context, stop and dump timer
         """
@@ -83,20 +86,20 @@ class Timer(object):
 #         event.remove(engine.Engine, "after_cursor_execute", self._stop_timer)
         return False
 
-    def _start_timer(self, conn, cursor, statement, parameters, context, executemany):
+    def _start_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
         """Start counting"""
         if self._log_before_cursor_execute:
             _LOG.info("before_cursor_execute")
         self._timer2.start()
 
-    def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):
+    def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
         """Stop counting"""
         self._timer2.stop()
         if self._do_logging:
             self._timer2.dump()
 
 
-def _split(seq, nItems):
+def _split(seq: Iterable, nItems: int) -> Iterator[List]:
     """Split a sequence into smaller sequences"""
     seq = list(seq)
     while seq:
@@ -112,7 +115,7 @@ def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
 
 
 @contextmanager
-def _ansi_session(engine):
+def _ansi_session(engine: sqlalchemy.engine.Engine) -> Iterator[sqlalchemy.engine.Connection]:
     """Returns a connection, makes sure that ANSI mode is set for MySQL
     """
     with engine.begin() as conn:
@@ -122,7 +125,7 @@ def _ansi_session(engine):
     return
 
 
-def _data_file_name(basename):
+def _data_file_name(basename: str) -> str:
     """Return path name of a data file.
     """
     return os.path.join("${DAX_APDB_DIR}", "data", basename)
@@ -201,7 +204,7 @@ class ApdbConfig(pexConfig.Config):
                              doc="If non-zero then use cardinality hint",
                              default=0)
 
-    def validate(self):
+    def validate(self) -> None:
         super().validate()
         if self.isolation_level == "READ_COMMITTED" and self.db_url.startswith("sqlite"):
             raise ValueError("Attempting to run Apdb with SQLITE and isolation level 'READ_COMMITTED.' "
@@ -224,7 +227,7 @@ class Apdb(object):
         APDB schema.
     """
 
-    def __init__(self, config, afw_schemas=None):
+    def __init__(self, config: ApdbConfig, afw_schemas: Mapping[str, afwTable.Schema] = None):
 
         self.config = config
 
@@ -244,7 +247,7 @@ class Apdb(object):
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
         kw = dict(echo=self.config.sql_echo)
-        conn_args = dict()
+        conn_args: Dict[str, Any] = dict()
         if not self.config.connection_pool:
             kw.update(poolclass=NullPool)
         if self.config.isolation_level is not None:
@@ -266,7 +269,7 @@ class Apdb(object):
                                              afw_schemas=afw_schemas,
                                              prefix=self.config.prefix)
 
-    def tableRowCount(self):
+    def tableRowCount(self) -> Dict[str, int]:
         """Returns dictionary with the table names and row counts.
 
         Used by ``ap_proto`` to keep track of the size of the database tables.
@@ -278,7 +281,8 @@ class Apdb(object):
             Dict where key is a table name and value is a row count.
         """
         res = {}
-        tables = [self._schema.objects, self._schema.sources, self._schema.forcedSources]
+        tables: List[sqlalchemy.schema.Table] = [
+            self._schema.objects, self._schema.sources, self._schema.forcedSources]
         if self.config.dia_object_index == 'last_object_table':
             tables.append(self._schema.objects_last)
         for table in tables:
@@ -288,7 +292,8 @@ class Apdb(object):
 
         return res
 
-    def getDiaObjects(self, pixel_ranges, return_pandas=False):
+    def getDiaObjects(self, pixel_ranges: Iterable[Tuple[int, int]], return_pandas: bool = False
+                      ) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
         """Returns catalog of DiaObject instances from given region.
 
         Objects are searched based on pixelization index and region is
@@ -319,6 +324,7 @@ class Apdb(object):
         """
 
         # decide what columns we need
+        table: sqlalchemy.schema.Table
         if self.config.dia_object_index == 'last_object_table':
             table = self._schema.objects_last
         else:
@@ -370,7 +376,8 @@ class Apdb(object):
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
-    def getDiaSourcesInRegion(self, pixel_ranges, dt, return_pandas=False):
+    def getDiaSourcesInRegion(self, pixel_ranges: Iterable[Tuple[int, int]], dt: datetime,
+                              return_pandas: bool = False) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
         """Returns catalog of DiaSource instances from given region.
 
         Sources are searched based on pixelization index and region is
@@ -405,7 +412,7 @@ class Apdb(object):
             _LOG.info("Skip DiaSources fetching")
             return None
 
-        table = self._schema.sources
+        table: sqlalchemy.schema.Table = self._schema.sources
         query = table.select()
 
         # build selection
@@ -429,7 +436,8 @@ class Apdb(object):
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def getDiaSources(self, object_ids, dt, return_pandas=False):
+    def getDiaSources(self, object_ids: List[int], dt: datetime, return_pandas: bool = False
+                      ) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
@@ -465,16 +473,16 @@ class Apdb(object):
             # this should create a catalog, but the list of columns may be empty
             return None
 
-        table = self._schema.sources
-        sources = None
+        table: sqlalchemy.schema.Table = self._schema.sources
+        sources: Optional[Union[pandas.DataFrame, afwTable.SourceCatalog]] = None
         with Timer('DiaSource select', self.config.timer):
             with _ansi_session(self._engine) as conn:
                 for ids in _split(sorted(object_ids), 1000):
                     query = 'SELECT *  FROM "' + table.name + '" WHERE '
 
                     # select by object id
-                    ids = ",".join(str(id) for id in ids)
-                    query += '"diaObjectId" IN (' + ids + ') '
+                    ids_str = ",".join(str(id) for id in ids)
+                    query += '"diaObjectId" IN (' + ids_str + ') '
 
                     # execute select
                     if return_pandas:
@@ -487,10 +495,11 @@ class Apdb(object):
                         res = conn.execute(sql.text(query))
                         sources = self._convertResult(res, "DiaSource", sources)
 
-        _LOG.debug("found %s DiaSources", len(sources))
+        _LOG.debug("found %s DiaSources", len(sources) if sources is not None else 0)
         return sources
 
-    def getDiaForcedSources(self, object_ids, dt, return_pandas=False):
+    def getDiaForcedSources(self, object_ids: List[int], dt: datetime, return_pandas: bool = False
+                            ) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
         """Returns catalog of DiaForcedSource instances matching given
         DiaObjects.
 
@@ -526,8 +535,8 @@ class Apdb(object):
             # this should create a catalog, but the list of columns may be empty
             return None
 
-        table = self._schema.forcedSources
-        sources = None
+        table: sqlalchemy.schema.Table = self._schema.forcedSources
+        sources: Optional[Union[pandas.DataFrame, afwTable.SourceCatalog]] = None
 
         with Timer('DiaForcedSource select', self.config.timer):
             with _ansi_session(self._engine) as conn:
@@ -536,8 +545,8 @@ class Apdb(object):
                     query = 'SELECT *  FROM "' + table.name + '" WHERE '
 
                     # select by object id
-                    ids = ",".join(str(id) for id in ids)
-                    query += '"diaObjectId" IN (' + ids + ') '
+                    ids_str = ",".join(str(id) for id in ids)
+                    query += '"diaObjectId" IN (' + ids_str + ') '
 
                     # execute select
                     if return_pandas:
@@ -550,10 +559,11 @@ class Apdb(object):
                         res = conn.execute(sql.text(query))
                         sources = self._convertResult(res, "DiaForcedSource", sources)
 
-        _LOG.debug("found %s DiaForcedSources", len(sources))
+        if sources is not None:
+            _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
-    def storeDiaObjects(self, objs, dt):
+    def storeDiaObjects(self, objs: Union[pandas.DataFrame, afwTable.SourceCatalog], dt: datetime) -> None:
         """Store catalog of DiaObjects from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -586,12 +596,12 @@ class Apdb(object):
 
         # NOTE: workaround for sqlite, need this here to avoid
         # "database is locked" error.
-        table = self._schema.objects
+        table: sqlalchemy.schema.Table = self._schema.objects
 
         # everything to be done in single transaction
         with _ansi_session(self._engine) as conn:
 
-            ids = ",".join(str(id) for id in ids)
+            ids_str = ",".join(str(id) for id in ids)
 
             if self.config.dia_object_index == 'last_object_table':
 
@@ -604,7 +614,7 @@ class Apdb(object):
                 # Pandas inserts objects.
                 if not do_replace or isinstance(objs, pandas.DataFrame):
                     query = 'DELETE FROM "' + table.name + '" '
-                    query += 'WHERE "diaObjectId" IN (' + ids + ') '
+                    query += 'WHERE "diaObjectId" IN (' + ids_str + ') '
 
                     if self.config.explain:
                         # run the same query with explain
@@ -614,7 +624,7 @@ class Apdb(object):
                         res = conn.execute(sql.text(query))
                     _LOG.debug("deleted %s objects", res.rowcount)
 
-                extra_columns = dict(lastNonForcedSource=dt)
+                extra_columns: Dict[str, Any] = dict(lastNonForcedSource=dt)
                 if isinstance(objs, pandas.DataFrame):
                     with Timer("DiaObjectLast insert", self.config.timer):
                         objs = _coerce_uint64(objs)
@@ -633,7 +643,7 @@ class Apdb(object):
                 table = self._schema.objects
                 query = 'UPDATE "' + table.name + '" '
                 query += "SET \"validityEnd\" = '" + str(dt) + "' "
-                query += 'WHERE "diaObjectId" IN (' + ids + ') '
+                query += 'WHERE "diaObjectId" IN (' + ids_str + ') '
                 query += 'AND "validityEnd" IS NULL'
 
                 # _LOG.debug("query: %s", query)
@@ -664,7 +674,7 @@ class Apdb(object):
                 self._storeObjectsAfw(objs, conn, table, "DiaObject",
                                       extra_columns=extra_columns)
 
-    def storeDiaSources(self, sources):
+    def storeDiaSources(self, sources: Union[pandas.DataFrame, afwTable.SourceCatalog]) -> None:
         """Store catalog of DIASources from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -696,7 +706,7 @@ class Apdb(object):
                 table = self._schema.sources
                 self._storeObjectsAfw(sources, conn, table, "DiaSource")
 
-    def storeDiaForcedSources(self, sources):
+    def storeDiaForcedSources(self, sources: Union[pandas.DataFrame, afwTable.SourceCatalog]) -> None:
         """Store a set of DIAForcedSources from current visit.
 
         This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
@@ -728,7 +738,7 @@ class Apdb(object):
                 table = self._schema.forcedSources
                 self._storeObjectsAfw(sources, conn, table, "DiaForcedSource")
 
-    def countUnassociatedObjects(self):
+    def countUnassociatedObjects(self) -> int:
         """Return the number of DiaObjects that have only one DiaSource associated
         with them.
 
@@ -740,7 +750,7 @@ class Apdb(object):
             Number of DiaObjects with exactly one associated DiaSource.
         """
         # Retrieve the DiaObject table.
-        table = self._schema.objects
+        table: sqlalchemy.schema.Table = self._schema.objects
 
         # Construct the sql statement.
         stmt = sql.select([func.count()]).select_from(table).where(table.c.nDiaSources == 1)
@@ -751,7 +761,7 @@ class Apdb(object):
 
         return count
 
-    def isVisitProcessed(self, visitInfo):
+    def isVisitProcessed(self, visitInfo: Any) -> bool:
         """Test whether data from an image has been loaded into the database.
 
         Used as part of ap_verify metrics.
@@ -767,7 +777,7 @@ class Apdb(object):
             `True` if the data are present, `False` otherwise.
         """
         id = visitInfo.getExposureId()
-        table = self._schema.sources
+        table: sqlalchemy.schema.Table = self._schema.sources
         idField = table.c.ccdVisitId
 
         # Hopefully faster than SELECT DISTINCT
@@ -776,7 +786,7 @@ class Apdb(object):
 
         return self._engine.scalar(query) is not None
 
-    def dailyJob(self):
+    def dailyJob(self) -> None:
         """Implement daily activities like cleanup/vacuum.
 
         What should be done during daily cleanup is determined by
@@ -786,12 +796,12 @@ class Apdb(object):
         # move data from DiaObjectNightly into DiaObject
         if self.config.dia_object_nightly:
             with _ansi_session(self._engine) as conn:
-                query = 'INSERT INTO "' + self._schema.objects.name + '" '
-                query += 'SELECT * FROM "' + self._schema.objects_nightly.name + '"'
+                query = 'INSERT INTO "' + self._schema.objects.name + '" '  # type:ignore
+                query += 'SELECT * FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
                 with Timer('DiaObjectNightly copy', self.config.timer):
                     conn.execute(sql.text(query))
 
-                query = 'DELETE FROM "' + self._schema.objects_nightly.name + '"'
+                query = 'DELETE FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
                 with Timer('DiaObjectNightly delete', self.config.timer):
                     conn.execute(sql.text(query))
 
@@ -805,7 +815,8 @@ class Apdb(object):
             cursor = connection.cursor()
             cursor.execute("VACUUM ANALYSE")
 
-    def makeSchema(self, drop=False, mysql_engine='InnoDB', oracle_tablespace=None, oracle_iot=False):
+    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB',
+                   oracle_tablespace: Optional[str] = None, oracle_iot: bool = False) -> None:
         """Create or re-create all tables.
 
         Parameters
@@ -823,7 +834,7 @@ class Apdb(object):
                                 oracle_tablespace=oracle_tablespace,
                                 oracle_iot=oracle_iot)
 
-    def _explain(self, query, conn):
+    def _explain(self, query: str, conn: sqlalchemy.engine.Connection) -> None:
         """Run the query with explain
         """
 
@@ -842,8 +853,9 @@ class Apdb(object):
         else:
             _LOG.info("EXPLAIN returned nothing")
 
-    def _storeObjectsAfw(self, objects, conn, table, schema_table_name,
-                         replace=False, extra_columns=None):
+    def _storeObjectsAfw(self, objects: afwTable.BaseCatalog, conn: sqlalchemy.engine.Connection,
+                         table: sqlalchemy.schema.Table, schema_table_name: str,
+                         replace: bool = False, extra_columns: Optional[Mapping[str, Any]] = None) -> None:
         """Generic store method.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -865,7 +877,7 @@ class Apdb(object):
             to every row, only if column is missing in catalog records.
         """
 
-        def quoteValue(v):
+        def quoteValue(v: Any) -> Any:
             """Quote and escape values"""
             if v is None:
                 v = "NULL"
@@ -887,7 +899,7 @@ class Apdb(object):
                     v = "NULL"
             return v
 
-        def quoteId(columnName):
+        def quoteId(columnName: str) -> str:
             """Smart quoting for column names.
             Lower-case names are not quoted.
             """
@@ -931,7 +943,7 @@ class Apdb(object):
                     value = datetime.utcfromtimestamp(value)
                 row.append(quoteValue(value))
             for field in extra_fields:
-                row.append(quoteValue(extra_columns[field]))
+                row.append(quoteValue(extra_columns[field]))  # type: ignore
             values.append('(' + ','.join(row) + ')')
 
         if self.config.explain:
@@ -955,8 +967,10 @@ class Apdb(object):
             res = conn.execute(sql.text(query))
         _LOG.debug("inserted %s intervals", res.rowcount)
 
-    def _storeObjectsAfwOracle(self, objects, conn, table, schema_table_name,
-                               replace=False, extra_columns=None):
+    def _storeObjectsAfwOracle(self, objects: afwTable.BaseCatalog, conn: sqlalchemy.engine.Connection,
+                               table: sqlalchemy.schema.Table, schema_table_name: str,
+                               replace: bool = False, extra_columns: Optional[Mapping[str, Any]] = None
+                               ) -> None:
         """Store method for Oracle.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -978,7 +992,7 @@ class Apdb(object):
             to every row, only if column is missing in catalog records.
         """
 
-        def quoteId(columnName):
+        def quoteId(columnName: str) -> str:
             """Smart quoting for column names.
             Lower-case naems are not quoted (Oracle backend needs them unquoted).
             """
@@ -1045,7 +1059,7 @@ class Apdb(object):
                 row["col{}".format(col)] = value
                 col += 1
             for i, field in enumerate(extra_fields):
-                row["extcol{}".format(i)] = extra_columns[field]
+                row["extcol{}".format(i)] = extra_columns[field]  # type: ignore
             values.append(row)
 
         # _LOG.debug("query: %s", query)
@@ -1054,7 +1068,8 @@ class Apdb(object):
             res = conn.execute(sql.text(query), values)
         _LOG.debug("inserted %s intervals", res.rowcount)
 
-    def _convertResult(self, res, table_name, catalog=None):
+    def _convertResult(self, res: sqlalchemy.Result, table_name: str,
+                       catalog: Optional[afwTable.BaseCatalog] = None) -> afwTable.BaseCatalog:
         """Convert result set into output catalog.
 
         Parameters
@@ -1073,7 +1088,7 @@ class Apdb(object):
              ``catalog`` is updated and returned.
         """
         # make catalog schema
-        columns = res.keys()
+        columns: List[str] = res.keys()
         schema, col_map = self._schema.getAfwSchema(table_name, columns)
         if catalog is None:
             _LOG.debug("_convertResult: schema: %s", schema)

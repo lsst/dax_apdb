@@ -22,6 +22,8 @@
 """Module responsible for APDB schema operations.
 """
 
+from __future__ import annotations
+
 __all__ = ["ColumnDef", "IndexDef", "TableDef",
            "make_minimal_dia_object_schema", "make_minimal_dia_source_schema",
            "ApdbSchema"]
@@ -29,6 +31,7 @@ __all__ = ["ColumnDef", "IndexDef", "TableDef",
 from collections import namedtuple
 import logging
 import os
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Type
 import yaml
 
 import sqlalchemy
@@ -67,7 +70,7 @@ IndexDef = namedtuple('IndexDef', 'name type columns')
 TableDef = namedtuple('TableDef', 'name description columns indices')
 
 
-def make_minimal_dia_object_schema():
+def make_minimal_dia_object_schema() -> afwTable.SourceTable:
     """Define and create the minimal schema required for a DIAObject.
 
     Returns
@@ -82,7 +85,7 @@ def make_minimal_dia_object_schema():
     return schema
 
 
-def make_minimal_dia_source_schema():
+def make_minimal_dia_source_schema() -> afwTable.SourceTable:
     """ Define and create the minimal schema required for a DIASource.
 
     Returns
@@ -109,7 +112,7 @@ def make_minimal_dia_source_schema():
 
 
 @compiles(CreateTable, "oracle")
-def _add_suffixes_tbl(element, compiler, **kw):
+def _add_suffixes_tbl(element: Any, compiler: Any, **kw: Any) -> str:
     """Add all needed suffixed for Oracle CREATE TABLE statement.
 
     This is a special compilation method for CreateTable clause which
@@ -137,7 +140,7 @@ def _add_suffixes_tbl(element, compiler, **kw):
 
 
 @compiles(CreateIndex, "oracle")
-def _add_suffixes_idx(element, compiler, **kw):
+def _add_suffixes_idx(element: Any, compiler: Any, **kw: Any) -> str:
     """Add all needed suffixed for Oracle CREATE INDEX statement.
 
     This is a special compilation method for CreateIndex clause which
@@ -214,9 +217,11 @@ class ApdbSchema(object):
                              "CHAR": "String",
                              "BOOL": "Flag"}
 
-    def __init__(self, engine, dia_object_index, dia_object_nightly,
-                 schema_file, extra_schema_file=None, column_map=None,
-                 afw_schemas=None, prefix=""):
+    def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str,
+                 dia_object_nightly: bool, schema_file: str,
+                 extra_schema_file: Optional[str] = None, column_map: Optional[str] = None,
+                 afw_schemas: Optional[Mapping[str, afwTable.Schema]] = None,
+                 prefix: str = ""):
 
         self._engine = engine
         self._dia_object_index = dia_object_index
@@ -266,7 +271,8 @@ class ApdbSchema(object):
         # generate schema for all tables, must be called last
         self._makeTables()
 
-    def _makeTables(self, mysql_engine='InnoDB', oracle_tablespace=None, oracle_iot=False):
+    def _makeTables(self, mysql_engine: str = 'InnoDB', oracle_tablespace: Optional[str] = None,
+                    oracle_iot: bool = False) -> None:
         """Generate schema for all tables.
 
         Parameters
@@ -279,7 +285,7 @@ class ApdbSchema(object):
             Make Index-organized DiaObjectLast table.
         """
 
-        info = dict(oracle_tablespace=oracle_tablespace)
+        info: Dict[str, Any] = dict(oracle_tablespace=oracle_tablespace)
 
         if self._dia_object_index == 'pix_id_iov':
             # Special PK with HTM column in first position
@@ -323,7 +329,8 @@ class ApdbSchema(object):
             elif table_name == 'DiaForcedSource':
                 self.forcedSources = table
 
-    def makeSchema(self, drop=False, mysql_engine='InnoDB', oracle_tablespace=None, oracle_iot=False):
+    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB',
+                   oracle_tablespace: Optional[str] = None, oracle_iot: bool = False) -> None:
         """Create or re-create all tables.
 
         Parameters
@@ -353,7 +360,8 @@ class ApdbSchema(object):
         _LOG.info('creating all tables')
         self._metadata.create_all()
 
-    def getAfwSchema(self, table_name, columns=None):
+    def getAfwSchema(self, table_name: str, columns: Optional[List[str]] = None
+                     ) -> Tuple[afwTable.Schema, Mapping[str, Optional[afwTable.Key]]]:
         """Return afw schema for given table.
 
         Parameters
@@ -375,7 +383,7 @@ class ApdbSchema(object):
         col_map = self._column_map.get(table_name, {})
 
         # make a schema
-        col2afw = {}
+        col2afw: Dict[str, Optional[afwTable.Key]] = {}
         schema = afwTable.SourceTable.makeMinimalSchema()
         for column in table.columns:
             if columns and column.name not in columns:
@@ -421,7 +429,7 @@ class ApdbSchema(object):
 
         return schema, col2afw
 
-    def getAfwColumns(self, table_name):
+    def getAfwColumns(self, table_name: str) -> Mapping[str, ColumnDef]:
         """Returns mapping of afw column names to Column definitions.
 
         Parameters
@@ -443,7 +451,7 @@ class ApdbSchema(object):
             cmap[afw_name] = column
         return cmap
 
-    def getColumnMap(self, table_name):
+    def getColumnMap(self, table_name: str) -> Mapping[str, ColumnDef]:
         """Returns mapping of column names to Column definitions.
 
         Parameters
@@ -460,7 +468,8 @@ class ApdbSchema(object):
         cmap = {column.name: column for column in table.columns}
         return cmap
 
-    def _buildSchemas(self, schema_file, extra_schema_file=None, afw_schemas=None):
+    def _buildSchemas(self, schema_file: str, extra_schema_file: Optional[str] = None,
+                      afw_schemas: Optional[Mapping[str, afwTable.Schema]] = None) -> Mapping[str, TableDef]:
         """Create schema definitions for all tables.
 
         Reads YAML schemas and builds dictionary containing `TableDef`
@@ -539,12 +548,12 @@ class ApdbSchema(object):
                 column_names = {col['name'] for col in columns}
                 column_names_lower = {col.lower() for col in column_names}
                 for _, field in afw_schema:
-                    column = self._field2dict(field, table_name)
-                    if column['name'] not in column_names:
+                    fcolumn = self._field2dict(field, table_name)
+                    if fcolumn['name'] not in column_names:
                         # check that there is no column name that only differs in case
-                        if column['name'].lower() in column_names_lower:
+                        if fcolumn['name'].lower() in column_names_lower:
                             raise ValueError("afw.table column name case does not match schema column name")
-                        columns.append(column)
+                        columns.append(fcolumn)
 
             table_columns = []
             for col in columns:
@@ -579,7 +588,7 @@ class ApdbSchema(object):
 
         return schemas
 
-    def _tableColumns(self, table_name):
+    def _tableColumns(self, table_name: str) -> List[Column]:
         """Return set of columns in a table
 
         Parameters
@@ -615,7 +624,7 @@ class ApdbSchema(object):
 
         return column_defs
 
-    def _field2dict(self, field, table_name):
+    def _field2dict(self, field: afwTable.Field, table_name: str) -> Mapping[str, Any]:
         """Convert afw schema field definition into a dict format.
 
         Parameters
@@ -639,7 +648,7 @@ class ApdbSchema(object):
         ctype = self._afw_type_map[field.getTypeString()]
         return dict(name=column, type=ctype, nullable=True)
 
-    def _tableIndices(self, table_name, info):
+    def _tableIndices(self, table_name: str, info: Dict) -> List[sqlalchemy.schema.Constraint]:
         """Return set of constraints/indices in a table
 
         Parameters
@@ -658,7 +667,7 @@ class ApdbSchema(object):
         table_schema = self._schemas[table_name]
 
         # convert all index dicts into alchemy Columns
-        index_defs = []
+        index_defs: List[sqlalchemy.schema.Constraint] = []
         for index in table_schema.indices:
             if index.type == "INDEX":
                 index_defs.append(Index(self._prefix+index.name, *index.columns, info=info))
@@ -673,7 +682,7 @@ class ApdbSchema(object):
 
         return index_defs
 
-    def _getDoubleType(self):
+    def _getDoubleType(self) -> Type:
         """DOUBLE type is database-specific, select one based on dialect.
 
         Returns
