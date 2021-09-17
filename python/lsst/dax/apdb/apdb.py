@@ -32,10 +32,8 @@ import logging
 import numpy as np
 import os
 import pandas
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple, Type, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
 
-import lsst.geom as geom
-import lsst.afw.table as afwTable
 import lsst.pex.config as pexConfig
 from lsst.pex.config import Field, ChoiceField, ListField
 import sqlalchemy
@@ -181,9 +179,6 @@ class ApdbConfig(pexConfig.Config):
     extra_schema_file = Field(dtype=str,
                               doc="Location of (YAML) configuration file with extra schema",
                               default=_data_file_name("apdb-schema-extra.yaml"))
-    column_map = Field(dtype=str,
-                       doc="Location of (YAML) configuration file with column mapping",
-                       default=_data_file_name("apdb-afw-map.yaml"))
     prefix = Field(dtype=str,
                    doc="Prefix to add to table names and index names",
                    default="")
@@ -217,13 +212,10 @@ class Apdb(object):
     Parameters
     ----------
     config : `ApdbConfig`
-    afw_schemas : `dict`, optional
-        Dictionary with table name for a key and `afw.table.Schema`
-        for a value. Columns in schema will be added to standard
-        APDB schema.
+        Configuration object.
     """
 
-    def __init__(self, config: ApdbConfig, afw_schemas: Mapping[str, afwTable.Schema] = None):
+    def __init__(self, config: ApdbConfig):
 
         self.config = config
 
@@ -237,7 +229,6 @@ class Apdb(object):
         _LOG.debug("    object_last_replace: %s", self.config.object_last_replace)
         _LOG.debug("    schema_file: %s", self.config.schema_file)
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
-        _LOG.debug("    column_map: %s", self.config.column_map)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
 
         # engine is reused between multiple processes, make sure that we don't
@@ -261,8 +252,6 @@ class Apdb(object):
                                              dia_object_nightly=self.config.dia_object_nightly,
                                              schema_file=self.config.schema_file,
                                              extra_schema_file=self.config.extra_schema_file,
-                                             column_map=self.config.column_map,
-                                             afw_schemas=afw_schemas,
                                              prefix=self.config.prefix)
 
     def tableRowCount(self) -> Dict[str, int]:
@@ -288,8 +277,7 @@ class Apdb(object):
 
         return res
 
-    def getDiaObjects(self, pixel_ranges: Iterable[Tuple[int, int]], return_pandas: bool = False
-                      ) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
+    def getDiaObjects(self, pixel_ranges: Iterable[Tuple[int, int]]) -> pandas.DataFrame:
         """Returns catalog of DiaObject instances from given region.
 
         Objects are searched based on pixelization index and region is
@@ -297,7 +285,7 @@ class Apdb(object):
         particular type of index, client is responsible for consistency
         when calculating pixelization indices.
 
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
+        This method returns DataFrame catalog with schema determined by
         the schema of APDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types
         or units are not changed.
@@ -309,13 +297,10 @@ class Apdb(object):
         pixel_ranges : `list` of `tuple`
             Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
             This defines set of pixel indices to be included in result.
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
 
         Returns
         -------
-        catalog : `lsst.afw.table.SourceCatalog` or `pandas.DataFrame`
+        catalog : `pandas.DataFrame`
             Catalog containing DiaObject records.
         """
 
@@ -361,16 +346,12 @@ class Apdb(object):
         # execute select
         with Timer('DiaObject select', self.config.timer):
             with self._engine.begin() as conn:
-                if return_pandas:
-                    objects = pandas.read_sql_query(query, conn)
-                else:
-                    res = conn.execute(query)
-                    objects = self._convertResult(res, "DiaObject")
+                objects = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
-    def getDiaSourcesInRegion(self, pixel_ranges: Iterable[Tuple[int, int]], dt: datetime,
-                              return_pandas: bool = False) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
+    def getDiaSourcesInRegion(self, pixel_ranges: Iterable[Tuple[int, int]], dt: datetime
+                              ) -> Optional[pandas.DataFrame]:
         """Returns catalog of DiaSource instances from given region.
 
         Sources are searched based on pixelization index and region is
@@ -378,7 +359,7 @@ class Apdb(object):
         particular type of index, client is responsible for consistency
         when calculating pixelization indices.
 
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
+        This method returns DataFrame catalog with schema determined by
         the schema of APDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types or
         units are not changed.
@@ -390,13 +371,10 @@ class Apdb(object):
             This defines set of pixel indices to be included in result.
         dt : `datetime.datetime`
             Time of the current visit
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
 
         Returns
         -------
-        catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
+        catalog : `pandas.DataFrame`, or `None`
             Catalog containing DiaSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0.
         """
@@ -421,19 +399,14 @@ class Apdb(object):
         # execute select
         with Timer('DiaSource select', self.config.timer):
             with _ansi_session(self._engine) as conn:
-                if return_pandas:
-                    sources = pandas.read_sql_query(query, conn)
-                else:
-                    res = conn.execute(query)
-                    sources = self._convertResult(res, "DiaSource")
+                sources = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def getDiaSources(self, object_ids: List[int], dt: datetime, return_pandas: bool = False
-                      ) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
+    def getDiaSources(self, object_ids: List[int], dt: datetime) -> Optional[pandas.DataFrame]:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
+        This method returns DataFrame catalog with schema determined by
         the schema of APDB table. Re-mapping of the column names is done for
         some columns (based on column map passed to constructor) but types or
         units are not changed.
@@ -444,14 +417,10 @@ class Apdb(object):
             Collection of DiaObject IDs
         dt : `datetime.datetime`
             Time of the current visit
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
-
 
         Returns
         -------
-        catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
+        catalog : `pandas.DataFrame`, or `None`
             Catalog contaning DiaSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
@@ -467,7 +436,7 @@ class Apdb(object):
             return None
 
         table: sqlalchemy.schema.Table = self._schema.sources
-        sources: Optional[Union[pandas.DataFrame, afwTable.SourceCatalog]] = None
+        sources: Optional[pandas.DataFrame] = None
         with Timer('DiaSource select', self.config.timer):
             with _ansi_session(self._engine) as conn:
                 for ids in _split(sorted(object_ids), 1000):
@@ -478,25 +447,20 @@ class Apdb(object):
                     query += '"diaObjectId" IN (' + ids_str + ') '
 
                     # execute select
-                    if return_pandas:
-                        df = pandas.read_sql_query(sql.text(query), conn)
-                        if sources is None:
-                            sources = df
-                        else:
-                            sources = sources.append(df)
+                    df = pandas.read_sql_query(sql.text(query), conn)
+                    if sources is None:
+                        sources = df
                     else:
-                        res = conn.execute(sql.text(query))
-                        sources = self._convertResult(res, "DiaSource", sources)
+                        sources = sources.append(df)
 
         _LOG.debug("found %s DiaSources", len(sources) if sources is not None else 0)
         return sources
 
-    def getDiaForcedSources(self, object_ids: List[int], dt: datetime, return_pandas: bool = False
-                            ) -> Union[pandas.DataFrame, afwTable.SourceCatalog]:
+    def getDiaForcedSources(self, object_ids: List[int], dt: datetime) -> Optional[pandas.DataFrame]:
         """Returns catalog of DiaForcedSource instances matching given
         DiaObjects.
 
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
+        This method returns DataFrame catalog with schema determined by
         the schema of L1 database table. Re-mapping of the column names may
         be done for some columns (based on column map passed to constructor)
         but types or units are not changed.
@@ -507,13 +471,10 @@ class Apdb(object):
             Collection of DiaObject IDs
         dt : `datetime.datetime`
             Time of the current visit
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
 
         Returns
         -------
-        catalog : `lsst.afw.table.SourceCatalog` or `None`
+        catalog : `pandas.DataFrame` or `None`
             Catalog contaning DiaForcedSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
@@ -529,7 +490,7 @@ class Apdb(object):
             return None
 
         table: sqlalchemy.schema.Table = self._schema.forcedSources
-        sources: Optional[Union[pandas.DataFrame, afwTable.SourceCatalog]] = None
+        sources: Optional[pandas.DataFrame] = None
 
         with Timer('DiaForcedSource select', self.config.timer):
             with _ansi_session(self._engine) as conn:
@@ -542,49 +503,40 @@ class Apdb(object):
                     query += '"diaObjectId" IN (' + ids_str + ') '
 
                     # execute select
-                    if return_pandas:
-                        df = pandas.read_sql_query(sql.text(query), conn)
-                        if sources is None:
-                            sources = df
-                        else:
-                            sources = sources.append(df)
+                    df = pandas.read_sql_query(sql.text(query), conn)
+                    if sources is None:
+                        sources = df
                     else:
-                        res = conn.execute(sql.text(query))
-                        sources = self._convertResult(res, "DiaForcedSource", sources)
+                        sources = sources.append(df)
 
         if sources is not None:
             _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
-    def storeDiaObjects(self, objs: Union[pandas.DataFrame, afwTable.SourceCatalog], dt: datetime) -> None:
+    def storeDiaObjects(self, objs: pandas.DataFrame, dt: datetime) -> None:
         """Store catalog of DiaObjects from current visit.
 
-        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
+        This methods takes DataFrame catalog, its schema must be
         compatible with the schema of APDB table:
 
           - column names must correspond to database table columns
-          - some columns names are re-mapped based on column map passed to
-            constructor
           - types and units of the columns must match database definitions,
             no unit conversion is performed presently
           - columns that have default values in database schema can be
-            omitted from afw schema
+            omitted from catalog
           - this method knows how to fill interval-related columns
             (validityStart, validityEnd) they do not need to appear in
-            afw schema
+            a catalog
 
         Parameters
         ----------
-        objs : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
+        objs : `pandas.DataFrame`
             Catalog with DiaObject records
         dt : `datetime.datetime`
             Time of the visit
         """
 
-        if isinstance(objs, pandas.DataFrame):
-            ids = sorted(objs['diaObjectId'])
-        else:
-            ids = sorted([obj['id'] for obj in objs])
+        ids = sorted(objs['diaObjectId'])
         _LOG.debug("first object ID: %d", ids[0])
 
         # NOTE: workaround for sqlite, need this here to avoid
@@ -599,7 +551,7 @@ class Apdb(object):
             if self.config.dia_object_index == 'last_object_table':
 
                 # insert and replace all records in LAST table, mysql and postgres have
-                # non-standard features (handled in _storeObjectsAfw)
+                # non-standard features
                 table = self._schema.objects_last
                 do_replace = self.config.object_last_replace
                 # If the input data is of type Pandas, we drop the previous
@@ -618,18 +570,12 @@ class Apdb(object):
                     _LOG.debug("deleted %s objects", res.rowcount)
 
                 extra_columns: Dict[str, Any] = dict(lastNonForcedSource=dt)
-                if isinstance(objs, pandas.DataFrame):
-                    with Timer("DiaObjectLast insert", self.config.timer):
-                        objs = _coerce_uint64(objs)
-                        for col, data in extra_columns.items():
-                            objs[col] = data
-                        objs.to_sql("DiaObjectLast", conn, if_exists='append',
-                                    index=False)
-                else:
-                    self._storeObjectsAfw(objs, conn, table, "DiaObjectLast",
-                                          replace=do_replace,
-                                          extra_columns=extra_columns)
-
+                with Timer("DiaObjectLast insert", self.config.timer):
+                    objs = _coerce_uint64(objs)
+                    for col, data in extra_columns.items():
+                        objs[col] = data
+                    objs.to_sql("DiaObjectLast", conn, if_exists='append',
+                                index=False)
             else:
 
                 # truncate existing validity intervals
@@ -656,80 +602,62 @@ class Apdb(object):
                 table = self._schema.objects
             extra_columns = dict(lastNonForcedSource=dt, validityStart=dt,
                                  validityEnd=None)
-            if isinstance(objs, pandas.DataFrame):
-                with Timer("DiaObject insert", self.config.timer):
-                    objs = _coerce_uint64(objs)
-                    for col, data in extra_columns.items():
-                        objs[col] = data
-                    objs.to_sql("DiaObject", conn, if_exists='append',
-                                index=False)
-            else:
-                self._storeObjectsAfw(objs, conn, table, "DiaObject",
-                                      extra_columns=extra_columns)
+            with Timer("DiaObject insert", self.config.timer):
+                objs = _coerce_uint64(objs)
+                for col, data in extra_columns.items():
+                    objs[col] = data
+                objs.to_sql("DiaObject", conn, if_exists='append',
+                            index=False)
 
-    def storeDiaSources(self, sources: Union[pandas.DataFrame, afwTable.SourceCatalog]) -> None:
+    def storeDiaSources(self, sources: pandas.DataFrame) -> None:
         """Store catalog of DIASources from current visit.
 
-        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
-        compatible with the schema of L1 database table:
+        This methods takes ``DataFrame`` catalog, its schema must be
+        compatible with the schema of APDB table:
 
           - column names must correspond to database table columns
-          - some columns names may be re-mapped based on column map passed to
-            constructor
           - types and units of the columns must match database definitions,
             no unit conversion is performed presently
           - columns that have default values in database schema can be
-            omitted from afw schema
+            omitted from catalog
 
         Parameters
         ----------
-        sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
+        sources : `pandas.DataFrame`
             Catalog containing DiaSource records
         """
 
         # everything to be done in single transaction
         with _ansi_session(self._engine) as conn:
 
-            if isinstance(sources, pandas.DataFrame):
-                with Timer("DiaSource insert", self.config.timer):
-                    sources = _coerce_uint64(sources)
-                    sources.to_sql("DiaSource", conn, if_exists='append',
-                                   index=False)
-            else:
-                table = self._schema.sources
-                self._storeObjectsAfw(sources, conn, table, "DiaSource")
+            with Timer("DiaSource insert", self.config.timer):
+                sources = _coerce_uint64(sources)
+                sources.to_sql("DiaSource", conn, if_exists='append', index=False)
 
-    def storeDiaForcedSources(self, sources: Union[pandas.DataFrame, afwTable.SourceCatalog]) -> None:
+    def storeDiaForcedSources(self, sources: pandas.DataFrame) -> None:
         """Store a set of DIAForcedSources from current visit.
 
-        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
-        compatible with the schema of L1 database table:
+        This methods takes DataFrame catalog, its schema must be
+        compatible with the schema of APDB table:
 
           - column names must correspond to database table columns
-          - some columns names may be re-mapped based on column map passed to
-            constructor
           - types and units of the columns must match database definitions,
             no unit conversion is performed presently
           - columns that have default values in database schema can be
-            omitted from afw schema
+            omitted from catalog
 
         Parameters
         ----------
-        sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
+        sources : `pandas.DataFrame`
             Catalog containing DiaForcedSource records
         """
 
         # everything to be done in single transaction
         with _ansi_session(self._engine) as conn:
 
-            if isinstance(sources, pandas.DataFrame):
-                with Timer("DiaForcedSource insert", self.config.timer):
-                    sources = _coerce_uint64(sources)
-                    sources.to_sql("DiaForcedSource", conn, if_exists='append',
-                                   index=False)
-            else:
-                table = self._schema.forcedSources
-                self._storeObjectsAfw(sources, conn, table, "DiaForcedSource")
+            with Timer("DiaForcedSource insert", self.config.timer):
+                sources = _coerce_uint64(sources)
+                sources.to_sql("DiaForcedSource", conn, if_exists='append', index=False)
 
     def countUnassociatedObjects(self) -> int:
         """Return the number of DiaObjects that have only one DiaSource associated
@@ -838,159 +766,3 @@ class Apdb(object):
                 _LOG.info("explain: %s", row)
         else:
             _LOG.info("EXPLAIN returned nothing")
-
-    def _storeObjectsAfw(self, objects: afwTable.BaseCatalog, conn: sqlalchemy.engine.Connection,
-                         table: sqlalchemy.schema.Table, schema_table_name: str,
-                         replace: bool = False, extra_columns: Optional[Mapping[str, Any]] = None) -> None:
-        """Generic store method.
-
-        Takes catalog of records and stores a bunch of objects in a table.
-
-        Parameters
-        ----------
-        objects : `lsst.afw.table.BaseCatalog`
-            Catalog containing object records
-        conn :
-            Database connection
-        table : `sqlalchemy.Table`
-            Database table
-        schema_table_name : `str`
-            Name of the table to be used for finding table schema.
-        replace : `boolean`
-            If `True` then use replace instead of INSERT (should be more efficient)
-        extra_columns : `dict`, optional
-            Mapping (column_name, column_value) which gives column values to add
-            to every row, only if column is missing in catalog records.
-        """
-
-        def quoteValue(v: Any) -> Any:
-            """Quote and escape values"""
-            if v is None:
-                v = "NULL"
-            elif isinstance(v, datetime):
-                v = "'" + str(v) + "'"
-            elif isinstance(v, str):
-                # we don't expect nasty stuff in strings
-                v = "'" + v + "'"
-            elif isinstance(v, geom.Angle):
-                v = v.asDegrees()
-                if np.isfinite(v):
-                    v = str(v)
-                else:
-                    v = "NULL"
-            else:
-                if np.isfinite(v):
-                    v = str(v)
-                else:
-                    v = "NULL"
-            return v
-
-        def quoteId(columnName: str) -> str:
-            """Smart quoting for column names.
-            Lower-case names are not quoted.
-            """
-            if not columnName.islower():
-                columnName = '"' + columnName + '"'
-            return columnName
-
-        if conn.engine.name == "oracle":
-            raise RuntimeError("Oracle backend is not supported")
-
-        schema = objects.getSchema()
-        # use extra columns if specified
-        extra_fields = list((extra_columns or {}).keys())
-
-        afw_fields = [field.getName() for key, field in schema
-                      if field.getName() not in extra_fields]
-
-        column_map = self._schema.getAfwColumns(schema_table_name)
-        # list of columns (as in cat schema)
-        fields = [column_map[field].name for field in afw_fields if field in column_map]
-
-        if replace and conn.engine.name in ('mysql', 'sqlite'):
-            query = 'REPLACE INTO '
-        else:
-            query = 'INSERT INTO '
-        qfields = [quoteId(field) for field in fields + extra_fields]
-        query += quoteId(table.name) + ' (' + ','.join(qfields) + ') ' + 'VALUES '
-
-        values = []
-        for rec in objects:
-            row = []
-            for field in afw_fields:
-                if field not in column_map:
-                    continue
-                value = rec[field]
-                if column_map[field].type == "DATETIME" and \
-                   np.isfinite(value):
-                    # convert seconds into datetime
-                    value = datetime.utcfromtimestamp(value)
-                row.append(quoteValue(value))
-            for field in extra_fields:
-                row.append(quoteValue(extra_columns[field]))  # type: ignore
-            values.append('(' + ','.join(row) + ')')
-
-        if self.config.explain:
-            # run the same query with explain, only give it one row of data
-            self._explain(query + values[0], conn)
-
-        query += ','.join(values)
-
-        if replace and conn.engine.name == 'postgresql':
-            # This depends on that "replace" can only be true for DiaObjectLast table
-            pks = ('pixelId', 'diaObjectId')
-            query += " ON CONFLICT (\"{}\", \"{}\") DO UPDATE SET ".format(*pks)
-            fields = [column_map[field].name for field in afw_fields if field in column_map]
-            fields = ['"{0}" = EXCLUDED."{0}"'.format(field)
-                      for field in fields if field not in pks]
-            query += ', '.join(fields)
-
-        # _LOG.debug("query: %s", query)
-        _LOG.info("%s: will store %d records", table.name, len(objects))
-        with Timer(table.name + ' insert', self.config.timer):
-            res = conn.execute(sql.text(query))
-        _LOG.debug("inserted %s intervals", res.rowcount)
-
-    def _convertResult(self, res: sqlalchemy.Result, table_name: str,
-                       catalog: Optional[afwTable.BaseCatalog] = None) -> afwTable.BaseCatalog:
-        """Convert result set into output catalog.
-
-        Parameters
-        ----------
-        res : `sqlalchemy.ResultProxy`
-            SQLAlchemy result set returned by query.
-        table_name : `str`
-            Name of the table.
-        catalog : `lsst.afw.table.BaseCatalog`
-            If not None then extend existing catalog
-
-        Returns
-        -------
-        catalog : `lsst.afw.table.SourceCatalog`
-             If ``catalog`` is None then new instance is returned, otherwise
-             ``catalog`` is updated and returned.
-        """
-        # make catalog schema
-        columns: List[str] = res.keys()
-        schema, col_map = self._schema.getAfwSchema(table_name, columns)
-        if catalog is None:
-            _LOG.debug("_convertResult: schema: %s", schema)
-            _LOG.debug("_convertResult: col_map: %s", col_map)
-            catalog = afwTable.SourceCatalog(schema)
-
-        # fill catalog
-        for row in res:
-            record = catalog.addNew()
-            for col, value in row.items():
-                # some columns may exist in database but not included in afw schema
-                col = col_map.get(col)
-                if col is not None:
-                    if isinstance(value, datetime):
-                        # convert datetime to number of seconds
-                        value = int((value - datetime.utcfromtimestamp(0)).total_seconds())
-                    elif col.getTypeString() == 'Angle' and value is not None:
-                        value = value * geom.degrees
-                    if value is not None:
-                        record.set(col, value)
-
-        return catalog

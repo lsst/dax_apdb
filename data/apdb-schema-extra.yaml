@@ -15,9 +15,8 @@ columns:
   default: null
 - name: nDiaSources
   type: INT
-  nullable: true
+  nullable: false
   description: Total number of associated DiaSources across all bands.
-  default: null
 
 ---
 # DiaObjectLast uses subset of columns from DiaObject and different index

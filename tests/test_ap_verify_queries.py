@@ -19,46 +19,43 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import numpy
+import pandas
 import unittest.mock
 import lsst.utils.tests
 
-import lsst.afw.table as afwTable
 import lsst.afw.image as afwImage
 import lsst.geom as geom
 import lsst.daf.base as dafBase
 from lsst.dax.apdb import Apdb, ApdbConfig
 
 
-def createTestObjects(n_objects, extra_fields):
+def createTestObjects(n_objects, id_column_name, extra_fields):
     """Create test objects to store in the Apdb.
 
     Parameters
     ----------
     n_objects : `int`
         Number of objects to create.
+    id_column_name : `str`
+        Name of the ID column.
     extra_fields : `dict`
         A `dict` whose keys are field names and whose values are their types.
 
     Returns
     -------
-    sources : `lsst.afw.table.SourceCatalog`
+    sources : `pandas.DataFrame`
         Tests sources with filled values.
     """
-    schema = afwTable.SourceTable.makeMinimalSchema()
+    data = {
+        id_column_name: numpy.arange(n_objects, dtype=numpy.int64),
+        "ra": numpy.full(n_objects, 1 * geom.degrees, dtype=numpy.float64),
+        "decl": numpy.full(n_objects, 1 * geom.degrees, dtype=numpy.float64),
+    }
     for field, type in extra_fields.items():
-        schema.addField(field, type=type)
-    sources = afwTable.SourceCatalog(schema)
-
-    for src_idx in range(n_objects):
-        src = sources.addNew()
-        for subSchema in schema:
-            if subSchema.getField().getTypeString() == "Angle":
-                src[subSchema.getField().getName()] = 1 * geom.degrees
-            else:
-                src[subSchema.getField().getName()] = 1
-        src['id'] = src_idx
-
-    return sources
+        data[field] = numpy.ones(n_objects, dtype=type)
+    df = pandas.DataFrame(data)
+    return df
 
 
 class TestApVerifyQueries(unittest.TestCase):
@@ -70,10 +67,7 @@ class TestApVerifyQueries(unittest.TestCase):
         self.apdbCfg.isolation_level = "READ_UNCOMMITTED"
         self.apdbCfg.dia_object_index = "baseline"
         self.apdbCfg.dia_object_columns = []
-        self.apdb = Apdb(
-            config=self.apdbCfg,
-            afw_schemas=dict(DiaObject=afwTable.SourceTable.makeMinimalSchema(),
-                             DiaSource=afwTable.SourceTable.makeMinimalSchema()))
+        self.apdb = Apdb(config=self.apdbCfg)
         self.apdb._schema.makeSchema()
 
     def tearDown(self):
@@ -85,8 +79,8 @@ class TestApVerifyQueries(unittest.TestCase):
 
     def test_count_objects(self):
         n_created = 5
-        sources = createTestObjects(n_created, {'nDiaSources': 'I'})
-        sources[-1]['nDiaSources'] = 2
+        sources = createTestObjects(n_created, "diaObjectId", {'nDiaSources': int})
+        sources.at[n_created - 1, "nDiaSources"] = 2
 
         # nsecs must be an integer, not 1.4e18
         dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
@@ -106,9 +100,8 @@ class TestApVerifyQueries(unittest.TestCase):
 
     def test_isExposureProcessed(self):
         n_created = 5
-        sources = createTestObjects(n_created, {'ccdVisitId': 'I'})
-        for source in sources:
-            source['ccdVisitId'] = 2381
+        sources = createTestObjects(n_created, "diaSourceId", {'ccdVisitId': 'I'})
+        sources.loc[:, "ccdVisitId"] = 2381
 
         self.apdb.storeDiaSources(sources)
 

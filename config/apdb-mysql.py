@@ -53,9 +53,6 @@ config.object_last_replace=True
 # Location of (YAML) configuration file with extra schema
 # config.extra_schema_file = 'data/apdb-schema-extra.yaml'
 
-# Location of (YAML) configuration file with column mapping
-# config.column_map = 'data/apdb-afw-map.yaml'
-
 # Prefix to add to table names and index names
 config.prefix=''
 

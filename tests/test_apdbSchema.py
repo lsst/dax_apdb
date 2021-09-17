@@ -25,25 +25,10 @@
 import os
 import unittest
 
-import lsst.afw.table as afwTable
-from lsst.dax.apdb import ApdbSchema, make_minimal_dia_object_schema, make_minimal_dia_source_schema
+from lsst.dax.apdb import ApdbSchema
 from lsst.utils import getPackageDir
 import lsst.utils.tests
 from sqlalchemy import create_engine
-
-
-def _make_case_conficting_dia_object_schema():
-    """Make schema which has column name with case mismatch.
-
-    Copy of make_minimal_dia_object_schema with additional column.
-    """
-    schema = afwTable.SourceTable.makeMinimalSchema()
-    schema.addField("pixelId", type='L',
-                    doc='Unique spherical pixelization identifier.')
-    schema.addField("nDiaSources", type='L')
-    # baseline schema has column `radecTai`
-    schema.addField("RaDecTai", type='D')
-    return schema
 
 
 def _data_file_name(basename):
@@ -94,7 +79,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertIsNone(schema.objects_nightly)
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "DiaSource", 108)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
+        self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
 
         # create schema using prefix
         schema = ApdbSchema(engine=engine,
@@ -108,7 +93,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertIsNone(schema.objects_nightly)
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "PfxDiaSource", 108)
-        self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 7)
+        self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 8)
 
         # use different indexing for DiaObject, need extra schema for that
         schema = ApdbSchema(engine=engine,
@@ -122,7 +107,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertIsNone(schema.objects_nightly)
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "DiaSource", 108)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
+        self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
 
         # use DiaObjectLast table for DiaObject, need extra schema for that
         schema = ApdbSchema(engine=engine,
@@ -137,7 +122,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.objects_last, "DiaObjectLast", 18)
         self.assertEqual(len(schema.objects_last.primary_key), 2)
         self._assertTable(schema.sources, "DiaSource", 108)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
+        self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
 
         # baseline schema with nightly DiaObject
         schema = ApdbSchema(engine=engine,
@@ -149,144 +134,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.objects_nightly, "DiaObjectNightly", 92)
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "DiaSource", 108)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 7)
-
-    def test_afwSchemaCaseSensitivity(self):
-        """Test for column case mismatch errors.
-
-        This is a specific test for when afw schema column names differ from
-        APDB schem in case only which should generate exception.
-
-        Like all other tests this depends on the column naming in
-        apdb-schema.yaml.
-        """
-        engine = create_engine('sqlite://')
-
-        afw_schemas = dict(DiaObject=_make_case_conficting_dia_object_schema(),
-                           DiaSource=make_minimal_dia_source_schema())
-        # column case mismatch should cause exception in constructor
-        with self.assertRaises(ValueError):
-            ApdbSchema(engine=engine,
-                       dia_object_index="baseline",
-                       dia_object_nightly=False,
-                       schema_file=_data_file_name("apdb-schema.yaml"),
-                       column_map=_data_file_name("apdb-afw-map.yaml"),
-                       afw_schemas=afw_schemas)
-
-    def test_getAfwSchema(self):
-        """Test for getAfwSchema method.
-
-        Schema is defined in YAML files, some checks here depend on that
-        configuration and will need to be updated when configuration changes.
-        """
-        engine = create_engine('sqlite://')
-
-        # create standard (baseline) schema, but use afw column map
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            column_map=_data_file_name("apdb-afw-map.yaml"))
-        schema.makeSchema()
-
-        afw_schema, col_map = schema.getAfwSchema("DiaObject")
-        self.assertEqual(len(col_map), 92)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        # no BLOBs in afwTable, so count is lower
-        self.assertEqual(afw_schema.getFieldCount(), 81)
-
-        afw_schema, col_map = schema.getAfwSchema("DiaSource")
-        self.assertEqual(len(col_map), 108)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        self.assertEqual(afw_schema.getFieldCount(), 108)
-
-        afw_schema, col_map = schema.getAfwSchema("DiaForcedSource")
-        self.assertEqual(len(col_map), 7)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        # afw table adds 4 columns compared to out standard schema
-        self.assertEqual(afw_schema.getFieldCount(), 7+4)
-
-        # subset of columns
-        afw_schema, col_map = schema.getAfwSchema("DiaObject",
-                                                  ["diaObjectId", "ra", "decl", "ra_decl_Cov"])
-        self.assertEqual(len(col_map), 4)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        # one extra column exists for some reason for DiaObect in afw schema
-        self.assertEqual(afw_schema.getFieldCount(), 5)
-
-    def test_getAfwSchemaWithExtras(self):
-        """Test for getAfwSchema method using extra afw schemas.
-
-        Same as above but use non-default afw schemas, this adds few extra
-        columns to the table schema
-        """
-        engine = create_engine('sqlite://')
-
-        # create standard (baseline) schema, but use afw column map
-        afw_schemas = dict(DiaObject=make_minimal_dia_object_schema(),
-                           DiaSource=make_minimal_dia_source_schema())
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            column_map=_data_file_name("apdb-afw-map.yaml"),
-                            afw_schemas=afw_schemas)
-        schema.makeSchema()
-
-        afw_schema, col_map = schema.getAfwSchema("DiaObject")
-        self.assertEqual(len(col_map), 94)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        # no BLOBs in afwTable, so count is lower
-        self.assertEqual(afw_schema.getFieldCount(), 82)
-
-        afw_schema, col_map = schema.getAfwSchema("DiaSource")
-        self.assertEqual(len(col_map), 108)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        self.assertEqual(afw_schema.getFieldCount(), 108)
-
-        afw_schema, col_map = schema.getAfwSchema("DiaForcedSource")
-        self.assertEqual(len(col_map), 7)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        # afw table adds 4 columns compared to out standard schema
-        self.assertEqual(afw_schema.getFieldCount(), 7+4)
-
-        # subset of columns
-        afw_schema, col_map = schema.getAfwSchema("DiaObject",
-                                                  ["diaObjectId", "ra", "decl", "ra_decl_Cov"])
-        self.assertEqual(len(col_map), 4)
-        self.assertIsInstance(afw_schema, afwTable.Schema)
-        # one extra column exists for some reason for DiaObect in afw schema
-        self.assertEqual(afw_schema.getFieldCount(), 5)
-
-    def test_getAfwColumns(self):
-        """Test for getAfwColumns method.
-
-        Schema is defined in YAML files, some checks here depend on that
-        configuration and will need to be updated when configuration changes.
-        """
-        engine = create_engine('sqlite://')
-
-        # create standard (baseline) schema, but use afw column map
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            column_map=_data_file_name("apdb-afw-map.yaml"))
-        schema.makeSchema()
-
-        col_map = schema.getAfwColumns("DiaObject")
-        self.assertEqual(len(col_map), 92)
-        # check few afw-specific names
-        self.assertIn("id", col_map)
-        self.assertIn("coord_ra", col_map)
-        self.assertIn("coord_dec", col_map)
-
-        col_map = schema.getAfwColumns("DiaSource")
-        self.assertEqual(len(col_map), 108)
-        # check few afw-specific names
-        self.assertIn("id", col_map)
-        self.assertIn("coord_ra", col_map)
-        self.assertIn("coord_dec", col_map)
+        self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

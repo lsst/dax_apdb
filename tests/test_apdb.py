@@ -26,9 +26,7 @@ import datetime
 import pandas
 import unittest
 
-import lsst.afw.table as afwTable
-from lsst.dax.apdb import (Apdb, ApdbConfig, make_minimal_dia_object_schema,
-                           make_minimal_dia_source_schema)
+from lsst.dax.apdb import Apdb, ApdbConfig
 from lsst.sphgeom import Angle, Circle, HtmPixelization, Vector3d, UnitVector3d
 from lsst.geom import SpherePoint
 import lsst.utils.tests
@@ -46,31 +44,6 @@ def _makePixelRanges():
     pixelator = HtmPixelization(HTM_LEVEL)
     indices = pixelator.envelope(region, 128)
     return indices.ranges()
-
-
-def _makeObjectCatalog(pixel_ranges):
-    """Make a catalog containing a bunch of DiaObjects inside pixel envelope.
-
-    The number of created records will be equal number of ranges (one object
-    per pixel range). Coordinates of the created objects are not usable.
-    """
-    # make afw catalog
-    schema = make_minimal_dia_object_schema()
-    catalog = afwTable.SourceCatalog(schema)
-
-    # make small bunch of records, one entry per one pixel range,
-    # we do not care about coordinates here, in current implementation
-    # they are not used in any query
-    v3d = Vector3d(1., 1., -1.)
-    sp = SpherePoint(v3d)
-    for oid, (start, end) in enumerate(pixel_ranges):
-        record = catalog.addNew()
-        record.set("id", oid)
-        record.set("pixelId", start)
-        record.set("coord_ra", sp.getRa())
-        record.set("coord_dec", sp.getDec())
-
-    return catalog
 
 
 def _makeObjectCatalogPandas(pixel_ranges):
@@ -93,29 +66,6 @@ def _makeObjectCatalogPandas(pixel_ranges):
     return df
 
 
-def _makeSourceCatalog(objects):
-    """Make a catalog containing a bunch of DiaSources associated with the
-    input diaObjects.
-    """
-    # make some sources
-    schema = make_minimal_dia_source_schema()
-    catalog = afwTable.BaseCatalog(schema)
-    oids = []
-    for sid, obj in enumerate(objects):
-        record = catalog.addNew()
-        record.set("id", sid)
-        record.set("ccdVisitId", 1)
-        record.set("diaObjectId", obj["id"])
-        record.set("parent", 0)
-        record.set("coord_ra", obj["coord_ra"])
-        record.set("coord_dec", obj["coord_dec"])
-        record.set("flags", 0)
-        record.set("pixelId", obj["pixelId"])
-        oids.append(obj["id"])
-
-    return catalog, oids
-
-
 def _makeSourceCatalogPandas(objects):
     """Make a catalog containing a bunch of DiaSources associated with the
     input diaObjects.
@@ -134,27 +84,6 @@ def _makeSourceCatalogPandas(objects):
                         "pixelId": obj["pixelId"]})
         oids.append(obj["diaObjectId"])
     return pandas.DataFrame(data=catalog), oids
-
-
-def _makeForcedSourceCatalog(objects):
-    """Make a catalog containing a bunch of DiaFourceSources associated with
-    the input diaObjects.
-    """
-    # make some sources
-    schema = afwTable.Schema()
-    schema.addField("diaObjectId", "L")
-    schema.addField("ccdVisitId", "L")
-    schema.addField("flags", "L")
-    catalog = afwTable.BaseCatalog(schema)
-    oids = []
-    for obj in objects:
-        record = catalog.addNew()
-        record.set("diaObjectId", obj["id"])
-        record.set("ccdVisitId", 1)
-        record.set("flags", 0)
-        oids.append(obj["id"])
-
-    return catalog, oids
 
 
 def _makeForcedSourceCatalogPandas(objects):
@@ -176,15 +105,15 @@ class ApdbTestCase(unittest.TestCase):
     """A test case for Apdb class
     """
 
-    use_pandas = False
-    data_type = afwTable.SourceCatalog
+    data_type = pandas.DataFrame
 
-    def _assertCatalog(self, catalog, size, type=afwTable.SourceCatalog):
+    def _assertCatalog(self, catalog, size, type=pandas.DataFrame):
         """Validate catalog type and size
 
         Parameters
         ----------
-        calalog : `lsst.afw.table.SourceCatalog`
+        calalog : `object`
+            Expected type of this is ``type``.
         size : int
             Expected catalog size
         type : `type`, optional
@@ -223,18 +152,18 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, empty object list
-        res = apdb.getDiaSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSources([], visit_time)
 
         # get forced sources by object ID, empty object list
-        res = apdb.getDiaForcedSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources([], visit_time)
         self.assertIs(res, None)
 
     def test_emptyGetsBaseline(self):
@@ -256,27 +185,27 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by object ID, empty object list, should return None
-        res = apdb.getDiaSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSources([], visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = apdb.getDiaSources([1, 2, 3], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaSources([1, 2, 3], visit_time)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get forced sources by object ID, empty object list
-        res = apdb.getDiaForcedSources([], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources([], visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, non-empty object list
-        res = apdb.getDiaForcedSources([1, 2, 3], visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources([1, 2, 3], visit_time)
         self._assertCatalog(res, 0, type=self.data_type)
 
     def test_emptyGetsObjectLast(self):
@@ -297,7 +226,7 @@ class ApdbTestCase(unittest.TestCase):
         pixel_ranges = _makePixelRanges()
 
         # get objects by region
-        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges)
         self._assertCatalog(res, 0, type=self.data_type)
 
     def test_storeObjectsBaseline(self):
@@ -313,17 +242,14 @@ class ApdbTestCase(unittest.TestCase):
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
-        # make afw catalog with Objects
-        if self.use_pandas:
-            catalog = _makeObjectCatalogPandas(pixel_ranges)
-        else:
-            catalog = _makeObjectCatalog(pixel_ranges)
+        # make catalog with Objects
+        catalog = _makeObjectCatalogPandas(pixel_ranges)
 
         # store catalog
         apdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeObjectsLast(self):
@@ -339,17 +265,14 @@ class ApdbTestCase(unittest.TestCase):
         pixel_ranges = _makePixelRanges()
         visit_time = datetime.datetime.now()
 
-        # make afw catalog with Objects
-        if self.use_pandas:
-            catalog = _makeObjectCatalogPandas(pixel_ranges)
-        else:
-            catalog = _makeObjectCatalog(pixel_ranges)
+        # make catalog with Objects
+        catalog = _makeObjectCatalogPandas(pixel_ranges)
 
         # store catalog
         apdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = apdb.getDiaObjects(pixel_ranges, return_pandas=self.use_pandas)
+        res = apdb.getDiaObjects(pixel_ranges)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeSources(self):
@@ -365,12 +288,8 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
-        if self.use_pandas:
-            objects = _makeObjectCatalogPandas(pixel_ranges)
-            catalog, oids = _makeSourceCatalogPandas(objects)
-        else:
-            objects = _makeObjectCatalog(pixel_ranges)
-            catalog, oids = _makeSourceCatalog(objects)
+        objects = _makeObjectCatalogPandas(pixel_ranges)
+        catalog, oids = _makeSourceCatalogPandas(objects)
 
         # save the objects
         apdb.storeDiaObjects(objects, visit_time)
@@ -379,11 +298,11 @@ class ApdbTestCase(unittest.TestCase):
         apdb.storeDiaSources(catalog)
 
         # read it back and check sizes
-        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time, self.use_pandas)
+        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
         # read it back using different method
-        res = apdb.getDiaSources(oids, visit_time, self.use_pandas)
+        res = apdb.getDiaSources(oids, visit_time)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeForcedSources(self):
@@ -400,12 +319,8 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
-        if self.use_pandas:
-            objects = _makeObjectCatalogPandas(pixel_ranges)
-            catalog, oids = _makeForcedSourceCatalogPandas(objects)
-        else:
-            objects = _makeObjectCatalog(pixel_ranges)
-            catalog, oids = _makeForcedSourceCatalog(objects)
+        objects = _makeObjectCatalogPandas(pixel_ranges)
+        catalog, oids = _makeForcedSourceCatalogPandas(objects)
 
         apdb.storeDiaObjects(objects, visit_time)
 
@@ -413,15 +328,8 @@ class ApdbTestCase(unittest.TestCase):
         apdb.storeDiaForcedSources(catalog)
 
         # read it back and check sizes
-        res = apdb.getDiaForcedSources(oids, visit_time, return_pandas=self.use_pandas)
+        res = apdb.getDiaForcedSources(oids, visit_time)
         self._assertCatalog(res, len(catalog), type=self.data_type)
-
-
-class ApdbPandasTestCase(ApdbTestCase):
-    """A test case for Apdb using Pandas as the input/output"""
-
-    use_pandas = True
-    data_type = pandas.DataFrame
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

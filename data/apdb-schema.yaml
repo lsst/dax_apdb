@@ -1619,6 +1619,12 @@ columns:
   default: '0'
   description: Flags, bitwise OR tbd
   ucd: meta.code
+- name: midPointTai
+  type: DOUBLE
+  nullable: false
+  description: Effective mid-exposure time for this diaSource.
+  ucd: time.epoch
+  unit: d
 indices:
 - name: PK_DiaForcedSource
   columns:

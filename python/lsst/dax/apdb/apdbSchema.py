@@ -24,19 +24,16 @@
 
 from __future__ import annotations
 
-__all__ = ["ColumnDef", "IndexDef", "TableDef",
-           "make_minimal_dia_object_schema", "make_minimal_dia_source_schema",
-           "ApdbSchema"]
+__all__ = ["ColumnDef", "IndexDef", "TableDef", "ApdbSchema"]
 
 import logging
 import os
-from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Tuple, Type
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Type
 import yaml
 
 import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
                         UniqueConstraint, Table)
-import lsst.afw.table as afwTable
 
 
 _LOG = logging.getLogger(__name__)
@@ -64,8 +61,8 @@ class ColumnDef(NamedTuple):
 class IndexDef(NamedTuple):
     """Index description.
     """
-    name: Optional[str]
-    """index name, can be None or empty"""
+    name: str
+    """index name, can be empty"""
     type: str
     """one of "PRIMARY", "UNIQUE", "INDEX"
     """
@@ -82,49 +79,8 @@ class TableDef(NamedTuple):
     """documentation, can be None or empty"""
     columns: List[ColumnDef]
     """list of ColumnDef instances"""
-    indices: Optional[List[IndexDef]]
-    """list of IndexDef instances, can be empty or None"""
-
-
-def make_minimal_dia_object_schema() -> afwTable.SourceTable:
-    """Define and create the minimal schema required for a DIAObject.
-
-    Returns
-    -------
-    schema : `lsst.afw.table.Schema`
-        Minimal schema for DIAObjects.
-    """
-    schema = afwTable.SourceTable.makeMinimalSchema()
-    schema.addField("pixelId", type='L',
-                    doc='Unique spherical pixelization identifier.')
-    schema.addField("nDiaSources", type='L')
-    return schema
-
-
-def make_minimal_dia_source_schema() -> afwTable.SourceTable:
-    """ Define and create the minimal schema required for a DIASource.
-
-    Returns
-    -------
-    schema : `lsst.afw.table.Schema`
-        Minimal schema for DIASources.
-    """
-    schema = afwTable.SourceTable.makeMinimalSchema()
-    schema.addField("diaObjectId", type='L',
-                    doc='Unique identifier of the DIAObject this source is '
-                        'associated to.')
-    schema.addField("ccdVisitId", type='L',
-                    doc='Id of the exposure and ccd this object was detected '
-                        'in.')
-    schema.addField("psFlux", type='D',
-                    doc='Calibrated PSF flux of this source.')
-    schema.addField("psFluxErr", type='D',
-                    doc='Calibrated PSF flux err of this source.')
-    schema.addField("flags", type='L',
-                    doc='Quality flags for this DIASource.')
-    schema.addField("pixelId", type='L',
-                    doc='Unique spherical pixelization identifier.')
-    return schema
+    indices: List[IndexDef]
+    """list of IndexDef instances, can be empty"""
 
 
 class ApdbSchema(object):
@@ -156,37 +112,12 @@ class ApdbSchema(object):
         Name of the YAML schema file.
     extra_schema_file : `str`, optional
         Name of the YAML schema file with extra column definitions.
-    column_map : `str`, optional
-        Name of the YAML file with column mappings.
-    afw_schemas : `dict`, optional
-        Dictionary with table name for a key and `afw.table.Schema`
-        for a value. Columns in schema will be added to standard APDB
-        schema (only if standard schema does not have matching column).
     prefix : `str`, optional
         Prefix to add to all scheam elements.
     """
-
-    # map afw type names into cat type names
-    _afw_type_map = {"I": "INT",
-                     "L": "BIGINT",
-                     "F": "FLOAT",
-                     "D": "DOUBLE",
-                     "Angle": "DOUBLE",
-                     "String": "CHAR",
-                     "Flag": "BOOL"}
-    _afw_type_map_reverse = {"INT": "I",
-                             "BIGINT": "L",
-                             "FLOAT": "F",
-                             "DOUBLE": "D",
-                             "DATETIME": "L",
-                             "CHAR": "String",
-                             "BOOL": "Flag"}
-
     def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str,
                  dia_object_nightly: bool, schema_file: str,
-                 extra_schema_file: Optional[str] = None, column_map: Optional[str] = None,
-                 afw_schemas: Optional[Mapping[str, afwTable.Schema]] = None,
-                 prefix: str = ""):
+                 extra_schema_file: Optional[str] = None, prefix: str = ""):
 
         self._engine = engine
         self._dia_object_index = dia_object_index
@@ -201,25 +132,8 @@ class ApdbSchema(object):
         self.sources = None
         self.forcedSources = None
 
-        if column_map:
-            column_map = os.path.expandvars(column_map)
-            _LOG.debug("Reading column map file %s", column_map)
-            with open(column_map) as yaml_stream:
-                # maps cat column name to afw column name
-                self._column_map = yaml.load(yaml_stream, Loader=yaml.SafeLoader)
-                _LOG.debug("column map: %s", self._column_map)
-        else:
-            _LOG.debug("No column map file is given, initialize to empty")
-            self._column_map = {}
-        self._column_map_reverse = {}
-        for table, cmap in self._column_map.items():
-            # maps afw column name to cat column name
-            self._column_map_reverse[table] = {v: k for k, v in cmap.items()}
-        _LOG.debug("reverse column map: %s", self._column_map_reverse)
-
         # build complete table schema
-        self._schemas = self._buildSchemas(schema_file, extra_schema_file,
-                                           afw_schemas)
+        self._schemas = self._buildSchemas(schema_file, extra_schema_file)
 
         # map cat column types to alchemy
         self._type_map = dict(DOUBLE=self._getDoubleType(),
@@ -311,116 +225,8 @@ class ApdbSchema(object):
         _LOG.info('creating all tables')
         self._metadata.create_all()
 
-    def getAfwSchema(self, table_name: str, columns: Optional[List[str]] = None
-                     ) -> Tuple[afwTable.Schema, Mapping[str, Optional[afwTable.Key]]]:
-        """Return afw schema for given table.
-
-        Parameters
-        ----------
-        table_name : `str`
-            One of known APDB table names.
-        columns : `list` of `str`, optional
-            Include only given table columns in schema, by default all columns
-            are included.
-
-        Returns
-        -------
-        schema : `lsst.afw.table.Schema`
-        column_map : `dict`
-            Mapping of the table/result column names into schema key.
-        """
-
-        table = self._schemas[table_name]
-        col_map = self._column_map.get(table_name, {})
-
-        # make a schema
-        col2afw: Dict[str, Optional[afwTable.Key]] = {}
-        schema = afwTable.SourceTable.makeMinimalSchema()
-        for column in table.columns:
-            if columns and column.name not in columns:
-                continue
-            afw_col = col_map.get(column.name, column.name)
-            if afw_col in schema.getNames():
-                # Continue if the column is already in the minimal schema.
-                key = schema.find(afw_col).getKey()
-            elif column.type in ("DOUBLE", "FLOAT") and column.unit == "deg":
-                #
-                # NOTE: degree to radian conversion is not supported (yet)
-                #
-                # angles in afw are radians and have special "Angle" type
-                key = schema.addField(afw_col,
-                                      type="Angle",
-                                      doc=column.description or "",
-                                      units="rad")
-            elif column.type == "BLOB":
-                # No BLOB support for now
-                key = None
-            else:
-                units = column.unit or ""
-                # some units in schema are not recognized by afw but we do not care
-                if self._afw_type_map_reverse[column.type] == 'String':
-                    key = schema.addField(afw_col,
-                                          type=self._afw_type_map_reverse[column.type],
-                                          doc=column.description or "",
-                                          units=units,
-                                          parse_strict="silent",
-                                          size=10)
-                elif units == "deg":
-                    key = schema.addField(afw_col,
-                                          type='Angle',
-                                          doc=column.description or "",
-                                          parse_strict="silent")
-                else:
-                    key = schema.addField(afw_col,
-                                          type=self._afw_type_map_reverse[column.type],
-                                          doc=column.description or "",
-                                          units=units,
-                                          parse_strict="silent")
-            col2afw[column.name] = key
-
-        return schema, col2afw
-
-    def getAfwColumns(self, table_name: str) -> Mapping[str, ColumnDef]:
-        """Returns mapping of afw column names to Column definitions.
-
-        Parameters
-        ----------
-        table_name : `str`
-            One of known APDB table names.
-
-        Returns
-        -------
-        column_map : `dict`
-            Mapping of afw column names to `ColumnDef` instances.
-        """
-        table = self._schemas[table_name]
-        col_map = self._column_map.get(table_name, {})
-
-        cmap = {}
-        for column in table.columns:
-            afw_name = col_map.get(column.name, column.name)
-            cmap[afw_name] = column
-        return cmap
-
-    def getColumnMap(self, table_name: str) -> Mapping[str, ColumnDef]:
-        """Returns mapping of column names to Column definitions.
-
-        Parameters
-        ----------
-        table_name : `str`
-            One of known APDB table names.
-
-        Returns
-        -------
-        column_map : `dict`
-            Mapping of column names to `ColumnDef` instances.
-        """
-        table = self._schemas[table_name]
-        cmap = {column.name: column for column in table.columns}
-        return cmap
-
     def _buildSchemas(self, schema_file: str, extra_schema_file: Optional[str] = None,
-                      afw_schemas: Optional[Mapping[str, afwTable.Schema]] = None) -> Mapping[str, TableDef]:
+                      ) -> Mapping[str, TableDef]:
         """Create schema definitions for all tables.
 
         Reads YAML schemas and builds dictionary containing `TableDef`
@@ -432,10 +238,6 @@ class ApdbSchema(object):
             Name of YAML file with standard cat schema.
         extra_schema_file : `str`, optional
             Name of YAML file with extra table information or `None`.
-        afw_schemas : `dict`, optional
-            Dictionary with table name for a key and `afw.table.Schema`
-            for a value. Columns in schema will be added to standard APDB
-            schema (only if standard schema does not have matching column).
 
         Returns
         -------
@@ -493,18 +295,6 @@ class ApdbSchema(object):
             columns = table.get('columns', [])
 
             table_name = table['table']
-            afw_schema = afw_schemas and afw_schemas.get(table_name)
-            if afw_schema:
-                # use afw schema to create extra columns
-                column_names = {col['name'] for col in columns}
-                column_names_lower = {col.lower() for col in column_names}
-                for _, field in afw_schema:
-                    fcolumn = self._field2dict(field, table_name)
-                    if fcolumn['name'] not in column_names:
-                        # check that there is no column name that only differs in case
-                        if fcolumn['name'].lower() in column_names_lower:
-                            raise ValueError("afw.table column name case does not match schema column name")
-                        columns.append(fcolumn)
 
             table_columns = []
             for col in columns:
@@ -565,7 +355,7 @@ class ApdbSchema(object):
         # convert all column dicts into alchemy Columns
         column_defs = []
         for column in table_schema.columns:
-            kwargs = dict(nullable=column.nullable)
+            kwargs: Dict[str, Any] = dict(nullable=column.nullable)
             if column.default is not None:
                 kwargs.update(server_default=str(column.default))
             if column.name in pkey_columns:
@@ -574,30 +364,6 @@ class ApdbSchema(object):
             column_defs.append(Column(column.name, ctype, **kwargs))
 
         return column_defs
-
-    def _field2dict(self, field: afwTable.Field, table_name: str) -> Mapping[str, Any]:
-        """Convert afw schema field definition into a dict format.
-
-        Parameters
-        ----------
-        field : `lsst.afw.table.Field`
-            Field in afw table schema.
-        table_name : `str`
-            Name of the table.
-
-        Returns
-        -------
-        field_dict : `dict`
-            Field attributes for SQL schema:
-
-            - ``name`` : field name (`str`)
-            - ``type`` : type name in SQL, e.g. "INT", "FLOAT" (`str`)
-            - ``nullable`` : `True` if column can be ``NULL`` (`bool`)
-        """
-        column = field.getName()
-        column = self._column_map_reverse[table_name].get(column, column)
-        ctype = self._afw_type_map[field.getTypeString()]
-        return dict(name=column, type=ctype, nullable=True)
 
     def _tableIndices(self, table_name: str, info: Dict) -> List[sqlalchemy.schema.Constraint]:
         """Return set of constraints/indices in a table
@@ -621,7 +387,7 @@ class ApdbSchema(object):
         index_defs: List[sqlalchemy.schema.Constraint] = []
         for index in table_schema.indices:
             if index.type == "INDEX":
-                index_defs.append(Index(self._prefix+index.name, *index.columns, info=info))
+                index_defs.append(Index(self._prefix + index.name, *index.columns, info=info))
             else:
                 kwargs = {}
                 if index.name:
