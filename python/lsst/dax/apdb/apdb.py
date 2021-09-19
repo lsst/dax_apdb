@@ -36,6 +36,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
 
 import lsst.pex.config as pexConfig
 from lsst.pex.config import Field, ChoiceField, ListField
+from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
@@ -161,6 +162,16 @@ class ApdbConfig(pexConfig.Config):
     dia_object_nightly = Field(dtype=bool,
                                doc="Use separate nightly table for DiaObject",
                                default=False)
+    htm_level = Field(dtype=int,
+                      doc="HTM indexing level",
+                      default=20)
+    htm_max_ranges = Field(dtype=int,
+                           doc="Max number of ranges in HTM envelope",
+                           default=64)
+    htm_index_column = Field(dtype=str, default="pixelId",
+                             doc="Name of a HTM index column for DiaObject and DiaSource tables")
+    ra_dec_columns = ListField(dtype=str, default=["ra", "decl"],
+                               doc="Names ra/dec columns in DiaObject table")
     read_sources_months = Field(dtype=int,
                                 doc="Number of months of history to read from DiaSource",
                                 default=12)
@@ -188,18 +199,14 @@ class ApdbConfig(pexConfig.Config):
     timer = Field(dtype=bool,
                   doc="If True then print/log timing information",
                   default=False)
-    dynamic_sampling_hint = Field(dtype=int,
-                                  doc="If non-zero then use dynamic_sampling hint",
-                                  default=0)
-    cardinality_hint = Field(dtype=int,
-                             doc="If non-zero then use cardinality hint",
-                             default=0)
 
     def validate(self) -> None:
         super().validate()
         if self.isolation_level == "READ_COMMITTED" and self.db_url.startswith("sqlite"):
             raise ValueError("Attempting to run Apdb with SQLITE and isolation level 'READ_COMMITTED.' "
                              "Use 'READ_UNCOMMITTED' instead.")
+        if len(self.ra_dec_columns) != 2:
+            raise ValueError("ra_dec_columns must have exactly two column names")
 
 
 class Apdb(object):
@@ -254,6 +261,8 @@ class Apdb(object):
                                              extra_schema_file=self.config.extra_schema_file,
                                              prefix=self.config.prefix)
 
+        self.pixelator = HtmPixelization(self.config.htm_level)
+
     def tableRowCount(self) -> Dict[str, int]:
         """Returns dictionary with the table names and row counts.
 
@@ -277,7 +286,7 @@ class Apdb(object):
 
         return res
 
-    def getDiaObjects(self, pixel_ranges: Iterable[Tuple[int, int]]) -> pandas.DataFrame:
+    def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         """Returns catalog of DiaObject instances from given region.
 
         Objects are searched based on pixelization index and region is
@@ -294,9 +303,8 @@ class Apdb(object):
 
         Parameters
         ----------
-        pixel_ranges : `list` of `tuple`
-            Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
-            This defines set of pixel indices to be included in result.
+        region : `lsst.sphgeom.Region`
+            Region to search for DIAObjects.
 
         Returns
         -------
@@ -316,21 +324,16 @@ class Apdb(object):
             columns = [table.c[col] for col in self.config.dia_object_columns]
             query = sql.select(columns)
 
-        if self.config.dynamic_sampling_hint > 0:
-            val = self.config.dynamic_sampling_hint
-            query = query.with_hint(table, 'dynamic_sampling(%(name)s {})'.format(val))
-        if self.config.cardinality_hint > 0:
-            val = self.config.cardinality_hint
-            query = query.with_hint(table, 'FIRST_ROWS_1 cardinality(%(name)s {})'.format(val))
-
         # build selection
+        htm_index_column = table.columns[self.config.htm_index_column]
         exprlist = []
+        pixel_ranges = self._htm_indices(region)
         for low, upper in pixel_ranges:
             upper -= 1
             if low == upper:
-                exprlist.append(table.c.pixelId == low)
+                exprlist.append(htm_index_column == low)
             else:
-                exprlist.append(sql.expression.between(table.c.pixelId, low, upper))
+                exprlist.append(sql.expression.between(htm_index_column, low, upper))
         query = query.where(sql.expression.or_(*exprlist))
 
         # select latest version of objects
@@ -350,7 +353,7 @@ class Apdb(object):
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
-    def getDiaSourcesInRegion(self, pixel_ranges: Iterable[Tuple[int, int]], dt: datetime
+    def getDiaSourcesInRegion(self, region: Region, dt: datetime
                               ) -> Optional[pandas.DataFrame]:
         """Returns catalog of DiaSource instances from given region.
 
@@ -366,9 +369,8 @@ class Apdb(object):
 
         Parameters
         ----------
-        pixel_ranges : `list` of `tuple`
-            Sequence of ranges, range is a tuple (minPixelID, maxPixelID).
-            This defines set of pixel indices to be included in result.
+        region : `lsst.sphgeom.Region`
+            Region to search for DIASources.
         dt : `datetime.datetime`
             Time of the current visit
 
@@ -387,13 +389,15 @@ class Apdb(object):
         query = table.select()
 
         # build selection
+        htm_index_column = table.columns[self.config.htm_index_column]
         exprlist = []
+        pixel_ranges = self._htm_indices(region)
         for low, upper in pixel_ranges:
             upper -= 1
             if low == upper:
-                exprlist.append(table.c.pixelId == low)
+                exprlist.append(htm_index_column == low)
             else:
-                exprlist.append(sql.expression.between(table.c.pixelId, low, upper))
+                exprlist.append(sql.expression.between(htm_index_column, low, upper))
         query = query.where(sql.expression.or_(*exprlist))
 
         # execute select
@@ -539,6 +543,8 @@ class Apdb(object):
         ids = sorted(objs['diaObjectId'])
         _LOG.debug("first object ID: %d", ids[0])
 
+        objs = self._add_htm_index(objs)
+
         # NOTE: workaround for sqlite, need this here to avoid
         # "database is locked" error.
         table: sqlalchemy.schema.Table = self._schema.objects
@@ -626,6 +632,10 @@ class Apdb(object):
         sources : `pandas.DataFrame`
             Catalog containing DiaSource records
         """
+
+        # TODO: HTM index must be calculated for corresponding DiaObject
+        # position, not for DiaSource itself, will fix it in later commit.
+        sources = self._add_htm_index(sources)
 
         # everything to be done in single transaction
         with _ansi_session(self._engine) as conn:
@@ -766,3 +776,43 @@ class Apdb(object):
                 _LOG.info("explain: %s", row)
         else:
             _LOG.info("EXPLAIN returned nothing")
+
+    def _htm_indices(self, region: Region) -> List[Tuple[int, int]]:
+        """Generate a set of HTM indices covering specified field of view.
+
+        Parameters
+        ----------
+        region: `sphgeom.Region`
+            Region that needs to be indexed
+
+        Returns
+        -------
+        Sequence of ranges, range is a tuple (minHtmID, maxHtmID).
+        """
+        _LOG.debug('region: %s', region)
+        indices = self.pixelator.envelope(region, self.config.htm_max_ranges)
+
+        if _LOG.isEnabledFor(logging.DEBUG):
+            for irange in indices.ranges():
+                _LOG.debug('range: %s %s', self.pixelator.toString(irange[0]),
+                           self.pixelator.toString(irange[1]))
+
+        return indices.ranges()
+
+    def _add_htm_index(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Calculate HTM index for each record and add it to a DataFrame.
+
+        This overrides any existing column in a DataFrame with the same name
+        (pixelId). Original DataFrame is not changed, copy of a DataFrame is
+        returned.
+        """
+        # calculate HTM index for every DiaObject
+        htm_index = np.zeros(df.shape[0], dtype=np.int64)
+        ra_col, dec_col = self.config.ra_dec_columns
+        for i, (ra, dec) in enumerate(zip(df[ra_col], df[dec_col])):
+            uv3d = UnitVector3d(LonLat.fromDegrees(ra, dec))
+            idx = self.pixelator.index(uv3d)
+            htm_index[i] = idx
+        df = df.copy()
+        df[self.config.htm_index_column] = htm_index
+        return df

@@ -24,40 +24,54 @@
 
 import datetime
 import pandas
+import random
+from typing import Iterator
 import unittest
 
 from lsst.dax.apdb import Apdb, ApdbConfig
-from lsst.sphgeom import Angle, Circle, HtmPixelization, Vector3d, UnitVector3d
+from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from lsst.geom import SpherePoint
 import lsst.utils.tests
 
 
-# HTM indexing level used in the unit tests
-HTM_LEVEL = 20
-
-
-def _makePixelRanges():
+def _makeRegion() -> Region:
     """Generate pixel ID ranges for some envelope region"""
     pointing_v = UnitVector3d(1., 1., -1.)
     fov = 0.05  # radians
     region = Circle(pointing_v, Angle(fov/2))
-    pixelator = HtmPixelization(HTM_LEVEL)
-    indices = pixelator.envelope(region, 128)
-    return indices.ranges()
+    return region
 
 
-def _makeObjectCatalogPandas(pixel_ranges):
-    """Make a catalog containing a bunch of DiaObjects inside pixel envelope.
+def _makeVectors(region: Region, count: int = 1) -> Iterator[SpherePoint]:
+    """Generate bunch of SpherePoints inside given region.
+
+    Returned vectors are random but not necessarily uniformly distributed.
+    """
+    bbox = region.getBoundingBox()
+    center = bbox.getCenter()
+    center_lon = center.getLon().asRadians()
+    center_lat = center.getLat().asRadians()
+    width = bbox.getWidth().asRadians()
+    height = bbox.getHeight().asRadians()
+    while count > 0:
+        lon = random.uniform(center_lon - width / 2, center_lon + width / 2)
+        lat = random.uniform(center_lat - height / 2, center_lat + height / 2)
+        lonlat = LonLat.fromRadians(lon, lat)
+        uv3d = UnitVector3d(lonlat)
+        if region.contains(uv3d):
+            yield SpherePoint(lonlat)
+            count -= 1
+
+
+def _makeObjectCatalogPandas(region, count: int, config: ApdbConfig):
+    """Make a catalog containing a bunch of DiaObjects inside region.
 
     The number of created records will be equal to the number of ranges (one
     object per pixel range). Coordinates of the created objects are not usable.
     """
-    v3d = Vector3d(1., 1., -1.)
-    sp = SpherePoint(v3d)
     data_list = []
-    for oid, (start, end) in enumerate(pixel_ranges):
+    for oid, sp in enumerate(_makeVectors(region, count)):
         tmp_dict = {"diaObjectId": oid,
-                    "pixelId": start,
                     "ra": sp.getRa().asDegrees(),
                     "decl": sp.getDec().asDegrees()}
         data_list.append(tmp_dict)
@@ -80,8 +94,7 @@ def _makeSourceCatalogPandas(objects):
                         "parentDiaSourceId": 0,
                         "ra": obj["ra"],
                         "decl": obj["decl"],
-                        "flags": 0,
-                        "pixelId": obj["pixelId"]})
+                        "flags": 0})
         oids.append(obj["diaObjectId"])
     return pandas.DataFrame(data=catalog), oids
 
@@ -148,15 +161,15 @@ class ApdbTestCase(unittest.TestCase):
         apdb = Apdb(config)
         apdb.makeSchema()
 
-        pixel_ranges = _makePixelRanges()
+        region = _makeRegion()
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = apdb.getDiaObjects(pixel_ranges)
+        res = apdb.getDiaObjects(region)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
+        res = apdb.getDiaSourcesInRegion(region, visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, empty object list
@@ -181,15 +194,15 @@ class ApdbTestCase(unittest.TestCase):
         apdb = Apdb(config)
         apdb.makeSchema()
 
-        pixel_ranges = _makePixelRanges()
+        region = _makeRegion()
         visit_time = datetime.datetime.now()
 
         # get objects by region
-        res = apdb.getDiaObjects(pixel_ranges)
+        res = apdb.getDiaObjects(region)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
+        res = apdb.getDiaSourcesInRegion(region, visit_time)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by object ID, empty object list, should return None
@@ -223,10 +236,10 @@ class ApdbTestCase(unittest.TestCase):
         apdb = Apdb(config)
         apdb.makeSchema()
 
-        pixel_ranges = _makePixelRanges()
+        region = _makeRegion()
 
         # get objects by region
-        res = apdb.getDiaObjects(pixel_ranges)
+        res = apdb.getDiaObjects(region)
         self._assertCatalog(res, 0, type=self.data_type)
 
     def test_storeObjectsBaseline(self):
@@ -239,17 +252,17 @@ class ApdbTestCase(unittest.TestCase):
         apdb = Apdb(config)
         apdb.makeSchema()
 
-        pixel_ranges = _makePixelRanges()
+        region = _makeRegion()
         visit_time = datetime.datetime.now()
 
         # make catalog with Objects
-        catalog = _makeObjectCatalogPandas(pixel_ranges)
+        catalog = _makeObjectCatalogPandas(region, 100, config)
 
         # store catalog
         apdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = apdb.getDiaObjects(pixel_ranges)
+        res = apdb.getDiaObjects(region)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeObjectsLast(self):
@@ -262,17 +275,17 @@ class ApdbTestCase(unittest.TestCase):
         apdb = Apdb(config)
         apdb.makeSchema()
 
-        pixel_ranges = _makePixelRanges()
+        region = _makeRegion()
         visit_time = datetime.datetime.now()
 
         # make catalog with Objects
-        catalog = _makeObjectCatalogPandas(pixel_ranges)
+        catalog = _makeObjectCatalogPandas(region, 100, config)
 
         # store catalog
         apdb.storeDiaObjects(catalog, visit_time)
 
         # read it back and check sizes
-        res = apdb.getDiaObjects(pixel_ranges)
+        res = apdb.getDiaObjects(region)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
     def test_storeSources(self):
@@ -284,11 +297,11 @@ class ApdbTestCase(unittest.TestCase):
         apdb = Apdb(config)
         apdb.makeSchema()
 
-        pixel_ranges = _makePixelRanges()
+        region = _makeRegion()
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalogPandas(pixel_ranges)
+        objects = _makeObjectCatalogPandas(region, 100, config)
         catalog, oids = _makeSourceCatalogPandas(objects)
 
         # save the objects
@@ -298,7 +311,7 @@ class ApdbTestCase(unittest.TestCase):
         apdb.storeDiaSources(catalog)
 
         # read it back and check sizes
-        res = apdb.getDiaSourcesInRegion(pixel_ranges, visit_time)
+        res = apdb.getDiaSourcesInRegion(region, visit_time)
         self._assertCatalog(res, len(catalog), type=self.data_type)
 
         # read it back using different method
@@ -315,11 +328,11 @@ class ApdbTestCase(unittest.TestCase):
         apdb = Apdb(config)
         apdb.makeSchema()
 
-        pixel_ranges = _makePixelRanges()
+        region = _makeRegion()
         visit_time = datetime.datetime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalogPandas(pixel_ranges)
+        objects = _makeObjectCatalogPandas(region, 100, config)
         catalog, oids = _makeForcedSourceCatalogPandas(objects)
 
         apdb.storeDiaObjects(objects, visit_time)
