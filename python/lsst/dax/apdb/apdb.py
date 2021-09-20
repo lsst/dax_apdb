@@ -517,7 +517,51 @@ class Apdb(object):
             _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
-    def storeDiaObjects(self, objs: pandas.DataFrame, dt: datetime) -> None:
+    def store(self,
+              visit_time: datetime,
+              objects: pandas.DataFrame,
+              sources: Optional[pandas.DataFrame] = None,
+              forced_sources: Optional[pandas.DataFrame] = None) -> None:
+        """Store all three types of catalogs in the database.
+
+        This methods takes DataFrame catalogs, their schema must be
+        compatible with the schema of APDB table:
+
+          - column names must correspond to database table columns
+          - types and units of the columns must match database definitions,
+            no unit conversion is performed presently
+          - columns that have default values in database schema can be
+            omitted from catalog
+          - this method knows how to fill interval-related columns of DiaObject
+            (validityStart, validityEnd) they do not need to appear in a
+            catalog
+          - source catalogs have ``diaObjectId`` column associating sources
+            with objects
+
+        Parameters
+        ----------
+        visit_time : `datetime.datetime`
+            Time of the visit
+        objects : `pandas.DataFrame`
+            Catalog with DiaObject records
+        sources : `pandas.DataFrame`, optional
+            Catalog with DiaSource records
+        forced_sources : `pandas.DataFrame`, optional
+            Catalog with DiaForcedSource records
+        """
+        # fill pixelId column for DiaObjects
+        objects = self._add_obj_htm_index(objects)
+        self._storeDiaObjects(objects, visit_time)
+
+        if sources is not None:
+            # copy pixelId column from DiaObjects to DiaSources
+            sources = self._add_src_htm_index(sources, objects)
+            self._storeDiaSources(sources)
+
+        if forced_sources is not None:
+            self._storeDiaForcedSources(forced_sources)
+
+    def _storeDiaObjects(self, objs: pandas.DataFrame, dt: datetime) -> None:
         """Store catalog of DiaObjects from current visit.
 
         This methods takes DataFrame catalog, its schema must be
@@ -542,8 +586,6 @@ class Apdb(object):
 
         ids = sorted(objs['diaObjectId'])
         _LOG.debug("first object ID: %d", ids[0])
-
-        objs = self._add_htm_index(objs)
 
         # NOTE: workaround for sqlite, need this here to avoid
         # "database is locked" error.
@@ -615,7 +657,7 @@ class Apdb(object):
                 objs.to_sql("DiaObject", conn, if_exists='append',
                             index=False)
 
-    def storeDiaSources(self, sources: pandas.DataFrame) -> None:
+    def _storeDiaSources(self, sources: pandas.DataFrame) -> None:
         """Store catalog of DIASources from current visit.
 
         This methods takes ``DataFrame`` catalog, its schema must be
@@ -632,11 +674,6 @@ class Apdb(object):
         sources : `pandas.DataFrame`
             Catalog containing DiaSource records
         """
-
-        # TODO: HTM index must be calculated for corresponding DiaObject
-        # position, not for DiaSource itself, will fix it in later commit.
-        sources = self._add_htm_index(sources)
-
         # everything to be done in single transaction
         with _ansi_session(self._engine) as conn:
 
@@ -644,7 +681,7 @@ class Apdb(object):
                 sources = _coerce_uint64(sources)
                 sources.to_sql("DiaSource", conn, if_exists='append', index=False)
 
-    def storeDiaForcedSources(self, sources: pandas.DataFrame) -> None:
+    def _storeDiaForcedSources(self, sources: pandas.DataFrame) -> None:
         """Store a set of DIAForcedSources from current visit.
 
         This methods takes DataFrame catalog, its schema must be
@@ -799,7 +836,7 @@ class Apdb(object):
 
         return indices.ranges()
 
-    def _add_htm_index(self, df: pandas.DataFrame) -> pandas.DataFrame:
+    def _add_obj_htm_index(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate HTM index for each record and add it to a DataFrame.
 
         This overrides any existing column in a DataFrame with the same name
@@ -816,3 +853,27 @@ class Apdb(object):
         df = df.copy()
         df[self.config.htm_index_column] = htm_index
         return df
+
+    def _add_src_htm_index(self, sources: pandas.DataFrame, objs: pandas.DataFrame) -> pandas.DataFrame:
+        """Add pixelId column to DiaSource catalog.
+
+        This method copies pixelId value from a matching DiaObject record.
+        DiaObject catalog needs to have a pixelId column filled by
+        ``_add_obj_htm_index`` method and DiaSource records need to be
+        associated to DiaObjects via ``diaObjectId`` column.
+
+        This overrides any existing column in a DataFrame with the same name
+        (pixelId). Original DataFrame is not changed, copy of a DataFrame is
+        returned.
+        """
+        pixel_id_map: Dict[int, int] = {
+            diaObjectId: pixelId for diaObjectId, pixelId
+            in zip(objs["diaObjectId"], objs[self.config.htm_index_column])
+        }
+
+        htm_index = np.zeros(sources.shape[0], dtype=np.int64)
+        for i, diaObjId in enumerate(sources["diaObjectId"]):
+            htm_index[i] = pixel_id_map[diaObjId]
+        sources = sources.copy()
+        sources[self.config.htm_index_column] = htm_index
+        return sources

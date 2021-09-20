@@ -79,12 +79,12 @@ class TestApVerifyQueries(unittest.TestCase):
 
     def test_count_objects(self):
         n_created = 5
-        sources = createTestObjects(n_created, "diaObjectId", {'nDiaSources': int})
-        sources.at[n_created - 1, "nDiaSources"] = 2
+        objects = createTestObjects(n_created, "diaObjectId", {'nDiaSources': int})
+        objects.at[n_created - 1, "nDiaSources"] = 2
 
         # nsecs must be an integer, not 1.4e18
         dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
-        self.apdb.storeDiaObjects(sources, dateTime.toPython())
+        self.apdb.store(dateTime.toPython(), objects)
 
         value = self.apdb.countUnassociatedObjects()
         self.assertEqual(n_created - 1, value)
@@ -100,10 +100,14 @@ class TestApVerifyQueries(unittest.TestCase):
 
     def test_isExposureProcessed(self):
         n_created = 5
-        sources = createTestObjects(n_created, "diaSourceId", {'ccdVisitId': 'I'})
+        objects = createTestObjects(n_created, "diaObjectId", {'nDiaSources': int})
+        sources = createTestObjects(n_created, "diaSourceId", {'ccdVisitId': int, "diaObjectId": int})
+        sources.loc[:, "diaObjectId"] = 0
         sources.loc[:, "ccdVisitId"] = 2381
 
-        self.apdb.storeDiaSources(sources)
+        # nsecs must be an integer, not 1.4e18
+        dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
+        self.apdb.store(dateTime.toPython(), objects, sources)
 
         self.assertTrue(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(2381)))
         self.assertFalse(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(42)))

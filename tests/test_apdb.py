@@ -259,7 +259,7 @@ class ApdbTestCase(unittest.TestCase):
         catalog = _makeObjectCatalogPandas(region, 100, config)
 
         # store catalog
-        apdb.storeDiaObjects(catalog, visit_time)
+        apdb.store(visit_time, catalog)
 
         # read it back and check sizes
         res = apdb.getDiaObjects(region)
@@ -282,7 +282,7 @@ class ApdbTestCase(unittest.TestCase):
         catalog = _makeObjectCatalogPandas(region, 100, config)
 
         # store catalog
-        apdb.storeDiaObjects(catalog, visit_time)
+        apdb.store(visit_time, catalog)
 
         # read it back and check sizes
         res = apdb.getDiaObjects(region)
@@ -304,11 +304,8 @@ class ApdbTestCase(unittest.TestCase):
         objects = _makeObjectCatalogPandas(region, 100, config)
         catalog, oids = _makeSourceCatalogPandas(objects)
 
-        # save the objects
-        apdb.storeDiaObjects(objects, visit_time)
-
-        # save the sources
-        apdb.storeDiaSources(catalog)
+        # save the objects and sources
+        apdb.store(visit_time, objects, catalog)
 
         # read it back and check sizes
         res = apdb.getDiaSourcesInRegion(region, visit_time)
@@ -335,10 +332,7 @@ class ApdbTestCase(unittest.TestCase):
         objects = _makeObjectCatalogPandas(region, 100, config)
         catalog, oids = _makeForcedSourceCatalogPandas(objects)
 
-        apdb.storeDiaObjects(objects, visit_time)
-
-        # save them
-        apdb.storeDiaForcedSources(catalog)
+        apdb.store(visit_time, objects, forced_sources=catalog)
 
         # read it back and check sizes
         res = apdb.getDiaForcedSources(oids, visit_time)
