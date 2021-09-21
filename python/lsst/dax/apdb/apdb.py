@@ -27,13 +27,13 @@ from __future__ import annotations
 __all__ = ["ApdbConfig", "Apdb"]
 
 from contextlib import contextmanager
-from datetime import datetime
 import logging
 import numpy as np
 import os
 import pandas
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
 
+import lsst.daf.base as dafBase
 import lsst.pex.config as pexConfig
 from lsst.pex.config import Field, ChoiceField, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
@@ -111,6 +111,26 @@ def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
     """
     names = [c[0] for c in df.dtypes.items() if c[1] == np.uint64]
     return df.astype({name: np.int64 for name in names})
+
+
+def _make_midPointTai_start(visit_time: dafBase.DateTime, months: int) -> float:
+    """Calculate starting point for time-based source search.
+
+    Parameters
+    ----------
+    visit_time : `lsst.daf.base.DateTime`
+        Time of current visit.
+    months : `int`
+        Number of months in the sources history.
+
+    Returns
+    -------
+    time : `float`
+        A ``midPointTai`` starting point, MJD time.
+    """
+    # TODO: `system` must be consistent with the code in ap_association
+    # (see DM-31996)
+    return visit_time.get(system=dafBase.DateTime.MJD) - months * 30
 
 
 @contextmanager
@@ -287,19 +307,12 @@ class Apdb(object):
         return res
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
-        """Returns catalog of DiaObject instances from given region.
+        """Returns catalog of DiaObject instances from a given region.
 
-        Objects are searched based on pixelization index and region is
-        determined by the set of indices. There is no assumption on a
-        particular type of index, client is responsible for consistency
-        when calculating pixelization indices.
-
-        This method returns DataFrame catalog with schema determined by
-        the schema of APDB table. Re-mapping of the column names is done for
-        some columns (based on column map passed to constructor) but types
-        or units are not changed.
-
-        Returns only the last version of each DiaObject.
+        This method returns only the last version of each DiaObject. Some
+        records in a returned catalog may be outside the specified region, it
+        is up to a client to ignore those records or cleanup the catalog before
+        futher use.
 
         Parameters
         ----------
@@ -309,7 +322,8 @@ class Apdb(object):
         Returns
         -------
         catalog : `pandas.DataFrame`
-            Catalog containing DiaObject records.
+            Catalog containing DiaObject records for a region that may be a
+            superset of the specified region.
         """
 
         # decide what columns we need
@@ -353,37 +367,127 @@ class Apdb(object):
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
-    def getDiaSourcesInRegion(self, region: Region, dt: datetime
-                              ) -> Optional[pandas.DataFrame]:
-        """Returns catalog of DiaSource instances from given region.
-
-        Sources are searched based on pixelization index and region is
-        determined by the set of indices. There is no assumption on a
-        particular type of index, client is responsible for consistency
-        when calculating pixelization indices.
-
-        This method returns DataFrame catalog with schema determined by
-        the schema of APDB table. Re-mapping of the column names is done for
-        some columns (based on column map passed to constructor) but types or
-        units are not changed.
+    def getDiaSources(self, region: Region,
+                      object_ids: Optional[Iterable[int]],
+                      visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+        """Return catalog of DiaSource instances from a given region.
 
         Parameters
         ----------
         region : `lsst.sphgeom.Region`
             Region to search for DIASources.
-        dt : `datetime.datetime`
-            Time of the current visit
+        object_ids : iterable [ `int` ], optional
+            List of DiaObject IDs to further constrain the set of returned
+            sources. If `None` then returned sources are not constrained. If
+            list is empty then empty catalog is returned with a correct
+            schema.
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
 
         Returns
         -------
         catalog : `pandas.DataFrame`, or `None`
             Catalog containing DiaSource records. `None` is returned if
             ``read_sources_months`` configuration parameter is set to 0.
-        """
 
+        Notes
+        -----
+        This method returns DiaSource catalog for a region with additional
+        filtering based on DiaObject IDs. Only a subset of DiaSource history
+        is returned limited by ``read_sources_months`` config parameter, w.r.t.
+        ``visit_time``. If ``object_ids`` is empty then an empty catalog is
+        always returned with the correct schema (columns/types). If
+        ``object_ids`` is `None` then no filtering is performed and some of the
+        returned records may be outside the specified region.
+        """
         if self.config.read_sources_months == 0:
-            _LOG.info("Skip DiaSources fetching")
+            _LOG.debug("Skip DiaSources fetching")
             return None
+
+        if object_ids is None:
+            # region-based select
+            return self._getDiaSourcesInRegion(region, visit_time)
+        else:
+            return self._getDiaSourcesByIDs(list(object_ids), visit_time)
+
+    def getDiaForcedSources(self, region: Region,
+                            object_ids: Optional[Iterable[int]],
+                            visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+        """Return catalog of DiaForcedSource instances from a given region.
+
+        Parameters
+        ----------
+        region : `lsst.sphgeom.Region`
+            Region to search for DIASources.
+        object_ids : iterable [ `int` ], optional
+            List of DiaObject IDs to further constrain the set of returned
+            sources. If list is empty then empty catalog is returned with a
+            correct schema. If `None` then returned sources are not
+            constrained. Some implementations may not support latter case.
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`, or `None`
+            Catalog containing DiaSource records. `None` is returned if
+            ``read_forced_sources_months`` configuration parameter is set to 0.
+
+        Raises
+        ------
+        NotImplementedError
+            May be raised by some implementations if ``object_ids`` is `None`.
+
+        Notes
+        -----
+        This method returns DiaForcedSource catalog for a region with additional
+        filtering based on DiaObject IDs. Only a subset of DiaSource history
+        is returned limited by ``read_forced_sources_months`` config parameter,
+        w.r.t. ``visit_time``. If ``object_ids`` is empty then an empty catalog
+        is always returned with the correct schema (columns/types). If
+        ``object_ids`` is `None` then no filtering is performed and some of the
+        returned records may be outside the specified region.
+        """
+        if self.config.read_forced_sources_months == 0:
+            _LOG.debug("Skip DiaForceSources fetching")
+            return None
+
+        if object_ids is None:
+            # This implementation does not support region-based selection.
+            raise NotImplementedError("Region-based selection is not supported")
+
+        # TODO: DateTime.MJD must be consistent with code in ap_association,
+        # alternatively we can fill midPointTai ourselves in store()
+        midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_forced_sources_months)
+        _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
+
+        table: sqlalchemy.schema.Table = self._schema.forcedSources
+        with Timer('DiaForcedSource select', self.config.timer):
+            sources = self._getSourcesByIDs(table, list(object_ids), midPointTai_start)
+
+        _LOG.debug("found %s DiaForcedSources", len(sources))
+        return sources
+
+    def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime
+                               ) -> pandas.DataFrame:
+        """Returns catalog of DiaSource instances from given region.
+
+        Parameters
+        ----------
+        region : `lsst.sphgeom.Region`
+            Region to search for DIASources.
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaSource records.
+        """
+        # TODO: DateTime.MJD must be consistent with code in ap_association,
+        # alternatively we can fill midPointTai ourselves in store()
+        midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_sources_months)
+        _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
 
         table: sqlalchemy.schema.Table = self._schema.sources
         query = table.select()
@@ -398,7 +502,9 @@ class Apdb(object):
                 exprlist.append(htm_index_column == low)
             else:
                 exprlist.append(sql.expression.between(htm_index_column, low, upper))
-        query = query.where(sql.expression.or_(*exprlist))
+        time_filter = table.columns["midPointTai"] > midPointTai_start
+        where = sql.expression.and_(sql.expression.or_(*exprlist), time_filter)
+        query = query.where(where)
 
         # execute select
         with Timer('DiaSource select', self.config.timer):
@@ -407,104 +513,69 @@ class Apdb(object):
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def getDiaSources(self, object_ids: List[int], dt: datetime) -> Optional[pandas.DataFrame]:
+    def _getDiaSourcesByIDs(self, object_ids: List[int], visit_time: dafBase.DateTime
+                            ) -> pandas.DataFrame:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
-
-        This method returns DataFrame catalog with schema determined by
-        the schema of APDB table. Re-mapping of the column names is done for
-        some columns (based on column map passed to constructor) but types or
-        units are not changed.
 
         Parameters
         ----------
         object_ids :
             Collection of DiaObject IDs
-        dt : `datetime.datetime`
-            Time of the current visit
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
 
         Returns
         -------
-        catalog : `pandas.DataFrame`, or `None`
-            Catalog contaning DiaSource records. `None` is returned if
-            ``read_sources_months`` configuration parameter is set to 0 or
-            when ``object_ids`` is empty.
+        catalog : `pandas.DataFrame`
+            Catalog contaning DiaSource records.
         """
-
-        if self.config.read_sources_months == 0:
-            _LOG.info("Skip DiaSources fetching")
-            return None
-
-        if len(object_ids) <= 0:
-            _LOG.info("Skip DiaSources fetching - no Objects")
-            # this should create a catalog, but the list of columns may be empty
-            return None
+        # TODO: DateTime.MJD must be consistent with code in ap_association,
+        # alternatively we can fill midPointTai ourselves in store()
+        midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_sources_months)
+        _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
 
         table: sqlalchemy.schema.Table = self._schema.sources
-        sources: Optional[pandas.DataFrame] = None
         with Timer('DiaSource select', self.config.timer):
-            with _ansi_session(self._engine) as conn:
-                for ids in _split(sorted(object_ids), 1000):
-                    query = 'SELECT *  FROM "' + table.name + '" WHERE '
-
-                    # select by object id
-                    ids_str = ",".join(str(id) for id in ids)
-                    query += '"diaObjectId" IN (' + ids_str + ') '
-
-                    # execute select
-                    df = pandas.read_sql_query(sql.text(query), conn)
-                    if sources is None:
-                        sources = df
-                    else:
-                        sources = sources.append(df)
+            sources = self._getSourcesByIDs(table, object_ids, midPointTai_start)
 
         _LOG.debug("found %s DiaSources", len(sources) if sources is not None else 0)
         return sources
 
-    def getDiaForcedSources(self, object_ids: List[int], dt: datetime) -> Optional[pandas.DataFrame]:
-        """Returns catalog of DiaForcedSource instances matching given
-        DiaObjects.
-
-        This method returns DataFrame catalog with schema determined by
-        the schema of L1 database table. Re-mapping of the column names may
-        be done for some columns (based on column map passed to constructor)
-        but types or units are not changed.
+    def _getSourcesByIDs(self, table: sqlalchemy.schema.Table,
+                         object_ids: List[int],
+                         midPointTai_start: float
+                         ) -> pandas.DataFrame:
+        """Returns catalog of DiaSource or DiaForcedSource instances given set
+        of DiaObject IDs.
 
         Parameters
         ----------
+        table : `sqlalchemy.schema.Table`
+            Database table.
         object_ids :
             Collection of DiaObject IDs
-        dt : `datetime.datetime`
-            Time of the current visit
+        midPointTai_start : `float`
+            Earliest midPointTai to retrieve.
 
         Returns
         -------
-        catalog : `pandas.DataFrame` or `None`
-            Catalog contaning DiaForcedSource records. `None` is returned if
-            ``read_sources_months`` configuration parameter is set to 0 or
-            when ``object_ids`` is empty.
+        catalog : `pandas.DataFrame`
+            Catalog contaning DiaSource records.
         """
-
-        if self.config.read_forced_sources_months == 0:
-            _LOG.info("Skip DiaForceSources fetching")
-            return None
-
-        if len(object_ids) <= 0:
-            _LOG.info("Skip DiaForceSources fetching - no Objects")
-            # this should create a catalog, but the list of columns may be empty
-            return None
-
-        table: sqlalchemy.schema.Table = self._schema.forcedSources
         sources: Optional[pandas.DataFrame] = None
-
-        with Timer('DiaForcedSource select', self.config.timer):
-            with _ansi_session(self._engine) as conn:
+        with _ansi_session(self._engine) as conn:
+            if len(object_ids) <= 0:
+                _LOG.debug("ID list is empty, just fetch empty result")
+                query = table.select().where(False)
+                sources = pandas.read_sql_query(query, conn)
+            else:
                 for ids in _split(sorted(object_ids), 1000):
-
-                    query = 'SELECT *  FROM "' + table.name + '" WHERE '
+                    query = f'SELECT *  FROM "{table.name}" WHERE '
 
                     # select by object id
                     ids_str = ",".join(str(id) for id in ids)
-                    query += '"diaObjectId" IN (' + ids_str + ') '
+                    query += f'"diaObjectId" IN ({ids_str})'
+                    query += f' AND "midPointTai" > {midPointTai_start}'
 
                     # execute select
                     df = pandas.read_sql_query(sql.text(query), conn)
@@ -512,18 +583,29 @@ class Apdb(object):
                         sources = df
                     else:
                         sources = sources.append(df)
-
-        if sources is not None:
-            _LOG.debug("found %s DiaForcedSources", len(sources))
+        assert sources is not None, "Catalog cannot be None"
         return sources
 
     def store(self,
-              visit_time: datetime,
+              visit_time: dafBase.DateTime,
               objects: pandas.DataFrame,
               sources: Optional[pandas.DataFrame] = None,
               forced_sources: Optional[pandas.DataFrame] = None) -> None:
         """Store all three types of catalogs in the database.
 
+        Parameters
+        ----------
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the visit.
+        objects : `pandas.DataFrame`
+            Catalog with DiaObject records.
+        sources : `pandas.DataFrame`, optional
+            Catalog with DiaSource records.
+        forced_sources : `pandas.DataFrame`, optional
+            Catalog with DiaForcedSource records.
+
+        Notes
+        -----
         This methods takes DataFrame catalogs, their schema must be
         compatible with the schema of APDB table:
 
@@ -537,17 +619,6 @@ class Apdb(object):
             catalog
           - source catalogs have ``diaObjectId`` column associating sources
             with objects
-
-        Parameters
-        ----------
-        visit_time : `datetime.datetime`
-            Time of the visit
-        objects : `pandas.DataFrame`
-            Catalog with DiaObject records
-        sources : `pandas.DataFrame`, optional
-            Catalog with DiaSource records
-        forced_sources : `pandas.DataFrame`, optional
-            Catalog with DiaForcedSource records
         """
         # fill pixelId column for DiaObjects
         objects = self._add_obj_htm_index(objects)
@@ -561,27 +632,15 @@ class Apdb(object):
         if forced_sources is not None:
             self._storeDiaForcedSources(forced_sources)
 
-    def _storeDiaObjects(self, objs: pandas.DataFrame, dt: datetime) -> None:
+    def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DiaObjects from current visit.
-
-        This methods takes DataFrame catalog, its schema must be
-        compatible with the schema of APDB table:
-
-          - column names must correspond to database table columns
-          - types and units of the columns must match database definitions,
-            no unit conversion is performed presently
-          - columns that have default values in database schema can be
-            omitted from catalog
-          - this method knows how to fill interval-related columns
-            (validityStart, validityEnd) they do not need to appear in
-            a catalog
 
         Parameters
         ----------
         objs : `pandas.DataFrame`
-            Catalog with DiaObject records
-        dt : `datetime.datetime`
-            Time of the visit
+            Catalog with DiaObject records.
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the visit.
         """
 
         ids = sorted(objs['diaObjectId'])
@@ -590,6 +649,10 @@ class Apdb(object):
         # NOTE: workaround for sqlite, need this here to avoid
         # "database is locked" error.
         table: sqlalchemy.schema.Table = self._schema.objects
+
+        # TODO: Need to verify that we are using correct scale here for
+        # DATETIME representation (see DM-31996).
+        dt = visit_time.toPython()
 
         # everything to be done in single transaction
         with _ansi_session(self._engine) as conn:
@@ -658,16 +721,7 @@ class Apdb(object):
                             index=False)
 
     def _storeDiaSources(self, sources: pandas.DataFrame) -> None:
-        """Store catalog of DIASources from current visit.
-
-        This methods takes ``DataFrame`` catalog, its schema must be
-        compatible with the schema of APDB table:
-
-          - column names must correspond to database table columns
-          - types and units of the columns must match database definitions,
-            no unit conversion is performed presently
-          - columns that have default values in database schema can be
-            omitted from catalog
+        """Store catalog of DiaSources from current visit.
 
         Parameters
         ----------
@@ -682,16 +736,7 @@ class Apdb(object):
                 sources.to_sql("DiaSource", conn, if_exists='append', index=False)
 
     def _storeDiaForcedSources(self, sources: pandas.DataFrame) -> None:
-        """Store a set of DIAForcedSources from current visit.
-
-        This methods takes DataFrame catalog, its schema must be
-        compatible with the schema of APDB table:
-
-          - column names must correspond to database table columns
-          - types and units of the columns must match database definitions,
-            no unit conversion is performed presently
-          - columns that have default values in database schema can be
-            omitted from catalog
+        """Store a set of DiaForcedSources from current visit.
 
         Parameters
         ----------
@@ -707,8 +752,8 @@ class Apdb(object):
                 sources.to_sql("DiaForcedSource", conn, if_exists='append', index=False)
 
     def countUnassociatedObjects(self) -> int:
-        """Return the number of DiaObjects that have only one DiaSource associated
-        with them.
+        """Return the number of DiaObjects that have only one DiaSource
+        associated with them.
 
         Used as part of ap_verify metrics.
 
@@ -725,7 +770,8 @@ class Apdb(object):
         stmt = stmt.where(table.c.validityEnd == None)  # noqa: E711
 
         # Return the count.
-        count = self._engine.scalar(stmt)
+        with self._engine.begin() as conn:
+            count = conn.scalar(stmt)
 
         return count
 
@@ -752,7 +798,8 @@ class Apdb(object):
         query = sql.select([idField]).select_from(table) \
             .where(idField == id).limit(1)
 
-        return self._engine.scalar(query) is not None
+        with self._engine.begin() as conn:
+            return conn.scalar(query) is not None
 
     def dailyJob(self) -> None:
         """Implement daily activities like cleanup/vacuum.
@@ -815,12 +862,12 @@ class Apdb(object):
             _LOG.info("EXPLAIN returned nothing")
 
     def _htm_indices(self, region: Region) -> List[Tuple[int, int]]:
-        """Generate a set of HTM indices covering specified field of view.
+        """Generate a set of HTM indices covering specified region.
 
         Parameters
         ----------
         region: `sphgeom.Region`
-            Region that needs to be indexed
+            Region that needs to be indexed.
 
         Returns
         -------
@@ -839,6 +886,8 @@ class Apdb(object):
     def _add_obj_htm_index(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate HTM index for each record and add it to a DataFrame.
 
+        Notes
+        -----
         This overrides any existing column in a DataFrame with the same name
         (pixelId). Original DataFrame is not changed, copy of a DataFrame is
         returned.
@@ -857,6 +906,8 @@ class Apdb(object):
     def _add_src_htm_index(self, sources: pandas.DataFrame, objs: pandas.DataFrame) -> pandas.DataFrame:
         """Add pixelId column to DiaSource catalog.
 
+        Notes
+        -----
         This method copies pixelId value from a matching DiaObject record.
         DiaObject catalog needs to have a pixelId column filled by
         ``_add_obj_htm_index`` method and DiaSource records need to be

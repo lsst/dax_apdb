@@ -84,7 +84,7 @@ class TestApVerifyQueries(unittest.TestCase):
 
         # nsecs must be an integer, not 1.4e18
         dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
-        self.apdb.store(dateTime.toPython(), objects)
+        self.apdb.store(dateTime, objects)
 
         value = self.apdb.countUnassociatedObjects()
         self.assertEqual(n_created - 1, value)
@@ -107,7 +107,7 @@ class TestApVerifyQueries(unittest.TestCase):
 
         # nsecs must be an integer, not 1.4e18
         dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
-        self.apdb.store(dateTime.toPython(), objects, sources)
+        self.apdb.store(dateTime, objects, sources)
 
         self.assertTrue(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(2381)))
         self.assertFalse(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(42)))

@@ -22,12 +22,12 @@
 """Unit test for Apdb class.
 """
 
-import datetime
 import pandas
 import random
 from typing import Iterator
 import unittest
 
+from lsst.daf.base import DateTime
 from lsst.dax.apdb import Apdb, ApdbConfig
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from lsst.geom import SpherePoint
@@ -80,38 +80,39 @@ def _makeObjectCatalogPandas(region, count: int, config: ApdbConfig):
     return df
 
 
-def _makeSourceCatalogPandas(objects):
+def _makeSourceCatalogPandas(objects, visit_time, start_id=0):
     """Make a catalog containing a bunch of DiaSources associated with the
     input diaObjects.
     """
     # make some sources
     catalog = []
-    oids = []
-    for sid, (index, obj) in enumerate(objects.iterrows()):
-        catalog.append({"diaSourceId": sid,
+    midPointTai = visit_time.get(system=DateTime.MJD)
+    for index, obj in objects.iterrows():
+        catalog.append({"diaSourceId": start_id,
                         "ccdVisitId": 1,
                         "diaObjectId": obj["diaObjectId"],
                         "parentDiaSourceId": 0,
                         "ra": obj["ra"],
                         "decl": obj["decl"],
+                        "midPointTai": midPointTai,
                         "flags": 0})
-        oids.append(obj["diaObjectId"])
-    return pandas.DataFrame(data=catalog), oids
+        start_id += 1
+    return pandas.DataFrame(data=catalog)
 
 
-def _makeForcedSourceCatalogPandas(objects):
+def _makeForcedSourceCatalogPandas(objects, visit_time, ccdVisitId=1):
     """Make a catalog containing a bunch of DiaFourceSources associated with
     the input diaObjects.
     """
     # make some sources
     catalog = []
-    oids = []
+    midPointTai = visit_time.get(system=DateTime.MJD)
     for index, obj in objects.iterrows():
         catalog.append({"diaObjectId": obj["diaObjectId"],
-                        "ccdVisitId": 1,
+                        "ccdVisitId": ccdVisitId,
+                        "midPointTai": midPointTai,
                         "flags": 0})
-        oids.append(obj["diaObjectId"])
-    return pandas.DataFrame(data=catalog), oids
+    return pandas.DataFrame(data=catalog)
 
 
 class ApdbTestCase(unittest.TestCase):
@@ -162,21 +163,22 @@ class ApdbTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = datetime.datetime.now()
+        visit_time = DateTime.now()
 
         # get objects by region
         res = apdb.getDiaObjects(region)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = apdb.getDiaSourcesInRegion(region, visit_time)
+        res = apdb.getDiaSources(region, None, visit_time)
         self.assertIs(res, None)
 
         # get sources by object ID, empty object list
-        res = apdb.getDiaSources([], visit_time)
+        res = apdb.getDiaSources(region, [], visit_time)
+        self.assertIs(res, None)
 
         # get forced sources by object ID, empty object list
-        res = apdb.getDiaForcedSources([], visit_time)
+        res = apdb.getDiaForcedSources(region, [], visit_time)
         self.assertIs(res, None)
 
     def test_emptyGetsBaseline(self):
@@ -195,31 +197,34 @@ class ApdbTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = datetime.datetime.now()
+        visit_time = DateTime.now()
 
         # get objects by region
         res = apdb.getDiaObjects(region)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by region
-        res = apdb.getDiaSourcesInRegion(region, visit_time)
+        res = apdb.getDiaSources(region, None, visit_time)
         self._assertCatalog(res, 0, type=self.data_type)
 
-        # get sources by object ID, empty object list, should return None
-        res = apdb.getDiaSources([], visit_time)
-        self.assertIs(res, None)
+        res = apdb.getDiaSources(region, [], visit_time)
+        self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by object ID, non-empty object list
-        res = apdb.getDiaSources([1, 2, 3], visit_time)
+        res = apdb.getDiaSources(region, [1, 2, 3], visit_time)
         self._assertCatalog(res, 0, type=self.data_type)
 
         # get forced sources by object ID, empty object list
-        res = apdb.getDiaForcedSources([], visit_time)
-        self.assertIs(res, None)
+        res = apdb.getDiaForcedSources(region, [], visit_time)
+        self._assertCatalog(res, 0, type=self.data_type)
 
         # get sources by object ID, non-empty object list
-        res = apdb.getDiaForcedSources([1, 2, 3], visit_time)
+        res = apdb.getDiaForcedSources(region, [1, 2, 3], visit_time)
         self._assertCatalog(res, 0, type=self.data_type)
+
+        # SQL implementation needs ID list
+        with self.assertRaises(NotImplementedError):
+            apdb.getDiaForcedSources(region, None, visit_time)
 
     def test_emptyGetsObjectLast(self):
         """Test for getting DiaObjects from empty database using DiaObjectLast
@@ -253,7 +258,7 @@ class ApdbTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = datetime.datetime.now()
+        visit_time = DateTime.now()
 
         # make catalog with Objects
         catalog = _makeObjectCatalogPandas(region, 100, config)
@@ -276,7 +281,7 @@ class ApdbTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = datetime.datetime.now()
+        visit_time = DateTime.now()
 
         # make catalog with Objects
         catalog = _makeObjectCatalogPandas(region, 100, config)
@@ -298,22 +303,27 @@ class ApdbTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = datetime.datetime.now()
+        visit_time = DateTime.now()
 
         # have to store Objects first
         objects = _makeObjectCatalogPandas(region, 100, config)
-        catalog, oids = _makeSourceCatalogPandas(objects)
+        oids = list(objects["diaObjectId"])
+        sources = _makeSourceCatalogPandas(objects, visit_time)
 
         # save the objects and sources
-        apdb.store(visit_time, objects, catalog)
+        apdb.store(visit_time, objects, sources)
 
-        # read it back and check sizes
-        res = apdb.getDiaSourcesInRegion(region, visit_time)
-        self._assertCatalog(res, len(catalog), type=self.data_type)
+        # read it back, no ID filtering
+        res = apdb.getDiaSources(region, None, visit_time)
+        self._assertCatalog(res, len(sources), type=self.data_type)
 
-        # read it back using different method
-        res = apdb.getDiaSources(oids, visit_time)
-        self._assertCatalog(res, len(catalog), type=self.data_type)
+        # read it back and filter by ID
+        res = apdb.getDiaSources(region, oids, visit_time)
+        self._assertCatalog(res, len(sources), type=self.data_type)
+
+        # read it back to get schema
+        res = apdb.getDiaSources(region, [], visit_time)
+        self._assertCatalog(res, 0, type=self.data_type)
 
     def test_storeForcedSources(self):
         """Store and retrieve DiaForcedSources."""
@@ -326,17 +336,105 @@ class ApdbTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = datetime.datetime.now()
+        visit_time = DateTime.now()
 
         # have to store Objects first
         objects = _makeObjectCatalogPandas(region, 100, config)
-        catalog, oids = _makeForcedSourceCatalogPandas(objects)
+        oids = list(objects["diaObjectId"])
+        catalog = _makeForcedSourceCatalogPandas(objects, visit_time)
 
         apdb.store(visit_time, objects, forced_sources=catalog)
 
         # read it back and check sizes
-        res = apdb.getDiaForcedSources(oids, visit_time)
+        res = apdb.getDiaForcedSources(region, oids, visit_time)
         self._assertCatalog(res, len(catalog), type=self.data_type)
+
+        # read it back to get schema
+        res = apdb.getDiaForcedSources(region, [], visit_time)
+        self._assertCatalog(res, 0, type=self.data_type)
+
+    def test_midPointTai_src(self):
+        """Test for time filtering of DiaSources.
+        """
+        config = ApdbConfig(db_url="sqlite:///",
+                            isolation_level="READ_UNCOMMITTED",
+                            read_sources_months=12,
+                            read_forced_sources_months=12)
+        apdb = Apdb(config)
+        apdb.makeSchema()
+
+        region = _makeRegion()
+        # 2021-01-01 plus 360 days is 2021-12-27
+        src_time1 = DateTime(2021, 1, 1, 0, 0, 0, DateTime.TAI)
+        src_time2 = DateTime(2021, 1, 1, 0, 0, 2, DateTime.TAI)
+        visit_time0 = DateTime(2021, 12, 26, 23, 59, 59, DateTime.TAI)
+        visit_time1 = DateTime(2021, 12, 27, 0, 0, 1, DateTime.TAI)
+        visit_time2 = DateTime(2021, 12, 27, 0, 0, 3, DateTime.TAI)
+
+        objects = _makeObjectCatalogPandas(region, 100, config)
+        oids = list(objects["diaObjectId"])
+        sources = _makeSourceCatalogPandas(objects, src_time1, 0)
+        apdb.store(src_time1, objects, sources)
+
+        sources = _makeSourceCatalogPandas(objects, src_time2, 100)
+        apdb.store(src_time2, objects, sources)
+
+        # reading at time of last save should read all
+        res = apdb.getDiaSources(region, oids, src_time2)
+        self._assertCatalog(res, 200, type=self.data_type)
+
+        # one second before 12 months
+        res = apdb.getDiaSources(region, oids, visit_time0)
+        self._assertCatalog(res, 200, type=self.data_type)
+
+        # reading at later time of last save should only read a subset
+        res = apdb.getDiaSources(region, oids, visit_time1)
+        self._assertCatalog(res, 100, type=self.data_type)
+
+        # reading at later time of last save should only read a subset
+        res = apdb.getDiaSources(region, oids, visit_time2)
+        self._assertCatalog(res, 0, type=self.data_type)
+
+    def test_midPointTai_fsrc(self):
+        """Test for time filtering of DiaForcedSources.
+        """
+        config = ApdbConfig(db_url="sqlite:///",
+                            isolation_level="READ_UNCOMMITTED",
+                            read_sources_months=12,
+                            read_forced_sources_months=12)
+        apdb = Apdb(config)
+        apdb.makeSchema()
+
+        region = _makeRegion()
+        src_time1 = DateTime(2021, 1, 1, 0, 0, 0, DateTime.TAI)
+        src_time2 = DateTime(2021, 1, 1, 0, 0, 2, DateTime.TAI)
+        visit_time0 = DateTime(2021, 12, 26, 23, 59, 59, DateTime.TAI)
+        visit_time1 = DateTime(2021, 12, 27, 0, 0, 1, DateTime.TAI)
+        visit_time2 = DateTime(2021, 12, 27, 0, 0, 3, DateTime.TAI)
+
+        objects = _makeObjectCatalogPandas(region, 100, config)
+        oids = list(objects["diaObjectId"])
+        sources = _makeForcedSourceCatalogPandas(objects, src_time1, 1)
+        apdb.store(src_time1, objects, forced_sources=sources)
+
+        sources = _makeForcedSourceCatalogPandas(objects, src_time2, 2)
+        apdb.store(src_time2, objects, forced_sources=sources)
+
+        # reading at time of last save should read all
+        res = apdb.getDiaForcedSources(region, oids, src_time2)
+        self._assertCatalog(res, 200, type=self.data_type)
+
+        # one second before 12 months
+        res = apdb.getDiaForcedSources(region, oids, visit_time0)
+        self._assertCatalog(res, 200, type=self.data_type)
+
+        # reading at later time of last save should only read a subset
+        res = apdb.getDiaForcedSources(region, oids, visit_time1)
+        self._assertCatalog(res, 100, type=self.data_type)
+
+        # reading at later time of last save should only read a subset
+        res = apdb.getDiaForcedSources(region, oids, visit_time2)
+        self._assertCatalog(res, 0, type=self.data_type)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
