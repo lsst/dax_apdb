@@ -24,14 +24,14 @@ import pandas
 import unittest.mock
 import lsst.utils.tests
 
-import lsst.afw.image as afwImage
+from lsst.afw.image import VisitInfo
 import lsst.geom as geom
-import lsst.daf.base as dafBase
-from lsst.dax.apdb import Apdb, ApdbConfig
+from lsst.daf.base import DateTime
+from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
 
 
 def createTestObjects(n_objects, id_column_name, extra_fields):
-    """Create test objects to store in the Apdb.
+    """Create test objects to store in the ApdbSql.
 
     Parameters
     ----------
@@ -61,13 +61,12 @@ def createTestObjects(n_objects, id_column_name, extra_fields):
 class TestApVerifyQueries(unittest.TestCase):
 
     def setUp(self):
-        self.apdbCfg = ApdbConfig()
+        self.apdbCfg = ApdbSqlConfig()
         # Create DB in memory.
         self.apdbCfg.db_url = 'sqlite://'
-        self.apdbCfg.isolation_level = "READ_UNCOMMITTED"
         self.apdbCfg.dia_object_index = "baseline"
         self.apdbCfg.dia_object_columns = []
-        self.apdb = Apdb(config=self.apdbCfg)
+        self.apdb = ApdbSql(config=self.apdbCfg)
         self.apdb._schema.makeSchema()
 
     def tearDown(self):
@@ -83,7 +82,7 @@ class TestApVerifyQueries(unittest.TestCase):
         objects.at[n_created - 1, "nDiaSources"] = 2
 
         # nsecs must be an integer, not 1.4e18
-        dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
+        dateTime = DateTime(nsecs=1400000000 * 10**9)
         self.apdb.store(dateTime, objects)
 
         value = self.apdb.countUnassociatedObjects()
@@ -93,7 +92,7 @@ class TestApVerifyQueries(unittest.TestCase):
     def _makeVisitInfo(exposureId):
         # Real VisitInfo hard to create
         visitInfo = unittest.mock.NonCallableMock(
-            afwImage.VisitInfo,
+            VisitInfo,
             **{"getExposureId.return_value": exposureId}
         )
         return visitInfo
@@ -106,7 +105,7 @@ class TestApVerifyQueries(unittest.TestCase):
         sources.loc[:, "ccdVisitId"] = 2381
 
         # nsecs must be an integer, not 1.4e18
-        dateTime = dafBase.DateTime(nsecs=1400000000 * 10**9)
+        dateTime = DateTime(nsecs=1400000000 * 10**9)
         self.apdb.store(dateTime, objects, sources)
 
         self.assertTrue(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(2381)))

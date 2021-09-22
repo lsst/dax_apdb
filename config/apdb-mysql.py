@@ -1,5 +1,5 @@
-import lsst.dax.apdb.apdb
-assert type(config)==lsst.dax.apdb.apdb.ApdbConfig, 'config is of type %s.%s instead of lsst.dax.apdb.apdb.ApdbConfig' % (type(config).__module__, type(config).__name__)
+import lsst.dax.apdb.apdbSql
+assert type(config)==lsst.dax.apdb.apdbSql.ApdbSqlConfig, 'config is of type %s.%s instead of lsst.dax.apdb.apdbSql.ApdbSqlConfig' % (type(config).__module__, type(config).__name__)
 
 # SQLAlchemy database connection URI
 config.db_url="mysql://localhost/apdbproto?unix_socket=/var/lib/mysql/mysql.sock"

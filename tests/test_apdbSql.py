@@ -28,7 +28,7 @@ from typing import Iterator
 import unittest
 
 from lsst.daf.base import DateTime
-from lsst.dax.apdb import Apdb, ApdbConfig
+from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from lsst.geom import SpherePoint
 import lsst.utils.tests
@@ -63,7 +63,7 @@ def _makeVectors(region: Region, count: int = 1) -> Iterator[SpherePoint]:
             count -= 1
 
 
-def _makeObjectCatalogPandas(region, count: int, config: ApdbConfig):
+def _makeObjectCatalogPandas(region, count: int, config: ApdbSqlConfig):
     """Make a catalog containing a bunch of DiaObjects inside region.
 
     The number of created records will be equal to the number of ranges (one
@@ -141,9 +141,8 @@ class ApdbTestCase(unittest.TestCase):
         """
         # sqlite does not support default READ_COMMITTED, for in-memory
         # database have to use connection pool
-        config = ApdbConfig(db_url="sqlite://",
-                            isolation_level="READ_UNCOMMITTED")
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite://")
+        apdb = ApdbSql(config)
         # the essence of a test here is that there are no exceptions.
         apdb.makeSchema()
 
@@ -155,11 +154,10 @@ class ApdbTestCase(unittest.TestCase):
         """
 
         # set read_sources_months to 0 so that Forced/Sources are None
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            read_sources_months=0,
-                            read_forced_sources_months=0)
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               read_sources_months=0,
+                               read_forced_sources_months=0)
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -189,11 +187,10 @@ class ApdbTestCase(unittest.TestCase):
         """
 
         # use non-zero months for Forced/Source fetching
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            read_sources_months=12,
-                            read_forced_sources_months=12)
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               read_sources_months=12,
+                               read_forced_sources_months=12)
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -235,10 +232,9 @@ class ApdbTestCase(unittest.TestCase):
         """
 
         # don't care about sources.
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            dia_object_index="last_object_table")
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               dia_object_index="last_object_table")
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -251,10 +247,9 @@ class ApdbTestCase(unittest.TestCase):
         """Store and retrieve DiaObjects."""
 
         # don't care about sources.
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            dia_object_index="baseline")
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               dia_object_index="baseline")
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -273,11 +268,10 @@ class ApdbTestCase(unittest.TestCase):
     def test_storeObjectsLast(self):
         """Store and retrieve DiaObjects using DiaObjectLast table."""
         # don't care about sources.
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            dia_object_index="last_object_table",
-                            object_last_replace=True)
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               dia_object_index="last_object_table",
+                               object_last_replace=True)
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -295,11 +289,10 @@ class ApdbTestCase(unittest.TestCase):
 
     def test_storeSources(self):
         """Store and retrieve DiaSources."""
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            read_sources_months=12,
-                            read_forced_sources_months=12)
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               read_sources_months=12,
+                               read_forced_sources_months=12)
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -328,11 +321,10 @@ class ApdbTestCase(unittest.TestCase):
     def test_storeForcedSources(self):
         """Store and retrieve DiaForcedSources."""
 
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            read_sources_months=12,
-                            read_forced_sources_months=12)
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               read_sources_months=12,
+                               read_forced_sources_months=12)
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -356,11 +348,10 @@ class ApdbTestCase(unittest.TestCase):
     def test_midPointTai_src(self):
         """Test for time filtering of DiaSources.
         """
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            read_sources_months=12,
-                            read_forced_sources_months=12)
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               read_sources_months=12,
+                               read_forced_sources_months=12)
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()
@@ -398,11 +389,10 @@ class ApdbTestCase(unittest.TestCase):
     def test_midPointTai_fsrc(self):
         """Test for time filtering of DiaForcedSources.
         """
-        config = ApdbConfig(db_url="sqlite:///",
-                            isolation_level="READ_UNCOMMITTED",
-                            read_sources_months=12,
-                            read_forced_sources_months=12)
-        apdb = Apdb(config)
+        config = ApdbSqlConfig(db_url="sqlite:///",
+                               read_sources_months=12,
+                               read_forced_sources_months=12)
+        apdb = ApdbSql(config)
         apdb.makeSchema()
 
         region = _makeRegion()

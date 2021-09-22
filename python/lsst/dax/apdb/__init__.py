@@ -1,4 +1,5 @@
 
 from .apdb import *
-from .apdbSchema import *
+from .apdbSql import *
+from .factory import *
 from .version import *

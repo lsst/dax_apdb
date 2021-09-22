@@ -19,13 +19,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Unit test for ApdbSchema class.
+"""Unit test for ApdbSqlSchema class.
 """
 
 import os
 import unittest
 
-from lsst.dax.apdb import ApdbSchema
+from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema
 from lsst.utils import getPackageDir
 import lsst.utils.tests
 from sqlalchemy import create_engine
@@ -38,7 +38,7 @@ def _data_file_name(basename):
 
 
 class ApdbSchemaTestCase(unittest.TestCase):
-    """A test case for ApdbSchema class
+    """A test case for ApdbSqlSchema class
     """
 
     @classmethod
@@ -69,10 +69,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         engine = create_engine('sqlite://')
 
         # create standard (baseline) schema
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"))
+        schema = ApdbSqlSchema(engine=engine,
+                               dia_object_index="baseline",
+                               dia_object_nightly=False,
+                               schema_file=_data_file_name("apdb-schema.yaml"))
         schema.makeSchema()
         self._assertTable(schema.objects, "DiaObject", 92)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -82,11 +82,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
 
         # create schema using prefix
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            prefix="Pfx")
+        schema = ApdbSqlSchema(engine=engine,
+                               dia_object_index="baseline",
+                               dia_object_nightly=False,
+                               schema_file=_data_file_name("apdb-schema.yaml"),
+                               prefix="Pfx")
         # Drop existing tables (but we don't check it here)
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "PfxDiaObject", 92)
@@ -96,11 +96,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 8)
 
         # use different indexing for DiaObject, need extra schema for that
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="pix_id_iov",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+        schema = ApdbSqlSchema(engine=engine,
+                               dia_object_index="pix_id_iov",
+                               dia_object_nightly=False,
+                               schema_file=_data_file_name("apdb-schema.yaml"),
+                               extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 3)
@@ -110,11 +110,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
 
         # use DiaObjectLast table for DiaObject, need extra schema for that
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="last_object_table",
-                            dia_object_nightly=False,
-                            schema_file=_data_file_name("apdb-schema.yaml"),
-                            extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+        schema = ApdbSqlSchema(engine=engine,
+                               dia_object_index="last_object_table",
+                               dia_object_nightly=False,
+                               schema_file=_data_file_name("apdb-schema.yaml"),
+                               extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 94)
         self.assertEqual(len(schema.objects.primary_key), 2)
@@ -125,10 +125,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
 
         # baseline schema with nightly DiaObject
-        schema = ApdbSchema(engine=engine,
-                            dia_object_index="baseline",
-                            dia_object_nightly=True,
-                            schema_file=_data_file_name("apdb-schema.yaml"))
+        schema = ApdbSqlSchema(engine=engine,
+                               dia_object_index="baseline",
+                               dia_object_nightly=True,
+                               schema_file=_data_file_name("apdb-schema.yaml"))
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "DiaObject", 92)
         self._assertTable(schema.objects_nightly, "DiaObjectNightly", 92)
