@@ -90,8 +90,6 @@ class ApdbSqlSchema(object):
     ----------
     objects : `sqlalchemy.Table`
         DiaObject table instance
-    objects_nightly : `sqlalchemy.Table`
-        DiaObjectNightly table instance, may be None
     objects_last : `sqlalchemy.Table`
         DiaObjectLast table instance, may be None
     sources : `sqlalchemy.Table`
@@ -106,8 +104,6 @@ class ApdbSqlSchema(object):
     dia_object_index : `str`
         Indexing mode for DiaObject table, see `ApdbConfig.dia_object_index`
         for details.
-    dia_object_nightly : `bool`
-        If `True` then create per-night DiaObject table as well.
     schema_file : `str`
         Name of the YAML schema file.
     extra_schema_file : `str`, optional
@@ -116,18 +112,15 @@ class ApdbSqlSchema(object):
         Prefix to add to all scheam elements.
     """
     def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str,
-                 dia_object_nightly: bool, schema_file: str,
-                 extra_schema_file: Optional[str] = None, prefix: str = ""):
+                 schema_file: str, extra_schema_file: Optional[str] = None, prefix: str = ""):
 
         self._engine = engine
         self._dia_object_index = dia_object_index
-        self._dia_object_nightly = dia_object_nightly
         self._prefix = prefix
 
         self._metadata = MetaData(self._engine)
 
         self.objects = None
-        self.objects_nightly = None
         self.objects_last = None
         self.sources = None
         self.forcedSources = None
@@ -136,7 +129,7 @@ class ApdbSqlSchema(object):
         self._schemas = self._buildSchemas(schema_file, extra_schema_file)
 
         # map cat column types to alchemy
-        self._type_map = dict(DOUBLE=self._getDoubleType(),
+        self._type_map = dict(DOUBLE=self._getDoubleType(engine),
                               FLOAT=sqlalchemy.types.Float,
                               DATETIME=sqlalchemy.types.TIMESTAMP,
                               BIGINT=sqlalchemy.types.BigInteger,
@@ -171,14 +164,6 @@ class ApdbSqlSchema(object):
                       mysql_engine=mysql_engine,
                       info=info)
         self.objects = table
-
-        if self._dia_object_nightly:
-            # Same as DiaObject but no index
-            table = Table(self._prefix+'DiaObjectNightly', self._metadata,
-                          *self._tableColumns('DiaObject'),
-                          mysql_engine=mysql_engine,
-                          info=info)
-            self.objects_nightly = table
 
         if self._dia_object_index == 'last_object_table':
             # Same as DiaObject but with special index
@@ -399,26 +384,32 @@ class ApdbSqlSchema(object):
 
         return index_defs
 
-    def _getDoubleType(self) -> Type:
+    @classmethod
+    def _getDoubleType(cls, engine: sqlalchemy.engine.Engine) -> Type:
         """DOUBLE type is database-specific, select one based on dialect.
+
+        Parameters
+        ----------
+        engine : `sqlalchemy.engine.Engine`
+            Database engine.
 
         Returns
         -------
         type_object : `object`
             Database-specific type definition.
         """
-        if self._engine.name == 'mysql':
+        if engine.name == 'mysql':
             from sqlalchemy.dialects.mysql import DOUBLE
             return DOUBLE(asdecimal=False)
-        elif self._engine.name == 'postgresql':
+        elif engine.name == 'postgresql':
             from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
             return DOUBLE_PRECISION
-        elif self._engine.name == 'oracle':
+        elif engine.name == 'oracle':
             from sqlalchemy.dialects.oracle import DOUBLE_PRECISION
             return DOUBLE_PRECISION
-        elif self._engine.name == 'sqlite':
+        elif engine.name == 'sqlite':
             # all floats in sqlite are 8-byte
             from sqlalchemy.dialects.sqlite import REAL
             return REAL
         else:
-            raise TypeError('cannot determine DOUBLE type, unexpected dialect: ' + self._engine.name)
+            raise TypeError('cannot determine DOUBLE type, unexpected dialect: ' + engine.name)

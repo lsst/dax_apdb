@@ -29,9 +29,6 @@ config.sql_echo=False
 #
 config.dia_object_index='last_object_table'
 
-# Use separate nightly table for DiaObject
-config.dia_object_nightly=False
-
 # Number of months of history to read from DiaSource
 config.read_sources_months=12
 

@@ -176,9 +176,6 @@ class ApdbSqlConfig(ApdbConfig):
                                             'pix_id_iov': "(pixelId, objectId, iovStart) PK",
                                             'last_object_table': "Separate DiaObjectLast table"},
                                    default='baseline')
-    dia_object_nightly = Field(dtype=bool,
-                               doc="Use separate nightly table for DiaObject",
-                               default=False)
     htm_level = Field(dtype=int,
                       doc="HTM indexing level",
                       default=20)
@@ -232,7 +229,6 @@ class ApdbSql(Apdb):
 
         _LOG.debug("APDB Configuration:")
         _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
-        _LOG.debug("    dia_object_nightly: %s", self.config.dia_object_nightly)
         _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
         _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
         _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
@@ -262,7 +258,6 @@ class ApdbSql(Apdb):
 
         self._schema = ApdbSqlSchema(engine=self._engine,
                                      dia_object_index=self.config.dia_object_index,
-                                     dia_object_nightly=self.config.dia_object_nightly,
                                      schema_file=self.config.schema_file,
                                      extra_schema_file=self.config.extra_schema_file,
                                      prefix=self.config.prefix)
@@ -435,18 +430,6 @@ class ApdbSql(Apdb):
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
-
-        # move data from DiaObjectNightly into DiaObject
-        if self.config.dia_object_nightly:
-            with _ansi_session(self._engine) as conn:
-                query = 'INSERT INTO "' + self._schema.objects.name + '" '  # type:ignore
-                query += 'SELECT * FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
-                with Timer('DiaObjectNightly copy', self.config.timer):
-                    conn.execute(sql.text(query))
-
-                query = 'DELETE FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
-                with Timer('DiaObjectNightly delete', self.config.timer):
-                    conn.execute(sql.text(query))
 
         if self._engine.name == 'postgresql':
 
@@ -669,10 +652,7 @@ class ApdbSql(Apdb):
                 _LOG.debug("truncated %s intervals", res.rowcount)
 
             # insert new versions
-            if self.config.dia_object_nightly:
-                table = self._schema.objects_nightly
-            else:
-                table = self._schema.objects
+            table = self._schema.objects
             extra_columns = dict(lastNonForcedSource=dt, validityStart=dt,
                                  validityEnd=None)
             with Timer("DiaObject insert", self.config.timer):
