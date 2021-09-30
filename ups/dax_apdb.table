@@ -1,4 +1,4 @@
-setupRequired(afw)
+setupRequired(geom)
 setupRequired(daf_base)
 setupRequired(pex_config)
 setupRequired(sconsUtils)

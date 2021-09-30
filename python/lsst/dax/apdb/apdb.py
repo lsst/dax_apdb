@@ -28,7 +28,6 @@ import os
 import pandas
 from typing import Iterable, Optional
 
-import lsst.afw.image
 import lsst.daf.base as dafBase
 from lsst.pex.config import Config, ConfigurableField, Field
 from lsst.sphgeom import Region
@@ -207,24 +206,6 @@ class Apdb(ABC):
             catalog
           - source catalogs have ``diaObjectId`` column associating sources
             with objects
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def isVisitProcessed(self, visitInfo: lsst.afw.image.VisitInfo) -> bool:
-        """Test whether data from an image has been loaded into the database.
-
-        Used as part of ap_verify metrics.
-
-        Parameters
-        ----------
-        visitInfo : `lsst.afw.image.VisitInfo`
-            The metadata for the image of interest.
-
-        Returns
-        -------
-        isProcessed : `bool`
-            `True` if the data are present, `False` otherwise.
         """
         raise NotImplementedError()
 

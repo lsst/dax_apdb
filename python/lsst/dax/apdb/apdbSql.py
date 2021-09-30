@@ -684,19 +684,6 @@ class ApdbSql(Apdb):
 
         return count
 
-    def isVisitProcessed(self, visitInfo: Any) -> bool:
-        # docstring is inherited from a base class
-        id = visitInfo.getExposureId()
-        table: sqlalchemy.schema.Table = self._schema.sources
-        idField = table.c.ccdVisitId
-
-        # Hopefully faster than SELECT DISTINCT
-        query = sql.select([idField]).select_from(table) \
-            .where(idField == id).limit(1)
-
-        with self._engine.begin() as conn:
-            return conn.scalar(query) is not None
-
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
 

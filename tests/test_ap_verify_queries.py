@@ -24,7 +24,6 @@ import pandas
 import unittest.mock
 import lsst.utils.tests
 
-from lsst.afw.image import VisitInfo
 import lsst.geom as geom
 from lsst.daf.base import DateTime
 from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
@@ -87,29 +86,6 @@ class TestApVerifyQueries(unittest.TestCase):
 
         value = self.apdb.countUnassociatedObjects()
         self.assertEqual(n_created - 1, value)
-
-    @staticmethod
-    def _makeVisitInfo(exposureId):
-        # Real VisitInfo hard to create
-        visitInfo = unittest.mock.NonCallableMock(
-            VisitInfo,
-            **{"getExposureId.return_value": exposureId}
-        )
-        return visitInfo
-
-    def test_isExposureProcessed(self):
-        n_created = 5
-        objects = createTestObjects(n_created, "diaObjectId", {'nDiaSources': int})
-        sources = createTestObjects(n_created, "diaSourceId", {'ccdVisitId': int, "diaObjectId": int})
-        sources.loc[:, "diaObjectId"] = 0
-        sources.loc[:, "ccdVisitId"] = 2381
-
-        # nsecs must be an integer, not 1.4e18
-        dateTime = DateTime(nsecs=1400000000 * 10**9)
-        self.apdb.store(dateTime, objects, sources)
-
-        self.assertTrue(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(2381)))
-        self.assertFalse(self.apdb.isVisitProcessed(TestApVerifyQueries._makeVisitInfo(42)))
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
