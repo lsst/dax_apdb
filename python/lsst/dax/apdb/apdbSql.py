@@ -292,6 +292,10 @@ class ApdbSql(Apdb):
 
         return res
 
+    def makeSchema(self, drop: bool = False) -> None:
+        # docstring is inherited from a base class
+        self._schema.makeSchema(drop=drop)
+
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -409,6 +413,66 @@ class ApdbSql(Apdb):
 
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
+
+    def store(self,
+              visit_time: dafBase.DateTime,
+              objects: pandas.DataFrame,
+              sources: Optional[pandas.DataFrame] = None,
+              forced_sources: Optional[pandas.DataFrame] = None) -> None:
+        # docstring is inherited from a base class
+
+        # fill pixelId column for DiaObjects
+        objects = self._add_obj_htm_index(objects)
+        self._storeDiaObjects(objects, visit_time)
+
+        if sources is not None:
+            # copy pixelId column from DiaObjects to DiaSources
+            sources = self._add_src_htm_index(sources, objects)
+            self._storeDiaSources(sources)
+
+        if forced_sources is not None:
+            self._storeDiaForcedSources(forced_sources)
+
+    def dailyJob(self) -> None:
+        # docstring is inherited from a base class
+
+        # move data from DiaObjectNightly into DiaObject
+        if self.config.dia_object_nightly:
+            with _ansi_session(self._engine) as conn:
+                query = 'INSERT INTO "' + self._schema.objects.name + '" '  # type:ignore
+                query += 'SELECT * FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
+                with Timer('DiaObjectNightly copy', self.config.timer):
+                    conn.execute(sql.text(query))
+
+                query = 'DELETE FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
+                with Timer('DiaObjectNightly delete', self.config.timer):
+                    conn.execute(sql.text(query))
+
+        if self._engine.name == 'postgresql':
+
+            # do VACUUM on all tables
+            _LOG.info("Running VACUUM on all tables")
+            connection = self._engine.raw_connection()
+            ISOLATION_LEVEL_AUTOCOMMIT = 0
+            connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            cursor = connection.cursor()
+            cursor.execute("VACUUM ANALYSE")
+
+    def countUnassociatedObjects(self) -> int:
+        # docstring is inherited from a base class
+
+        # Retrieve the DiaObject table.
+        table: sqlalchemy.schema.Table = self._schema.objects
+
+        # Construct the sql statement.
+        stmt = sql.select([func.count()]).select_from(table).where(table.c.nDiaSources == 1)
+        stmt = stmt.where(table.c.validityEnd == None)  # noqa: E711
+
+        # Return the count.
+        with self._engine.begin() as conn:
+            count = conn.scalar(stmt)
+
+        return count
 
     def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime
                                ) -> pandas.DataFrame:
@@ -530,25 +594,6 @@ class ApdbSql(Apdb):
         assert sources is not None, "Catalog cannot be None"
         return sources
 
-    def store(self,
-              visit_time: dafBase.DateTime,
-              objects: pandas.DataFrame,
-              sources: Optional[pandas.DataFrame] = None,
-              forced_sources: Optional[pandas.DataFrame] = None) -> None:
-        # docstring is inherited from a base class
-
-        # fill pixelId column for DiaObjects
-        objects = self._add_obj_htm_index(objects)
-        self._storeDiaObjects(objects, visit_time)
-
-        if sources is not None:
-            # copy pixelId column from DiaObjects to DiaSources
-            sources = self._add_src_htm_index(sources, objects)
-            self._storeDiaSources(sources)
-
-        if forced_sources is not None:
-            self._storeDiaForcedSources(forced_sources)
-
     def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DiaObjects from current visit.
 
@@ -667,51 +712,6 @@ class ApdbSql(Apdb):
             with Timer("DiaForcedSource insert", self.config.timer):
                 sources = _coerce_uint64(sources)
                 sources.to_sql("DiaForcedSource", conn, if_exists='append', index=False)
-
-    def countUnassociatedObjects(self) -> int:
-        # docstring is inherited from a base class
-
-        # Retrieve the DiaObject table.
-        table: sqlalchemy.schema.Table = self._schema.objects
-
-        # Construct the sql statement.
-        stmt = sql.select([func.count()]).select_from(table).where(table.c.nDiaSources == 1)
-        stmt = stmt.where(table.c.validityEnd == None)  # noqa: E711
-
-        # Return the count.
-        with self._engine.begin() as conn:
-            count = conn.scalar(stmt)
-
-        return count
-
-    def dailyJob(self) -> None:
-        # docstring is inherited from a base class
-
-        # move data from DiaObjectNightly into DiaObject
-        if self.config.dia_object_nightly:
-            with _ansi_session(self._engine) as conn:
-                query = 'INSERT INTO "' + self._schema.objects.name + '" '  # type:ignore
-                query += 'SELECT * FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
-                with Timer('DiaObjectNightly copy', self.config.timer):
-                    conn.execute(sql.text(query))
-
-                query = 'DELETE FROM "' + self._schema.objects_nightly.name + '"'  # type:ignore
-                with Timer('DiaObjectNightly delete', self.config.timer):
-                    conn.execute(sql.text(query))
-
-        if self._engine.name == 'postgresql':
-
-            # do VACUUM on all tables
-            _LOG.info("Running VACUUM on all tables")
-            connection = self._engine.raw_connection()
-            ISOLATION_LEVEL_AUTOCOMMIT = 0
-            connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-            cursor = connection.cursor()
-            cursor.execute("VACUUM ANALYSE")
-
-    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB') -> None:
-        # docstring is inherited from a base class
-        self._schema.makeSchema(drop=drop, mysql_engine=mysql_engine)
 
     def _explain(self, query: str, conn: sqlalchemy.engine.Connection) -> None:
         """Run the query with explain
