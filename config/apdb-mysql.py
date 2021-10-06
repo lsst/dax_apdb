@@ -1,5 +1,5 @@
-import lsst.dax.apdb.apdb
-assert type(config)==lsst.dax.apdb.apdb.ApdbConfig, 'config is of type %s.%s instead of lsst.dax.apdb.apdb.ApdbConfig' % (type(config).__module__, type(config).__name__)
+import lsst.dax.apdb.apdbSql
+assert type(config)==lsst.dax.apdb.apdbSql.ApdbSqlConfig, 'config is of type %s.%s instead of lsst.dax.apdb.apdbSql.ApdbSqlConfig' % (type(config).__module__, type(config).__name__)
 
 # SQLAlchemy database connection URI
 config.db_url="mysql://localhost/apdbproto?unix_socket=/var/lib/mysql/mysql.sock"
@@ -29,9 +29,6 @@ config.sql_echo=False
 #
 config.dia_object_index='last_object_table'
 
-# Use separate nightly table for DiaObject
-config.dia_object_nightly=False
-
 # Number of months of history to read from DiaSource
 config.read_sources_months=12
 
@@ -53,9 +50,6 @@ config.object_last_replace=True
 # Location of (YAML) configuration file with extra schema
 # config.extra_schema_file = 'data/apdb-schema-extra.yaml'
 
-# Location of (YAML) configuration file with column mapping
-# config.column_map = 'data/apdb-afw-map.yaml'
-
 # Prefix to add to table names and index names
 config.prefix=''
 
@@ -64,12 +58,3 @@ config.explain=False
 
 # If True then print/log timing information
 # config.timer=False
-
-# Name of the index to use with Oracle index hint
-# config.diaobject_index_hint=None
-
-# If non-zero then use dynamic_sampling hint
-# config.dynamic_sampling_hint=0
-
-# If non-zero then use cardinality hint
-# config.cardinality_hint=0
