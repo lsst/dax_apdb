@@ -70,8 +70,9 @@ def _makeObjectCatalogPandas(region, count: int, config: ApdbSqlConfig):
     object per pixel range). Coordinates of the created objects are not usable.
     """
     data_list = []
+    # 0 id'ed DiaObjects don't exist and is used as a Null value for the id.
     for oid, sp in enumerate(_makeVectors(region, count)):
-        tmp_dict = {"diaObjectId": oid,
+        tmp_dict = {"diaObjectId": oid + 1,
                     "ra": sp.getRa().asDegrees(),
                     "decl": sp.getDec().asDegrees()}
         data_list.append(tmp_dict)

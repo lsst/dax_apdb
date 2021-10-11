@@ -772,7 +772,10 @@ class ApdbSql(Apdb):
             diaObjectId: pixelId for diaObjectId, pixelId
             in zip(objs["diaObjectId"], objs[self.config.htm_index_column])
         }
-
+        # DiaSources associated with SolarSystemObjects do not have an
+        # associated DiaObject hence we skip them and set their htmIndex
+        # value to 0.
+        pixel_id_map[0] = 0
         htm_index = np.zeros(sources.shape[0], dtype=np.int64)
         for i, diaObjId in enumerate(sources["diaObjectId"]):
             htm_index[i] = pixel_id_map[diaObjId]
