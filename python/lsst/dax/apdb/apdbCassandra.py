@@ -36,11 +36,18 @@ try:
 except ImportError:
     cbor = None
 
-from cassandra import ConsistencyLevel
-from cassandra.cluster import Cluster
-from cassandra.concurrent import execute_concurrent
-from cassandra.policies import RoundRobinPolicy, WhiteListRoundRobinPolicy, AddressTranslator
-import cassandra.query
+# If cassandra-driver is not there the module can still be imported
+# but ApdbCassandra cannot be instanciated.
+try:
+    import cassandra
+    from cassandra.cluster import Cluster
+    from cassandra.concurrent import execute_concurrent
+    from cassandra.policies import RoundRobinPolicy, WhiteListRoundRobinPolicy, AddressTranslator
+    import cassandra.query
+    CASSANDRA_IMPORTED = True
+except ImportError:
+    CASSANDRA_IMPORTED = False
+
 import lsst.afw.table as afwTable
 import lsst.geom as geom
 from lsst.pex.config import ChoiceField, Field, ListField
@@ -53,6 +60,11 @@ from .apdbCassandraSchema import ApdbCassandraSchema
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
 SECONDS_IN_DAY = 24 * 3600
+
+
+class CassandraMissingError(Exception):
+    def __init__(self):
+        super().__init__("cassandra-driver module cannot be imported")
 
 
 def _pixelId2partition(pixelId):
@@ -175,7 +187,7 @@ class ApdbCassandraConfig(ApdbConfig):
         default="QUORUM")
     protocol_version = Field(dtype=int,
                              doc="Cassandra protocol version to use, default is V4",
-                             default=cassandra.ProtocolVersion.V4)
+                             default=cassandra.ProtocolVersion.V4 if CASSANDRA_IMPORTED else 0)
     read_sources_months = Field(dtype=int,
                                 doc="Number of months of history to read from DiaSource",
                                 default=12)
@@ -295,16 +307,18 @@ class Partitioner:
         return index
 
 
-class _AddressTranslator(AddressTranslator):
-    """Translate internal IP address to external.
+if CASSANDRA_IMPORTED:
 
-    Only used for docker-based setup, not viable long-term solution.
-    """
-    def __init__(self, public_ips, private_ips):
-        self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
+    class _AddressTranslator(AddressTranslator):
+        """Translate internal IP address to external.
 
-    def translate(self, private_ip):
-        return self._map.get(private_ip, private_ip)
+        Only used for docker-based setup, not viable long-term solution.
+        """
+        def __init__(self, public_ips, private_ips):
+            self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
+
+        def translate(self, private_ip):
+            return self._map.get(private_ip, private_ip)
 
 
 def _rows_to_pandas(colnames, rows, packedColumns):
@@ -434,6 +448,9 @@ class ApdbCassandra:
 
     def __init__(self, config):
 
+        if not CASSANDRA_IMPORTED:
+            raise CassandraMissingError()
+
         self.config = config
 
         # logging.getLogger('sqlalchemy').setLevel(logging.INFO)
@@ -445,7 +462,6 @@ class ApdbCassandra:
         _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
         _LOG.debug("    schema_file: %s", self.config.schema_file)
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
-        _LOG.debug("    column_map: %s", self.config.column_map)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
         _LOG.debug("    part_pixelization: %s", self.config.part_pixelization)
         _LOG.debug("    part_pix_level: %s", self.config.part_pix_level)
@@ -461,8 +477,8 @@ class ApdbCassandra:
             loadBalancePolicy = RoundRobinPolicy()
             addressTranslator = None
 
-        self._read_consistency = getattr(ConsistencyLevel, config.read_consistency)
-        self._write_consistency = getattr(ConsistencyLevel, config.write_consistency)
+        self._read_consistency = getattr(cassandra.ConsistencyLevel, config.read_consistency)
+        self._write_consistency = getattr(cassandra.ConsistencyLevel, config.write_consistency)
 
         self._cluster = Cluster(contact_points=self.config.contact_points,
                                 load_balancing_policy=loadBalancePolicy,
