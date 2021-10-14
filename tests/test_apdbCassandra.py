@@ -32,6 +32,7 @@ e.g.:
 
 """
 
+import logging
 import os
 import pandas
 import random
@@ -45,6 +46,9 @@ from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from lsst.geom import SpherePoint
 import lsst.utils.tests
+
+
+logging.basicConfig(level=logging.INFO)
 
 
 def _makeRegion() -> Region:
@@ -94,20 +98,20 @@ def _makeObjectCatalogPandas(region, count: int):
     return df
 
 
-def _makeSourceCatalogPandas(objects, visit_time, start_id=0):
+def _makeSourceCatalogPandas(objects, visit_time, start_id=0, ccdVisitId=1):
     """Make a catalog containing a bunch of DiaSources associated with the
     input diaObjects.
     """
     # make some sources
     catalog = []
     midPointTai = visit_time.get(system=DateTime.MJD)
-    for index, obj in objects.iterrows():
+    for obj in objects.itertuples(index=False):
         catalog.append({"diaSourceId": start_id,
-                        "ccdVisitId": 1,
-                        "diaObjectId": obj["diaObjectId"],
+                        "ccdVisitId": ccdVisitId,
+                        "diaObjectId": obj.diaObjectId,
                         "parentDiaSourceId": 0,
-                        "ra": obj["ra"],
-                        "decl": obj["decl"],
+                        "ra": obj.ra,
+                        "decl": obj.decl,
                         "midPointTai": midPointTai,
                         "flags": 0})
         start_id += 1
@@ -121,8 +125,8 @@ def _makeForcedSourceCatalogPandas(objects, visit_time, ccdVisitId=1):
     # make some sources
     catalog = []
     midPointTai = visit_time.get(system=DateTime.MJD)
-    for index, obj in objects.iterrows():
-        catalog.append({"diaObjectId": obj["diaObjectId"],
+    for obj in objects.itertuples(index=False):
+        catalog.append({"diaObjectId": obj.diaObjectId,
                         "ccdVisitId": ccdVisitId,
                         "midPointTai": midPointTai,
                         "flags": 0})
@@ -156,7 +160,8 @@ class ApdbCassandraTestCase(unittest.TestCase):
         key = uuid.uuid4()
         keyspace = f"apdb_{key.hex}"
         self.config.keyspace = ""
-        query = f"CREATE KEYSPACE {keyspace} WITH replication = {{'class': 'SimpleStrategy', 'replication_factor': 1}}"
+        query = f"CREATE KEYSPACE {keyspace}" \
+            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
 
         apdb = ApdbCassandra(self.config)
         apdb._session.execute(query)
@@ -256,6 +261,9 @@ class ApdbCassandraTestCase(unittest.TestCase):
         res = apdb.getDiaSources(region, [1, 2, 3], visit_time)
         self._assertCatalog(res, 0)
 
+        apdb.getDiaForcedSources(region, None, visit_time)
+        self._assertCatalog(res, 0)
+
         # get forced sources by object ID, empty object list
         res = apdb.getDiaForcedSources(region, [], visit_time)
         self._assertCatalog(res, 0)
@@ -263,10 +271,6 @@ class ApdbCassandraTestCase(unittest.TestCase):
         # get sources by object ID, non-empty object list
         res = apdb.getDiaForcedSources(region, [1, 2, 3], visit_time)
         self._assertCatalog(res, 0)
-
-        # SQL implementation needs ID list
-        with self.assertRaises(NotImplementedError):
-            apdb.getDiaForcedSources(region, None, visit_time)
 
     def test_storeObjectsBaseline(self):
         """Store and retrieve DiaObjects."""
@@ -278,7 +282,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         visit_time = DateTime.now()
 
         # make catalog with Objects
-        catalog = _makeObjectCatalogPandas(region, 100, config)
+        catalog = _makeObjectCatalogPandas(region, 100)
 
         # store catalog
         apdb.store(visit_time, catalog)
@@ -297,7 +301,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         visit_time = DateTime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = _makeObjectCatalogPandas(region, 100)
         oids = list(objects["diaObjectId"])
         sources = _makeSourceCatalogPandas(objects, visit_time)
 
@@ -326,7 +330,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         visit_time = DateTime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = _makeObjectCatalogPandas(region, 100)
         oids = list(objects["diaObjectId"])
         catalog = _makeForcedSourceCatalogPandas(objects, visit_time)
 
@@ -354,12 +358,12 @@ class ApdbCassandraTestCase(unittest.TestCase):
         visit_time1 = DateTime(2021, 12, 27, 0, 0, 1, DateTime.TAI)
         visit_time2 = DateTime(2021, 12, 27, 0, 0, 3, DateTime.TAI)
 
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = _makeObjectCatalogPandas(region, 100)
         oids = list(objects["diaObjectId"])
-        sources = _makeSourceCatalogPandas(objects, src_time1, 0)
+        sources = _makeSourceCatalogPandas(objects, src_time1, 0, 11)
         apdb.store(src_time1, objects, sources)
 
-        sources = _makeSourceCatalogPandas(objects, src_time2, 100)
+        sources = _makeSourceCatalogPandas(objects, src_time2, 100, 22)
         apdb.store(src_time2, objects, sources)
 
         # reading at time of last save should read all
@@ -391,12 +395,12 @@ class ApdbCassandraTestCase(unittest.TestCase):
         visit_time1 = DateTime(2021, 12, 27, 0, 0, 1, DateTime.TAI)
         visit_time2 = DateTime(2021, 12, 27, 0, 0, 3, DateTime.TAI)
 
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = _makeObjectCatalogPandas(region, 100)
         oids = list(objects["diaObjectId"])
-        sources = _makeForcedSourceCatalogPandas(objects, src_time1, 1)
+        sources = _makeForcedSourceCatalogPandas(objects, src_time1, 11)
         apdb.store(src_time1, objects, forced_sources=sources)
 
-        sources = _makeForcedSourceCatalogPandas(objects, src_time2, 2)
+        sources = _makeForcedSourceCatalogPandas(objects, src_time2, 22)
         apdb.store(src_time2, objects, forced_sources=sources)
 
         # reading at time of last save should read all

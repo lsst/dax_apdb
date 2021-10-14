@@ -509,10 +509,6 @@ columns:
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
-- name: pixelId
-  type: BIGINT
-  nullable: false
-  description: HTM index.
 indices:
 - name: Part_DiaObject
   columns: [apdb_part, apdb_time_part]
@@ -525,10 +521,6 @@ indices:
 - name: IDX_DiaObject_valStart
   columns:
   - validityStart
-  type: INDEX
-- name: IDX_DiaObject_htmId20
-  columns:
-  - pixelId
   type: INDEX
 ---
 table: SSObject
@@ -1574,18 +1566,13 @@ columns:
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
-- name: pixelId
-  type: BIGINT
-  nullable: false
-  description: HTM index.
 indices:
 - name: Part_DiaSource
   columns: [apdb_part, apdb_time_part]
   type: PARTITION
 - name: PK_DiaSource
   columns:
-  - pixelId
-  - midPointTai
+  - diaSourceId
   type: PRIMARY
 - name: IDX_DiaSource_ccdVisitId
   columns:
@@ -1598,10 +1585,6 @@ indices:
 - name: IDX_DiaSource_ssObjId
   columns:
   - ssObjectId
-  type: INDEX
-- name: IDX_DiaSource_htmId20
-  columns:
-  - pixelId
   type: INDEX
 ---
 table: DiaForcedSource
@@ -1657,10 +1640,6 @@ columns:
   default: '0'
   description: Flags, bitwise OR tbd
   ucd: meta.code
-- name: pixelId
-  type: BIGINT
-  nullable: false
-  description: HTM index.
 - name: midPointTai
   type: DOUBLE
   nullable: false
@@ -1673,8 +1652,8 @@ indices:
   type: PARTITION
 - name: PK_DiaForcedSource
   columns:
-  - pixelId
-  - midPointTai
+  - diaObjectId
+  - ccdVisitId
   type: PRIMARY
 - name: IDX_DiaFSource_ccdVisitId
   columns:

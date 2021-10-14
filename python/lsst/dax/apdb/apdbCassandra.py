@@ -30,6 +30,7 @@ import numpy as np
 import pandas
 import random
 import string
+from typing import Dict, Iterable, Optional
 
 try:
     import cbor
@@ -37,7 +38,7 @@ except ImportError:
     cbor = None
 
 # If cassandra-driver is not there the module can still be imported
-# but ApdbCassandra cannot be instanciated.
+# but ApdbCassandra cannot be instantiated.
 try:
     import cassandra
     from cassandra.cluster import Cluster
@@ -48,12 +49,11 @@ try:
 except ImportError:
     CASSANDRA_IMPORTED = False
 
-import lsst.afw.table as afwTable
-import lsst.geom as geom
+import lsst.daf.base as dafBase
 from lsst.pex.config import ChoiceField, Field, ListField
-from lsst.sphgeom import HtmPixelization, Mq3cPixelization, Q3cPixelization
+from lsst import sphgeom
 from . import timer
-from .apdb import ApdbConfig
+from .apdb import Apdb, ApdbConfig
 from .apdbCassandraSchema import ApdbCassandraSchema
 
 
@@ -65,45 +65,6 @@ SECONDS_IN_DAY = 24 * 3600
 class CassandraMissingError(Exception):
     def __init__(self):
         super().__init__("cassandra-driver module cannot be imported")
-
-
-def _pixelId2partition(pixelId):
-    """Converts pixelID (HTM index) into partition number.
-
-    This assumes that pixelId indexing is HTM level=20. Partitoning is done
-    with HTM level=8.
-    """
-    htm20 = pixelId
-    htm8 = htm20 >> 24
-    part = htm8
-    # part = part & 0xf
-    return part
-
-
-def _filterObjectIds(rows, object_ids):
-    """Generator which filters rows returned from query based on diaObjectId.
-
-    Parameters
-    ----------
-    rows : iterable of `namedtuple`
-        Rows returned from database query.
-
-    Yields
-    ------
-    row : `namedtuple`
-        Filtered rows.
-    """
-    object_id_set = set(object_ids)
-    for row in rows:
-        if row.diaObjectId in object_id_set:
-            yield row
-
-
-def _nrows(table):
-    if isinstance(table, pandas.DataFrame):
-        return table.shape[0]
-    else:
-        return len(table)
 
 
 class Timer(object):
@@ -148,7 +109,7 @@ class Timer(object):
     def _start_timer(self, conn, cursor, statement, parameters, context, executemany):
         """Start counting"""
         if self._log_before_cursor_execute:
-            _LOG.info("before_cursor_execute")
+            _LOG.debug("before_cursor_execute")
         self._timer2.start()
 
     def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):
@@ -208,6 +169,8 @@ class ApdbCassandraConfig(ApdbConfig):
     part_pix_level = Field(dtype=int,
                            doc="Pixelization level used for patitioning index.",
                            default=10)
+    ra_dec_columns = ListField(dtype=str, default=["ra", "decl"],
+                               doc="Names ra/dec columns in DiaObject table")
     timer = Field(dtype=bool,
                   doc="If True then print/log timing information",
                   default=False)
@@ -274,11 +237,11 @@ class Partitioner:
     def __init__(self, config):
         pix = config.part_pixelization
         if pix == "htm":
-            self.pixelator = HtmPixelization(config.part_pix_level)
+            self.pixelator = sphgeom.HtmPixelization(config.part_pix_level)
         elif pix == "q3c":
-            self.pixelator = Q3cPixelization(config.part_pix_level)
+            self.pixelator = sphgeom.Q3cPixelization(config.part_pix_level)
         elif pix == "mq3c":
-            self.pixelator = Mq3cPixelization(config.part_pix_level)
+            self.pixelator = sphgeom.Mq3cPixelization(config.part_pix_level)
         else:
             raise ValueError(f"unknown pixelization: {pix}")
 
@@ -430,21 +393,21 @@ class _RawRowFactory:
         return (colnames, rows)
 
 
-class ApdbCassandra:
+class ApdbCassandra(Apdb):
     """Implementation of APDB database on to of Apache Cassandra.
 
     The implementation is configured via standard ``pex_config`` mechanism
-    using `ApdbCassandra` configuration class. For an example of different
-    configurations check config/ folder.
+    using `ApdbCassandraConfig` configuration class. For an example of
+    different configurations check config/ folder.
 
     Parameters
     ----------
-    config : `ApdbCassandra`
-    afw_schemas : `dict`, optional
-        Dictionary with table name for a key and `afw.table.Schema`
-        for a value. Columns in schema will be added to standard
-        APDB schema.
+    config : `ApdbCassandraConfig`
+        Configuration object.
     """
+
+    partition_zero_epoch = dafBase.DateTime(1970, 1, 1, 0, 0, 0, dafBase.DateTime.TAI)
+    """Start time for partition 0"""
 
     def __init__(self, config):
 
@@ -495,186 +458,68 @@ class ApdbCassandra:
                                            time_partition_days=config.time_partition_days,
                                            packing=config.packing)
 
-    def makeSchema(self, drop=False, **kw):
-        """Create or re-create all tables.
-
-        Parameters
-        ----------
-        drop : `bool`
-            If True then drop tables before creating new ones.
-        """
+    def makeSchema(self, drop: bool = False) -> None:
+        # docstring is inherited from a base class
         self._schema.makeSchema(drop=drop)
 
-    def tableRowCount(self):
-        """Returns dictionary with the table names and row counts.
-
-        Used by ``ap_proto`` to keep track of the size of the database tables.
-        Depending on database technology this could be expensive operation.
-
-        Returns
-        -------
-        row_counts : `dict`
-            Dict where key is a table name and value is a row count.
-        """
-        # We probably do not want it ever implemented for Cassandra
-        return {}
-
-    def getDiaObjects(self, region, return_pandas=True):
-        """Returns catalog of DiaObject instances from given region.
-
-        Returned catalog can contain DiaObjects that are outside specified
-        region, it is client responsibility to filter objects if necessary.
-
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of APDB table. Re-mapping of the column names is done for
-        some columns (based on column map passed to constructor) but types
-        or units are not changed.
-
-        Returns only the last version of each DiaObject.
-
-        Parameters
-        ----------
-        region : `lsst.sphgeom.Region`
-            Spherical region.
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
-
-        Returns
-        -------
-        catalog : `lsst.afw.table.SourceCatalog` or `pandas.DataFrame`
-            Catalog containing DiaObject records.
-        """
-        if return_pandas:
-            packedColumns = self._schema.packedColumns("DiaObjectLast")
-            self._session.row_factory = _PandasRowFactory(packedColumns)
-        else:
-            self._session.row_factory = cassandra.query.named_tuple_factory
+    def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        packedColumns = self._schema.packedColumns("DiaObjectLast")
+        self._session.row_factory = _PandasRowFactory(packedColumns)
         self._session.default_fetch_size = None
 
         pixels = self._partitioner.pixels(region)
-        _LOG.info("getDiaObjects: #partitions: %s", len(pixels))
+        _LOG.debug("getDiaObjects: #partitions: %s", len(pixels))
         pixels = ",".join([str(pix) for pix in pixels])
 
         queries = []
         query = f'SELECT * from "DiaObjectLast" WHERE "apdb_part" IN ({pixels})'
         queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})]
-        _LOG.info("getDiaObjects: #queries: %s", len(queries))
+        _LOG.debug("getDiaObjects: #queries: %s", len(queries))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
 
         objects = None
         with Timer('DiaObject select', self.config.timer):
             # submit all queries
             futures = [self._session.execute_async(query, values, timeout=120.) for query, values in queries]
-            if return_pandas:
-                # TODO: This orders result processing which is not very efficient
-                dataframes = [future.result()._current_rows for future in futures]
-                # concatenate all frames
-                if len(dataframes) == 1:
-                    objects = dataframes[0]
-                else:
-                    objects = pandas.concat(dataframes)
+            # TODO: This orders result processing which is not very efficient
+            dataframes = [future.result()._current_rows for future in futures]
+            # concatenate all frames
+            if len(dataframes) == 1:
+                objects = dataframes[0]
             else:
-                for future in futures:
-                    rows = future.result()
-                    objects = self._convertResult(rows, "DiaObject", catalog=objects)
+                objects = pandas.concat(dataframes)
 
-        _LOG.debug("found %s DiaObjects", _nrows(objects))
+        _LOG.debug("found %s DiaObjects", objects.shape[0])
         return objects
 
-    def getDiaSources(self, region, object_ids, dt, return_pandas=True):
-        """Returns catalog of DiaSource instances given a region and a set of
-        DiaObject IDs.
+    def getDiaSources(self, region: sphgeom.Region,
+                      object_ids: Optional[Iterable[int]],
+                      visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+        # docstring is inherited from a base class
+        return self._getSources(region, object_ids, visit_time, "DiaSource",
+                                self.config.read_sources_months)
 
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of APDB table. Re-mapping of the column names is done for
-        some columns (based on column map passed to constructor) but types or
-        units are not changed.
+    def getDiaForcedSources(self, region: sphgeom.Region,
+                            object_ids: Optional[Iterable[int]],
+                            visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+        return self._getSources(region, object_ids, visit_time, "DiaForcedSource",
+                                self.config.read_forced_sources_months)
 
-        Parameters
-        ----------
-        region : `lsst.sphgeom.Region`
-            Spherical region.
-        object_ids :
-            Collection of DiaObject IDs
-        dt : `datetime.datetime`
-            Time of the current visit
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
-
-        Returns
-        -------
-        catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
-            Catalog contaning DiaSource records. `None` is returned if
-            ``read_sources_months`` configuration parameter is set to 0 or
-            when ``object_ids`` is empty.
-
-        Note
-        ----
-        Implementation can chose to query database using either region or
-        Object IDs (or both). For performance reasons returned set of sources
-        can contain instances that are either ouside of the region or do not
-        match DiaObject IDs in the input set. It is client responsibility to
-        filter the returned catalog if necessary.
-        """
-        return self._getSources(region, object_ids, dt, "DiaSource",
-                                self.config.read_sources_months, return_pandas)
-
-    def getDiaForcedSources(self, region, object_ids, dt, return_pandas=False):
-        """Returns catalog of DiaForcedSource instances given a region and a
-        set of DiaObject IDs.
-
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of L1 database table. Re-mapping of the column names may
-        be done for some columns (based on column map passed to constructor)
-        but types or units are not changed.
-
-        Parameters
-        ----------
-        region : `lsst.sphgeom.Region`
-            Spherical region.
-        object_ids :
-            Collection of DiaObject IDs
-        dt : `datetime.datetime`
-            Time of the current visit
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
-
-        Returns
-        -------
-        catalog : `lsst.afw.table.SourceCatalog` or `None`
-            Catalog contaning DiaForcedSource records. `None` is returned if
-            ``read_sources_months`` configuration parameter is set to 0 or
-            when ``object_ids`` is empty.
-
-        Note
-        ----
-        Implementation can chose to query database using either region or
-        Object IDs (or both). For performance reasons returned set of sources
-        can contain instances that are either ouside of the region or do not
-        match DiaObject IDs in the input set. It is client responsibility to
-        filter the returned catalog if necessary.
-        """
-        return self._getSources(region, object_ids, dt, "DiaForcedSource",
-                                self.config.read_forced_sources_months, return_pandas)
-
-    def _getSources(self, region, object_ids, dt, table_name, months, return_pandas=False):
+    def _getSources(self, region: sphgeom.Region,
+                    object_ids: Optional[Iterable[int]],
+                    visit_time: dafBase.DateTime,
+                    table_name: str,
+                    months: int) -> Optional[pandas.DataFrame]:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
-        This method returns :doc:`/modules/lsst.afw.table/index` catalog with schema determined by
-        the schema of APDB table. Re-mapping of the column names is done for
-        some columns (based on column map passed to constructor) but types or
-        units are not changed.
-
         Parameters
         ----------
         region : `lsst.sphgeom.Region`
             Spherical region.
         object_ids :
             Collection of DiaObject IDs
-        dt : `datetime.datetime`
+        visit_time : `lsst.daf.base.DateTime`
             Time of the current visit
         table_name : `str`
             Name of the table, either "DiaSource" or "DiaForcedSource"
@@ -682,32 +527,29 @@ class ApdbCassandra:
             Number of months of history to return, if negative returns whole
             history (Note: negative does not work with table-per-partition
             case)
-        return_pandas : `bool`
-            Return a `pandas.DataFrame` instead of
-            `lsst.afw.table.SourceCatalog`.
 
         Returns
         -------
-        catalog : `lsst.afw.table.SourceCatalog`, `pandas.DataFrame`, or `None`
+        catalog : `pandas.DataFrame`, or `None`
             Catalog contaning DiaSource records. `None` is returned if
             ``months`` is 0 or when ``object_ids`` is empty.
         """
-        if months == 0 or len(object_ids) == 0:
+        if months == 0:
             return None
+        if object_ids is not None and len(object_ids) == 0:
+            # TODO: need correct column schema for this
+            return pandas.DataFrame()
 
-        if return_pandas:
-            packedColumns = self._schema.packedColumns(table_name)
-            if self.config.pandas_delay_conv or self.config.pandas_raw_src:
-                self._session.row_factory = _RawRowFactory(packedColumns)
-            else:
-                self._session.row_factory = _PandasRowFactory(packedColumns)
+        packedColumns = self._schema.packedColumns(table_name)
+        if self.config.pandas_delay_conv or self.config.pandas_raw_src:
+            self._session.row_factory = _RawRowFactory(packedColumns)
         else:
-            self._session.row_factory = cassandra.query.named_tuple_factory
+            self._session.row_factory = _PandasRowFactory(packedColumns)
         self._session.default_fetch_size = None
 
         # spatial pixels included into query
         pixels = self._partitioner.pixels(region)
-        _LOG.info("_getSources: %s #partitions: %s", table_name, len(pixels))
+        _LOG.debug("_getSources: %s #partitions: %s", table_name, len(pixels))
 
         # spatial part of WHERE
         spatial_where = []
@@ -721,22 +563,21 @@ class ApdbCassandra:
         temporal_where = []
         # time partitions and table names to query, there may be multiple
         # tables depending on configuration
-        time_parts = []
         tables = [table_name]
-        if months > 0:
-            seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
-            seconds_begin = seconds_now - months * 30 * SECONDS_IN_DAY
-            time_part_now = seconds_now // (self.config.time_partition_days * SECONDS_IN_DAY)
-            time_part_begin = seconds_begin // (self.config.time_partition_days * SECONDS_IN_DAY)
-            time_parts = list(range(time_part_begin, time_part_now + 1))
-            if self.config.time_partition_tables:
-                tables = [f"{table_name}_{part}" for part in time_parts]
+        mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
+        mjd_begin = mjd_now - months*30
+        epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+        time_part_now = int(mjd_now - epoch) // self.config.time_partition_days
+        time_part_begin = int(mjd_begin - epoch) // self.config.time_partition_days
+        time_parts = list(range(time_part_begin, time_part_now + 1))
+        if self.config.time_partition_tables:
+            tables = [f"{table_name}_{part}" for part in time_parts]
+        else:
+            if self.config.query_per_time_part:
+                temporal_where = [f'"apdb_time_part" = {time_part}' for time_part in time_parts]
             else:
-                if self.config.query_per_time_part:
-                    temporal_where = [f'"apdb_time_part" = {time_part}' for time_part in time_parts]
-                else:
-                    time_part_list = ",".join([str(part) for part in time_parts])
-                    temporal_where = [f'"apdb_time_part" IN ({time_part_list})']
+                time_part_list = ",".join([str(part) for part in time_parts])
+                temporal_where = [f'"apdb_time_part" IN ({time_part_list})']
 
         # Build all queries
         queries = []
@@ -754,362 +595,160 @@ class ApdbCassandra:
             (cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})
             for query in queries
         ]
-        _LOG.info("_getSources %s: #queries: %s", table_name, len(queries))
+        _LOG.debug("_getSources %s: #queries: %s", table_name, len(queries))
 
         catalog = None
         with Timer(table_name + ' select', self.config.timer):
             # submit all queries
             results = execute_concurrent(self._session, queries, concurrency=500)
-            if return_pandas:
-                if self.config.pandas_delay_conv or self.config.pandas_raw_src:
-                    _LOG.debug("making pandas data frame out of rows/columns")
-                    columns = None
-                    rows = []
-                    for success, result in results:
-                        result = result._current_rows
-                        if success:
-                            if columns is None:
-                                columns = result[0]
-                            elif columns != result[0]:
-                                _LOG.error("diferent columns returned by queries: %s and %s",
-                                           columns, result[0])
-                                raise ValueError(
-                                    f"diferent columns returned by queries: {columns} and {result[0]}"
-                                )
-                            rows += result[1]
-                        else:
-                            _LOG.error("error returned by query: %s", result)
-                            raise result
-                    if self.config.pandas_raw_src:
-                        catalog = rows
-                        shape = len(rows), len(columns)
-                        _LOG.debug("pandas catalog shape: %s", shape)
+            if self.config.pandas_delay_conv or self.config.pandas_raw_src:
+                _LOG.debug("making pandas data frame out of rows/columns")
+                columns = None
+                rows = []
+                for success, result in results:
+                    result = result._current_rows
+                    if success:
+                        if columns is None:
+                            columns = result[0]
+                        elif columns != result[0]:
+                            _LOG.error("different columns returned by queries: %s and %s",
+                                       columns, result[0])
+                            raise ValueError(
+                                f"diferent columns returned by queries: {columns} and {result[0]}"
+                            )
+                        rows += result[1]
                     else:
-                        catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
-                        _LOG.debug("pandas catalog shape: %s", catalog.shape)
-                        # filter by given object IDs
-                        catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
-                else:
-                    _LOG.debug("making pandas data frame out of set of data frames")
-                    dataframes = []
-                    for success, result in results:
-                        if success:
-                            dataframes.append(result._current_rows)
-                        else:
-                            _LOG.error("error returned by query: %s", result)
-                            raise result
-                    # concatenate all frames
-                    if len(dataframes) == 1:
-                        catalog = dataframes[0]
-                    else:
-                        catalog = pandas.concat(dataframes)
-                    _LOG.debug("pandas catalog shape: %s", catalog.shape)
-                    # filter by given object IDs
-                    catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
-            else:
-                for success, rows in results:
-                    if not success:
                         _LOG.error("error returned by query: %s", result)
                         raise result
-                    rows = _filterObjectIds(rows, object_ids)
-                    catalog = self._convertResult(rows, table_name, catalog=catalog)
+                if self.config.pandas_raw_src:
+                    catalog = rows
+                    shape = len(rows), len(columns)
+                    _LOG.debug("pandas catalog shape: %s", shape)
+                else:
+                    catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
+                    _LOG.debug("pandas catalog shape: %s", catalog.shape)
+                    # filter by given object IDs
+                    if object_ids is not None:
+                        catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
+            else:
+                _LOG.debug("making pandas data frame out of set of data frames")
+                dataframes = []
+                for success, result in results:
+                    if success:
+                        dataframes.append(result._current_rows)
+                    else:
+                        _LOG.error("error returned by query: %s", result)
+                        raise result
+                # concatenate all frames
+                if len(dataframes) == 1:
+                    catalog = dataframes[0]
+                else:
+                    catalog = pandas.concat(dataframes)
+                _LOG.debug("pandas catalog shape: %s", catalog.shape)
+                # filter by given object IDs
+                if object_ids is not None:
+                    catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
 
-        _LOG.debug("found %d %ss", _nrows(catalog), table_name)
+        # precise filtering on midPointTai
+        catalog = catalog[catalog.midPointTai > mjd_begin]
+
+        _LOG.debug("found %d %ss", catalog.shape[0], table_name)
         return catalog
 
-    def storeDiaObjects(self, objs, dt, pos_func):
+    def store(self,
+              visit_time: dafBase.DateTime,
+              objects: pandas.DataFrame,
+              sources: Optional[pandas.DataFrame] = None,
+              forced_sources: Optional[pandas.DataFrame] = None) -> None:
+        # docstring is inherited from a base class
+
+        # fill region partition column for DiaObjects
+        objects = self._add_obj_part(objects)
+        self._storeDiaObjects(objects, visit_time)
+
+        if sources is not None:
+            # copy apdb_part column from DiaObjects to DiaSources
+            sources = self._add_src_part(sources, objects)
+            self._storeDiaSources(sources, visit_time)
+
+        if forced_sources is not None:
+            forced_sources = self._add_fsrc_part(forced_sources, objects)
+            self._storeDiaForcedSources(forced_sources, visit_time)
+
+    def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DiaObjects from current visit.
 
-        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
-        compatible with the schema of APDB table:
-
-          - column names must correspond to database table columns
-          - some columns names are re-mapped based on column map passed to
-            constructor
-          - types and units of the columns must match database definitions,
-            no unit conversion is performed presently
-          - columns that have default values in database schema can be
-            omitted from afw schema
-          - this method knows how to fill interval-related columns
-            (validityStart, validityEnd) they do not need to appear in
-            afw schema
-
         Parameters
         ----------
-        objs : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
+        objs : `pandas.DataFrame`
             Catalog with DiaObject records
-        dt : `datetime.datetime`
-            Time of the visit
-        pos_func : callable
-            Function of single argument which takes one catalog record as
-            input and returns its position (`lsst.sphgeom.UnitVector3d`).
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
         """
-        if isinstance(objs, pandas.DataFrame):
+        visit_time_dt = visit_time.toPython()
+        extra_columns = dict(lastNonForcedSource=visit_time_dt)
+        self._storeObjectsPandas(objs, "DiaObjectLast", visit_time, extra_columns=extra_columns)
 
-            extra_columns = dict(lastNonForcedSource=dt)
-            self._storeObjectsPandas(objs, "DiaObjectLast", dt, pos_func, extra_columns=extra_columns)
+        extra_columns = dict(lastNonForcedSource=visit_time_dt, validityStart=visit_time_dt)
+        if not self.config.time_partition_tables:
+            mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
+            epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+            time_part = int(mjd_now - epoch) // self.config.time_partition_days
+            extra_columns["apdb_time_part"] = time_part
+        self._storeObjectsPandas(objs, "DiaObject", visit_time, extra_columns=extra_columns)
 
-            extra_columns = dict(lastNonForcedSource=dt, validityStart=dt)
-            self._storeObjectsPandas(objs, "DiaObject", dt, pos_func, extra_columns=extra_columns)
-
-        else:
-
-            extra_columns = dict(lastNonForcedSource=dt)
-            self._storeObjectsAfw(objs, "DiaObjectLast", dt, pos_func, extra_columns=extra_columns)
-
-            extra_columns = dict(lastNonForcedSource=dt, validityStart=dt)
-            self._storeObjectsAfw(objs, "DiaObject", dt, pos_func, extra_columns=extra_columns)
-
-    def storeDiaSources(self, sources, dt, pos_func):
+    def _storeDiaSources(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DIASources from current visit.
 
-        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
-        compatible with the schema of L1 database table:
-
-          - column names must correspond to database table columns
-          - some columns names may be re-mapped based on column map passed to
-            constructor
-          - types and units of the columns must match database definitions,
-            no unit conversion is performed presently
-          - columns that have default values in database schema can be
-            omitted from afw schema
-
         Parameters
         ----------
-        sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
+        sources : `pandas.DataFrame`
             Catalog containing DiaSource records
-        dt : `datetime.datetime`
-            Time of the visit
-        pos_func : callable
-            Function of single argument which takes one catalog record as
-            input and returns its position (`lsst.sphgeom.UnitVector3d`).
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
         """
-        time_part = None
-        if self.config.time_partition_tables:
-            seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
-            time_part = seconds_now // (self.config.time_partition_days * SECONDS_IN_DAY)
+        mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
+        epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+        time_part = int(mjd_now - epoch) // self.config.time_partition_days
+        extra_columns = {}
+        if not self.config.time_partition_tables:
+            extra_columns["apdb_time_part"] = time_part
+            time_part = None
 
-        # this is a lie of course
-        extra_columns = dict(midPointTai=dt)
-        if isinstance(sources, pandas.DataFrame):
-            self._storeObjectsPandas(sources, "DiaSource", dt, pos_func,
-                                     extra_columns=extra_columns, time_part=time_part)
-        else:
-            self._storeObjectsAfw(sources, "DiaSource", dt, pos_func,
-                                  extra_columns=extra_columns, time_part=time_part)
+        self._storeObjectsPandas(sources, "DiaSource", visit_time,
+                                 extra_columns=extra_columns, time_part=time_part)
 
-    def storeDiaForcedSources(self, sources, dt, pos_func):
+    def _storeDiaForcedSources(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store a set of DIAForcedSources from current visit.
 
-        This methods takes :doc:`/modules/lsst.afw.table/index` catalog, its schema must be
-        compatible with the schema of L1 database table:
-
-          - column names must correspond to database table columns
-          - some columns names may be re-mapped based on column map passed to
-            constructor
-          - types and units of the columns must match database definitions,
-            no unit conversion is performed presently
-          - columns that have default values in database schema can be
-            omitted from afw schema
-
         Parameters
         ----------
-        sources : `lsst.afw.table.BaseCatalog` or `pandas.DataFrame`
+        sources : `pandas.DataFrame`
             Catalog containing DiaForcedSource records
-        dt : `datetime.datetime`
-            Time of the visit
-        pos_func : callable
-            Function of single argument which takes one catalog record as
-            input and returns its position (`lsst.sphgeom.UnitVector3d`).
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
         """
-        time_part = None
-        if self.config.time_partition_tables:
-            seconds_now = int((dt - datetime(1970, 1, 1)) / timedelta(seconds=1))
-            time_part = seconds_now // (self.config.time_partition_days * SECONDS_IN_DAY)
+        mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
+        epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+        time_part = int(mjd_now - epoch) // self.config.time_partition_days
+        extra_columns = {}
+        if not self.config.time_partition_tables:
+            extra_columns["apdb_time_part"] = time_part
+            time_part = None
 
-        extra_columns = dict(midPointTai=dt)
-        if isinstance(sources, pandas.DataFrame):
-            self._storeObjectsPandas(sources, "DiaForcedSource", dt, pos_func,
-                                     extra_columns=extra_columns, time_part=time_part)
-        else:
-            self._storeObjectsAfw(sources, "DiaForcedSource", dt, pos_func,
-                                  extra_columns=extra_columns, time_part=time_part)
+        self._storeObjectsPandas(sources, "DiaForcedSource", visit_time,
+                                 extra_columns=extra_columns, time_part=time_part)
 
-    def dailyJob(self):
-        """Implement daily activities like cleanup/vacuum.
-
-        What should be done during daily cleanup is determined by
-        configuration/schema.
-        """
+    def dailyJob(self) -> None:
+        # docstring is inherited from a base class
         pass
 
-    def _convertResult(self, res, table_name, catalog=None):
-        """Convert result set into output catalog.
+    def countUnassociatedObjects(self) -> int:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
 
-        Parameters
-        ----------
-        res : iterator for `namedtuple`
-            Cassandra result set returned by query.
-        table_name : `str`
-            Name of the table.
-        catalog : `lsst.afw.table.BaseCatalog`
-            If not None then extend existing catalog
-
-        Returns
-        -------
-        catalog : `lsst.afw.table.SourceCatalog`
-             If ``catalog`` is None then new instance is returned, otherwise
-             ``catalog`` is updated and returned.
-        """
-        # make catalog schema
-        schema, col_map = self._schema.getAfwSchema(table_name)
-        if catalog is None:
-            # _LOG.debug("_convertResult: schema: %s", schema)
-            # _LOG.debug("_convertResult: col_map: %s", col_map)
-            catalog = afwTable.SourceCatalog(schema)
-
-        # fill catalog
-        for row in res:
-            record = catalog.addNew()
-            for col, value in zip(row._fields, row):
-                # some columns may exist in database but not included in afw schema
-                col = col_map.get(col)
-                if col is not None:
-                    if isinstance(value, datetime):
-                        # convert datetime to number of seconds
-                        value = int((value - datetime.utcfromtimestamp(0)).total_seconds())
-                    elif col.getTypeString() == 'Angle' and value is not None:
-                        value = value * geom.degrees
-                    if value is not None:
-                        record.set(col, value)
-
-        return catalog
-
-    def _storeObjectsAfw(self, objects, table_name, dt, pos_func, extra_columns=None, time_part=None):
-        """Generic store method.
-
-        Takes catalog of records and stores a bunch of objects in a table.
-
-        Parameters
-        ----------
-        objects : `lsst.afw.table.BaseCatalog`
-            Catalog containing object records
-        table_name : `str`
-            Name of the table as defined in APDB schema.
-        dt : `datetime.datetime`
-            Time of the visit
-        pos_func : callable
-            Function of single argument which takes one catalog record as
-            input and returns its position (`lsst.sphgeom.UnitVector3d`).
-        extra_columns : `dict`, optional
-            Mapping (column_name, column_value) which gives column values to add
-            to every row, only if column is missing in catalog records.
-        time_part : `int`, optional
-            If not `None` then insert into a per-partition table.
-        """
-
-        def qValue(v):
-            """Transform object into a value for query"""
-            if v is None:
-                pass
-            elif isinstance(v, datetime):
-                v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1))*1000
-            elif isinstance(v, (bytes, str)):
-                pass
-            elif isinstance(v, geom.Angle):
-                v = v.asDegrees()
-                if not np.isfinite(v):
-                    v = None
-            else:
-                try:
-                    if not np.isfinite(v):
-                        v = None
-                except TypeError:
-                    pass
-            return v
-
-        def quoteId(columnName):
-            """Smart quoting for column names.
-            Lower-case names are not quoted.
-            """
-            if not columnName.islower():
-                columnName = '"' + columnName + '"'
-            return columnName
-
-        schema = objects.getSchema()
-        # use extra columns if specified
-        extra_fields = list((extra_columns or {}).keys())
-
-        afw_fields = [field.getName() for key, field in schema
-                      if field.getName() not in extra_fields]
-
-        column_map = self._schema.getAfwColumns(table_name)
-        # list of columns (as in cat schema)
-        fields = [column_map[field].name for field in afw_fields if field in column_map]
-        fields += extra_fields
-
-        # some partioning columns may not be in afwtable, they need to be added explicitly
-        part_columns = self._schema.partitionColumns(table_name)
-        part_columns = [column for column in part_columns if column not in fields]
-        fields += part_columns
-
-        # set of columns to fill with random values
-        random_columns = []
-        random_column_names = []
-        if self.config.fillEmptyFields:
-            fieldsSet = frozenset(fields)
-            random_columns = [col for col in column_map.values() if col.name not in fieldsSet]
-            random_column_names = [col.name for col in random_columns]
-
-        qfields = ','.join([quoteId(field) for field in fields + random_column_names])
-
-        with Timer(table_name + ' query build', self.config.timer):
-            queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
-            for rec in objects:
-                values = []
-                for field in afw_fields:
-                    if field not in column_map:
-                        continue
-                    value = rec[field]
-                    if column_map[field].type == "DATETIME" and np.isfinite(value):
-                        # CAssandra datetime is in millisconds
-                        value = int(value * 1000)
-                    values.append(qValue(value))
-                for field in extra_fields:
-                    value = extra_columns[field]
-                    values.append(qValue(value))
-                if part_columns:
-                    part_values = self._partitionValues(rec, table_name, part_columns, dt, pos_func)
-                    values += [qValue(value) for value in part_values]
-                for col in random_columns:
-                    if col.type in ("FLOAT", "DOUBLE"):
-                        value = random.random()
-                    elif "INT" in col.type:
-                        value = random.randint(0, 1000)
-                    elif col.type == "DATETIME":
-                        value = random.randint(0, 1000000000)
-                    elif col.type == "BLOB":
-                        # random byte sequence
-                        value = ''.join(random.sample(string.ascii_letters, random.randint(10, 30))).encode()
-                    else:
-                        value = ""
-                    values.append(qValue(value))
-                holders = ','.join(['%s'] * len(values))
-                table = self._schema.tableName(table_name)
-                if time_part is not None:
-                    table = f"{table}_{time_part}"
-                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
-                # _LOG.debug("query: %r", query)
-                # _LOG.debug("values: %s", values)
-                query = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
-                queries.add(query, values)
-
-        # _LOG.debug("query: %s", query)
-        _LOG.info("%s: will store %d records", self._schema.tableName(table_name), len(objects))
-        with Timer(table_name + ' insert', self.config.timer):
-            self._session.execute(queries)
-
-    def _storeObjectsPandas(self, objects, table_name, dt, pos_func, extra_columns=None, time_part=None):
+    def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: str,
+                            visit_time: dafBase.DateTime, extra_columns=None, time_part=None):
         """Generic store method.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -1120,11 +759,8 @@ class ApdbCassandra:
             Catalog containing object records
         table_name : `str`
             Name of the table as defined in APDB schema.
-        dt : `datetime.datetime`
-            Time of the visit
-        pos_func : callable
-            Function of single argument which takes one catalog record as
-            input and returns its position (`lsst.sphgeom.UnitVector3d`).
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
         extra_columns : `dict`, optional
             Mapping (column_name, column_value) which gives column values to add
             to every row, only if column is missing in catalog records.
@@ -1140,10 +776,6 @@ class ApdbCassandra:
                 v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1))*1000
             elif isinstance(v, (bytes, str)):
                 pass
-            elif isinstance(v, geom.Angle):
-                v = v.asDegrees()
-                if not np.isfinite(v):
-                    v = None
             else:
                 try:
                     if not np.isfinite(v):
@@ -1174,7 +806,8 @@ class ApdbCassandra:
         # some partioning columns may not be in dataframe, they need to be added explicitly
         part_columns = self._schema.partitionColumns(table_name)
         part_columns = [column for column in part_columns if column not in fields]
-        fields += part_columns
+        assert not part_columns, f"there must be no missing partition columns: {part_columns}"
+        # fields += part_columns
 
         # set of columns to fill with random values
         random_columns = []
@@ -1215,7 +848,7 @@ class ApdbCassandra:
                     else:
                         values.append(qValue(value))
                 if part_columns:
-                    part_values = self._partitionValues(rec, table_name, part_columns, dt, pos_func)
+                    part_values = self._partitionValues(rec, table_name, part_columns, visit_time)
                     values += [qValue(value) for value in part_values]
                 for col in random_columns:
                     if col.type in ("FLOAT", "DOUBLE"):
@@ -1242,32 +875,29 @@ class ApdbCassandra:
                 if time_part is not None:
                     table = f"{table}_{time_part}"
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
-                # _LOG.debug("query: %r", query)
-                # _LOG.debug("values: %s", values)
+                _LOG.debug("query: %r", query)
+                _LOG.debug("values: %s", values)
                 query = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
                 queries.add(query, values)
 
         # _LOG.debug("query: %s", query)
-        _LOG.info("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
+        _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
         with Timer(table_name + ' insert', self.config.timer):
             self._session.execute(queries)
 
-    def _partitionValues(self, rec, table_name, part_columns, dt, pos_func):
+    def _partitionValues(self, rec, table_name, part_columns, visit_time):
         """Return values of partition columns for a record.
 
         Parameters
         ----------
-        rec : `afw.table.Record`
+        rec :
             Single record from a catalog.
         table_name : `str`
             Table name as defined in APDB schema.
         part_columns : `list` of `str`
             Names of the columns for which to return values.
-        dt : `datetime.datetime`
-            Time of the visit
-        pos_func : callable
-            Function of single argument which takes one catalog record as
-            input and returns its position (`lsst.sphgeom.UnitVector3d`).
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
 
         Returns
         -------
@@ -1298,3 +928,84 @@ class ApdbCassandra:
             pos = pos_func(rec)
             part = self._partitioner.pixel(pos)
             return [part]
+
+    def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Calculate spacial partition for each record and add it to a
+        DataFrame.
+
+        Notes
+        -----
+        This overrides any existing column in a DataFrame with the same name
+        (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
+        returned.
+        """
+        # calculate HTM index for every DiaObject
+        apdb_part = np.zeros(df.shape[0], dtype=np.int64)
+        ra_col, dec_col = self.config.ra_dec_columns
+        for i, (ra, dec) in enumerate(zip(df[ra_col], df[dec_col])):
+            uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
+            idx = self._partitioner.pixel(uv3d)
+            apdb_part[i] = idx
+        df = df.copy()
+        df["apdb_part"] = apdb_part
+        return df
+
+    def _add_src_part(self, sources: pandas.DataFrame, objs: pandas.DataFrame) -> pandas.DataFrame:
+        """Add apdb_part column to DiaSource catalog.
+
+        Notes
+        -----
+        This method copies apdb_part value from a matching DiaObject record.
+        DiaObject catalog needs to have a apdb_part column filled by
+        ``_add_obj_part`` method and DiaSource records need to be
+        associated to DiaObjects via ``diaObjectId`` column.
+
+        This overrides any existing column in a DataFrame with the same name
+        (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
+        returned.
+        """
+        pixel_id_map: Dict[int, int] = {
+            diaObjectId: apdb_part for diaObjectId, apdb_part
+            in zip(objs["diaObjectId"], objs["apdb_part"])
+        }
+        apdb_part = np.zeros(sources.shape[0], dtype=np.int64)
+        ra_col, dec_col = self.config.ra_dec_columns
+        for i, (diaObjId, ra, dec) in enumerate(zip(sources["diaObjectId"],
+                                                    sources[ra_col], sources[dec_col])):
+            if diaObjId == 0:
+                # DiaSources associated with SolarSystemObjects do not have an
+                # associated DiaObject hence we skip them and set partition
+                # based on its own ra/dec
+                uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
+                idx = self._partitioner.pixel(uv3d)
+                apdb_part[i] = idx
+            else:
+                apdb_part[i] = pixel_id_map[diaObjId]
+        sources = sources.copy()
+        sources["apdb_part"] = apdb_part
+        return sources
+
+    def _add_fsrc_part(self, sources: pandas.DataFrame, objs: pandas.DataFrame) -> pandas.DataFrame:
+        """Add apdb_part column to DiaForcedSource catalog.
+
+        Notes
+        -----
+        This method copies apdb_part value from a matching DiaObject record.
+        DiaObject catalog needs to have a apdb_part column filled by
+        ``_add_obj_part`` method and DiaSource records need to be
+        associated to DiaObjects via ``diaObjectId`` column.
+
+        This overrides any existing column in a DataFrame with the same name
+        (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
+        returned.
+        """
+        pixel_id_map: Dict[int, int] = {
+            diaObjectId: apdb_part for diaObjectId, apdb_part
+            in zip(objs["diaObjectId"], objs["apdb_part"])
+        }
+        apdb_part = np.zeros(sources.shape[0], dtype=np.int64)
+        for i, diaObjId in enumerate(sources["diaObjectId"]):
+            apdb_part[i] = pixel_id_map[diaObjId]
+        sources = sources.copy()
+        sources["apdb_part"] = apdb_part
+        return sources

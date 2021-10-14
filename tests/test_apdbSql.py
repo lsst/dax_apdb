@@ -88,13 +88,13 @@ def _makeSourceCatalogPandas(objects, visit_time, start_id=0):
     # make some sources
     catalog = []
     midPointTai = visit_time.get(system=DateTime.MJD)
-    for index, obj in objects.iterrows():
+    for obj in objects.itertuples(index=False):
         catalog.append({"diaSourceId": start_id,
                         "ccdVisitId": 1,
-                        "diaObjectId": obj["diaObjectId"],
+                        "diaObjectId": obj.diaObjectId,
                         "parentDiaSourceId": 0,
-                        "ra": obj["ra"],
-                        "decl": obj["decl"],
+                        "ra": obj.ra,
+                        "decl": obj.decl,
                         "midPointTai": midPointTai,
                         "flags": 0})
         start_id += 1
@@ -108,8 +108,8 @@ def _makeForcedSourceCatalogPandas(objects, visit_time, ccdVisitId=1):
     # make some sources
     catalog = []
     midPointTai = visit_time.get(system=DateTime.MJD)
-    for index, obj in objects.iterrows():
-        catalog.append({"diaObjectId": obj["diaObjectId"],
+    for obj in objects.itertuples(index=False):
+        catalog.append({"diaObjectId": obj.diaObjectId,
                         "ccdVisitId": ccdVisitId,
                         "midPointTai": midPointTai,
                         "flags": 0})

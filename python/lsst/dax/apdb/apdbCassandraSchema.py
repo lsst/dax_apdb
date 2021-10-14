@@ -27,9 +27,9 @@ __all__ = ["ApdbCassandraSchema"]
 from datetime import datetime, timedelta
 import functools
 import logging
-from typing import Optional
+from typing import Mapping, Optional
 
-from .apdbBaseSchema import ApdbBaseSchema
+from .apdbBaseSchema import ApdbBaseSchema, ColumnDef
 
 
 _LOG = logging.getLogger(__name__)
@@ -76,7 +76,6 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         self._time_partition_days = time_partition_days
         self._packing = packing
 
-        self.visitTableName = self._prefix + "ApdbProtoVisits"
         self.objectTableName = self._prefix + "DiaObject"
         self.lastObjectTableName = self._prefix + "DiaLastObject"
         self.sourceTableName = self._prefix + "DiaSource"
@@ -86,6 +85,23 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         """Return Cassandra table name for APDB table.
         """
         return self._prefix + table_name
+
+    def getColumnMap(self, table_name: str) -> Mapping[str, ColumnDef]:
+        """Returns mapping of column names to Column definitions.
+
+        Parameters
+        ----------
+        table_name : `str`
+            One of known APDB table names.
+
+        Returns
+        -------
+        column_map : `dict`
+            Mapping of column names to `ColumnDef` instances.
+        """
+        table = self.tableSchemas[table_name]
+        cmap = {column.name: column for column in table.columns}
+        return cmap
 
     def partitionColumns(self, table_name):
         """Return a list of columns used for table partitioning.
@@ -117,7 +133,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         """
 
         # add internal visits table to the list of tables
-        tables = list(self.tableSchemas) + [self.visitTableName]
+        tables = list(self.tableSchemas)
 
         for table in tables:
             _LOG.debug("Making table %s", table)
@@ -174,16 +190,6 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         column_defs : `list`
             List of strings in the format "column_name type".
         """
-
-        if table_name == "ApdbProtoVisits":
-            column_defs = ['"apdb_part" INT',
-                           '"visitId" INT',
-                           '"visitTime" TIMESTAMP',
-                           '"lastObjectId" BIGINT',
-                           '"lastSourceId" BIGINT',
-                           'PRIMARY KEY ("apdb_part", "visitId")']
-            return column_defs
-
         table_schema = self.tableSchemas[table_name]
 
         # must have partition columns and clustering columns
