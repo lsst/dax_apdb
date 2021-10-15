@@ -27,13 +27,13 @@ from __future__ import annotations
 __all__ = ["ApdbSqlSchema"]
 
 import logging
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Mapping, Optional, Type
 
 import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
                         UniqueConstraint, Table)
 
-from .apdbSchema import ApdbSchema
+from .apdbSchema import ApdbSchema, ApdbTables, IndexType
 
 
 _LOG = logging.getLogger(__name__)
@@ -58,8 +58,10 @@ class ApdbSqlSchema(ApdbSchema):
     engine : `sqlalchemy.engine.Engine`
         SQLAlchemy engine instance
     dia_object_index : `str`
-        Indexing mode for DiaObject table, see `ApdbConfig.dia_object_index`
+        Indexing mode for DiaObject table, see `ApdbSqlConfig.dia_object_index`
         for details.
+    htm_index_column : `str`
+        Name of a HTM index column for DiaObject and DiaSource tables.
     schema_file : `str`
         Name of the YAML schema file.
     extra_schema_file : `str`, optional
@@ -67,7 +69,7 @@ class ApdbSqlSchema(ApdbSchema):
     prefix : `str`, optional
         Prefix to add to all scheam elements.
     """
-    def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str,
+    def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str, htm_index_column: str,
                  schema_file: str, extra_schema_file: Optional[str] = None, prefix: str = ""):
 
         super().__init__(schema_file, extra_schema_file)
@@ -77,11 +79,6 @@ class ApdbSqlSchema(ApdbSchema):
         self._prefix = prefix
 
         self._metadata = MetaData(self._engine)
-
-        self.objects = None
-        self.objects_last = None
-        self.sources = None
-        self.forcedSources = None
 
         # map cat column types to alchemy
         self._type_map = dict(DOUBLE=self._getDoubleType(engine),
@@ -95,10 +92,20 @@ class ApdbSqlSchema(ApdbSchema):
                               CHAR=sqlalchemy.types.CHAR,
                               BOOL=sqlalchemy.types.Boolean)
 
-        # generate schema for all tables, must be called last
-        self._makeTables()
+        # Adjust index if needed
+        if self._dia_object_index == 'pix_id_iov':
+            objects = self.tableSchemas[ApdbTables.DiaObject]
+            objects.primary_key.columns.insert(0, htm_index_column)
 
-    def _makeTables(self, mysql_engine: str = 'InnoDB') -> None:
+        # generate schema for all tables, must be called last
+        self._tables = self._makeTables()
+
+        self.objects = self._tables[ApdbTables.DiaObject]
+        self.objects_last = self._tables.get(ApdbTables.DiaObjectLast)
+        self.sources = self._tables[ApdbTables.DiaSource]
+        self.forcedSources = self._tables[ApdbTables.DiaForcedSource]
+
+    def _makeTables(self, mysql_engine: str = 'InnoDB') -> Mapping[ApdbTables, Table]:
         """Generate schema for all tables.
 
         Parameters
@@ -109,37 +116,23 @@ class ApdbSqlSchema(ApdbSchema):
 
         info: Dict[str, Any] = {}
 
-        if self._dia_object_index == 'pix_id_iov':
-            # Special PK with HTM column in first position
-            constraints = self._tableIndices('DiaObjectIndexHtmFirst', info)
-        else:
-            constraints = self._tableIndices('DiaObject', info)
-        table = Table(self._prefix+'DiaObject', self._metadata,
-                      *(self._tableColumns('DiaObject') + constraints),
-                      mysql_engine=mysql_engine,
-                      info=info)
-        self.objects = table
+        tables = {}
+        for table_enum in ApdbTables:
 
-        if self._dia_object_index == 'last_object_table':
-            # Same as DiaObject but with special index
-            table = Table(self._prefix+'DiaObjectLast', self._metadata,
-                          *(self._tableColumns('DiaObjectLast')
-                            + self._tableIndices('DiaObjectLast', info)),
+            if table_enum is ApdbTables.DiaObjectLast and self._dia_object_index != "last_object_table":
+                continue
+
+            columns = self._tableColumns(table_enum)
+            constraints = self._tableIndices(table_enum, info)
+            table = Table(table_enum.table_name(self._prefix),
+                          self._metadata,
+                          *columns,
+                          *constraints,
                           mysql_engine=mysql_engine,
                           info=info)
-            self.objects_last = table
+            tables[table_enum] = table
 
-        # for all other tables use index definitions in schema
-        for table_name in ('DiaSource', 'SSObject', 'DiaForcedSource', 'DiaObject_To_Object_Match'):
-            table = Table(self._prefix+table_name, self._metadata,
-                          *(self._tableColumns(table_name)
-                            + self._tableIndices(table_name, info)),
-                          mysql_engine=mysql_engine,
-                          info=info)
-            if table_name == 'DiaSource':
-                self.sources = table
-            elif table_name == 'DiaForcedSource':
-                self.forcedSources = table
+        return tables
 
     def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB') -> None:
         """Create or re-create all tables.
@@ -165,12 +158,12 @@ class ApdbSqlSchema(ApdbSchema):
         _LOG.info('creating all tables')
         self._metadata.create_all()
 
-    def _tableColumns(self, table_name: str) -> List[Column]:
+    def _tableColumns(self, table_name: ApdbTables) -> List[Column]:
         """Return set of columns in a table
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table.
 
         Returns
@@ -184,7 +177,7 @@ class ApdbSqlSchema(ApdbSchema):
         table_schema = self.tableSchemas[table_name]
         pkey_columns = set()
         for index in table_schema.indices:
-            if index.type == 'PRIMARY':
+            if index.type is IndexType.PRIMARY:
                 pkey_columns = set(index.columns)
                 break
 
@@ -201,12 +194,12 @@ class ApdbSqlSchema(ApdbSchema):
 
         return column_defs
 
-    def _tableIndices(self, table_name: str, info: Dict) -> List[sqlalchemy.schema.Constraint]:
+    def _tableIndices(self, table_name: ApdbTables, info: Dict) -> List[sqlalchemy.schema.Constraint]:
         """Return set of constraints/indices in a table
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table.
         info : `dict`
             Additional options passed to SQLAlchemy index constructor.
@@ -222,15 +215,15 @@ class ApdbSqlSchema(ApdbSchema):
         # convert all index dicts into alchemy Columns
         index_defs: List[sqlalchemy.schema.Constraint] = []
         for index in table_schema.indices:
-            if index.type == "INDEX":
+            if index.type is IndexType.INDEX:
                 index_defs.append(Index(self._prefix + index.name, *index.columns, info=info))
             else:
                 kwargs = {}
                 if index.name:
-                    kwargs['name'] = self._prefix+index.name
-                if index.type == "PRIMARY":
+                    kwargs['name'] = self._prefix + index.name
+                if index.type is IndexType.PRIMARY:
                     index_defs.append(PrimaryKeyConstraint(*index.columns, **kwargs))
-                elif index.type == "UNIQUE":
+                elif index.type is IndexType.UNIQUE:
                     index_defs.append(UniqueConstraint(*index.columns, **kwargs))
 
         return index_defs

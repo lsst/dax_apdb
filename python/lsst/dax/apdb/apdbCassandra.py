@@ -53,7 +53,7 @@ from lsst.pex.config import ChoiceField, Field, ListField
 from lsst import sphgeom
 from . import timer
 from .apdb import Apdb, ApdbConfig
-from .apdbSchema import ColumnDef
+from .apdbSchema import ApdbTables, ColumnDef
 from .apdbCassandraSchema import ApdbCassandraSchema
 
 
@@ -456,7 +456,7 @@ class ApdbCassandra(Apdb):
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        packedColumns = self._schema.packedColumns("DiaObjectLast")
+        packedColumns = self._schema.packedColumns(ApdbTables.DiaObjectLast)
         self._session.row_factory = _PandasRowFactory(packedColumns)
         self._session.default_fetch_size = None
 
@@ -489,19 +489,19 @@ class ApdbCassandra(Apdb):
                       object_ids: Optional[Iterable[int]],
                       visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
         # docstring is inherited from a base class
-        return self._getSources(region, object_ids, visit_time, "DiaSource",
+        return self._getSources(region, object_ids, visit_time, ApdbTables.DiaSource,
                                 self.config.read_sources_months)
 
     def getDiaForcedSources(self, region: sphgeom.Region,
                             object_ids: Optional[Iterable[int]],
                             visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
-        return self._getSources(region, object_ids, visit_time, "DiaForcedSource",
+        return self._getSources(region, object_ids, visit_time, ApdbTables.DiaForcedSource,
                                 self.config.read_forced_sources_months)
 
     def _getSources(self, region: sphgeom.Region,
                     object_ids: Optional[Iterable[int]],
                     visit_time: dafBase.DateTime,
-                    table_name: str,
+                    table_name: ApdbTables,
                     months: int) -> Optional[pandas.DataFrame]:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
@@ -513,7 +513,7 @@ class ApdbCassandra(Apdb):
             Collection of DiaObject IDs
         visit_time : `lsst.daf.base.DateTime`
             Time of the current visit
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table, either "DiaSource" or "DiaForcedSource"
         months : `int`
             Number of months of history to return, if negative returns whole
@@ -544,7 +544,7 @@ class ApdbCassandra(Apdb):
 
         # spatial pixels included into query
         pixels = self._partitioner.pixels(region)
-        _LOG.debug("_getSources: %s #partitions: %s", table_name, len(pixels))
+        _LOG.debug("_getSources: %s #partitions: %s", table_name.name, len(pixels))
 
         # spatial part of WHERE
         spatial_where = []
@@ -558,7 +558,8 @@ class ApdbCassandra(Apdb):
         temporal_where = []
         # time partitions and table names to query, there may be multiple
         # tables depending on configuration
-        tables = [table_name]
+        full_name = self._schema.tableName(table_name)
+        tables = [full_name]
         mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
         mjd_begin = mjd_now - months*30
         epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
@@ -566,7 +567,7 @@ class ApdbCassandra(Apdb):
         time_part_begin = int(mjd_begin - epoch) // self.config.time_partition_days
         time_parts = list(range(time_part_begin, time_part_now + 1))
         if self.config.time_partition_tables:
-            tables = [f"{table_name}_{part}" for part in time_parts]
+            tables = [f"{full_name}_{part}" for part in time_parts]
         else:
             if self.config.query_per_time_part:
                 temporal_where = [f'"apdb_time_part" = {time_part}' for time_part in time_parts]
@@ -592,7 +593,7 @@ class ApdbCassandra(Apdb):
         ]
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
-        with Timer(table_name + ' select', self.config.timer):
+        with Timer(table_name.name + ' select', self.config.timer):
             # submit all queries
             results = execute_concurrent(self._session, statements, concurrency=500)
             if self.config.pandas_delay_conv:
@@ -641,7 +642,7 @@ class ApdbCassandra(Apdb):
         # precise filtering on midPointTai
         catalog = cast(pandas.DataFrame, catalog[catalog["midPointTai"] > mjd_begin])
 
-        _LOG.debug("found %d %ss", catalog.shape[0], table_name)
+        _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
 
     def store(self,
@@ -676,7 +677,7 @@ class ApdbCassandra(Apdb):
         """
         visit_time_dt = visit_time.toPython()
         extra_columns = dict(lastNonForcedSource=visit_time_dt)
-        self._storeObjectsPandas(objs, "DiaObjectLast", visit_time, extra_columns=extra_columns)
+        self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, visit_time, extra_columns=extra_columns)
 
         extra_columns = dict(lastNonForcedSource=visit_time_dt, validityStart=visit_time_dt)
         if not self.config.time_partition_tables:
@@ -684,7 +685,7 @@ class ApdbCassandra(Apdb):
             epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
             time_part = int(mjd_now - epoch) // self.config.time_partition_days
             extra_columns["apdb_time_part"] = time_part
-        self._storeObjectsPandas(objs, "DiaObject", visit_time, extra_columns=extra_columns)
+        self._storeObjectsPandas(objs, ApdbTables.DiaObject, visit_time, extra_columns=extra_columns)
 
     def _storeDiaSources(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DIASources from current visit.
@@ -704,7 +705,7 @@ class ApdbCassandra(Apdb):
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
-        self._storeObjectsPandas(sources, "DiaSource", visit_time,
+        self._storeObjectsPandas(sources, ApdbTables.DiaSource, visit_time,
                                  extra_columns=extra_columns, time_part=time_part)
 
     def _storeDiaForcedSources(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
@@ -725,7 +726,7 @@ class ApdbCassandra(Apdb):
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
-        self._storeObjectsPandas(sources, "DiaForcedSource", visit_time,
+        self._storeObjectsPandas(sources, ApdbTables.DiaForcedSource, visit_time,
                                  extra_columns=extra_columns, time_part=time_part)
 
     def dailyJob(self) -> None:
@@ -736,7 +737,7 @@ class ApdbCassandra(Apdb):
         # docstring is inherited from a base class
         raise NotImplementedError()
 
-    def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: str,
+    def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: ApdbTables,
                             visit_time: dafBase.DateTime, extra_columns: Optional[Mapping] = None,
                             time_part: Optional[int] = None) -> None:
         """Generic store method.
@@ -747,7 +748,7 @@ class ApdbCassandra(Apdb):
         ----------
         objects : `pandas.DataFrame`
             Catalog containing object records
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table as defined in APDB schema.
         visit_time : `lsst.daf.base.DateTime`
             Time of the current visit.
@@ -818,7 +819,7 @@ class ApdbCassandra(Apdb):
             qfields += [quoteId("apdb_packed")]
         qfields_str = ','.join(qfields)
 
-        with Timer(table_name + ' query build', self.config.timer):
+        with Timer(table_name.name + ' query build', self.config.timer):
             queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
             for rec in objects.itertuples(index=False):
                 values = []
@@ -872,7 +873,7 @@ class ApdbCassandra(Apdb):
 
         # _LOG.debug("query: %s", query)
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
-        with Timer(table_name + ' insert', self.config.timer):
+        with Timer(table_name.name + ' insert', self.config.timer):
             self._session.execute(queries)
 
     def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:

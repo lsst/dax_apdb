@@ -28,7 +28,7 @@ import functools
 import logging
 from typing import List, Mapping, Optional, TYPE_CHECKING
 
-from .apdbSchema import ApdbSchema, ColumnDef
+from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexType
 
 if TYPE_CHECKING:
     import cassandra.cluster
@@ -79,22 +79,17 @@ class ApdbCassandraSchema(ApdbSchema):
         self._time_partition_days = time_partition_days
         self._packing = packing
 
-        self.objectTableName = self._prefix + "DiaObject"
-        self.lastObjectTableName = self._prefix + "DiaLastObject"
-        self.sourceTableName = self._prefix + "DiaSource"
-        self.forcedSourceTableName = self._prefix + "DiaForcedSource"
-
-    def tableName(self, table_name):
+    def tableName(self, table_name: ApdbTables) -> str:
         """Return Cassandra table name for APDB table.
         """
-        return self._prefix + table_name
+        return table_name.table_name(self._prefix)
 
-    def getColumnMap(self, table_name: str) -> Mapping[str, ColumnDef]:
+    def getColumnMap(self, table_name: ApdbTables) -> Mapping[str, ColumnDef]:
         """Returns mapping of column names to Column definitions.
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             One of known APDB table names.
 
         Returns
@@ -106,12 +101,12 @@ class ApdbCassandraSchema(ApdbSchema):
         cmap = {column.name: column for column in table.columns}
         return cmap
 
-    def partitionColumns(self, table_name: str) -> List[str]:
+    def partitionColumns(self, table_name: ApdbTables) -> List[str]:
         """Return a list of columns used for table partitioning.
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Table name in APDB schema
 
         Returns
@@ -121,17 +116,17 @@ class ApdbCassandraSchema(ApdbSchema):
         """
         table_schema = self.tableSchemas[table_name]
         for index in table_schema.indices:
-            if index.type == 'PARTITION':
+            if index.type is IndexType.PARTITION:
                 # there could be just one partitoning index (possibly with few columns)
                 return index.columns
         return []
 
-    def clusteringColumns(self, table_name: str) -> List[str]:
+    def clusteringColumns(self, table_name: ApdbTables) -> List[str]:
         """Return a list of columns used for clustering.
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Table name in APDB schema
 
         Returns
@@ -141,7 +136,7 @@ class ApdbCassandraSchema(ApdbSchema):
         """
         table_schema = self.tableSchemas[table_name]
         for index in table_schema.indices:
-            if index.type == 'PRIMARY':
+            if index.type is IndexType.PRIMARY:
                 return index.columns
         return []
 
@@ -154,17 +149,14 @@ class ApdbCassandraSchema(ApdbSchema):
             If True then drop tables before creating new ones.
         """
 
-        # add internal visits table to the list of tables
-        tables = list(self.tableSchemas)
-
-        for table in tables:
+        for table in self.tableSchemas:
             _LOG.debug("Making table %s", table)
 
-            fullTable = self.tableName(table)
+            fullTable = table.table_name(self._prefix)
 
             table_list = [fullTable]
             if self._time_partition_tables and \
-                    table in ("DiaSource", "DiaForcedSource"):
+                    table in (ApdbTables.DiaSource, ApdbTables.DiaForcedSource):
                 # TODO: this should not be hardcoded
                 start_time = datetime(2020, 1, 1)
                 seconds0 = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
@@ -199,12 +191,12 @@ class ApdbCassandraSchema(ApdbSchema):
                 future.result()
                 _LOG.debug("query finished: %s", future.query)
 
-    def _tableColumns(self, table_name: str) -> List[str]:
+    def _tableColumns(self, table_name: ApdbTables) -> List[str]:
         """Return set of columns in a table
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table.
 
         Returns
@@ -219,9 +211,9 @@ class ApdbCassandraSchema(ApdbSchema):
         clust_columns = []
         index_columns = set()
         for index in table_schema.indices:
-            if index.type == 'PARTITION':
+            if index.type is IndexType.PARTITION:
                 part_columns = index.columns
-            elif index.type == 'PRIMARY':
+            elif index.type is IndexType.PRIMARY:
                 clust_columns = index.columns
             index_columns.update(index.columns)
         _LOG.debug("part_columns: %s", part_columns)
@@ -256,12 +248,12 @@ class ApdbCassandraSchema(ApdbSchema):
         return column_defs
 
     @functools.lru_cache(maxsize=16)
-    def packedColumns(self, table_name: str) -> List[ColumnDef]:
+    def packedColumns(self, table_name: ApdbTables) -> List[ColumnDef]:
         """Return set of columns that are packed into BLOB.
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table.
 
         Returns

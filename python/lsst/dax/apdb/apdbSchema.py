@@ -27,18 +27,21 @@ implement APDB.
 
 from __future__ import annotations
 
-__all__ = ["ColumnDef", "IndexDef", "TableDef", "ApdbSchema"]
+__all__ = ["ColumnDef", "IndexType", "IndexDef", "TableDef", "ApdbTables", "ApdbSchema"]
 
+import enum
+from dataclasses import dataclass
 import logging
 import os
-from typing import Any, List, Mapping, NamedTuple, Optional
+from typing import Any, List, Mapping, Optional
 import yaml
 
 
 _LOG = logging.getLogger(__name__)
 
 
-class ColumnDef(NamedTuple):
+@dataclass
+class ColumnDef:
     """Column representation in schema.
     """
     name: str
@@ -57,19 +60,30 @@ class ColumnDef(NamedTuple):
     """string with ucd, can be None"""
 
 
-class IndexDef(NamedTuple):
+@enum.unique
+class IndexType(enum.Enum):
+    """Types of indices.
+    """
+    PRIMARY = "PRIMARY"
+    UNIQUE = "UNIQUE"
+    INDEX = "INDEX"
+    PARTITION = "PARTITION"
+
+
+@dataclass
+class IndexDef:
     """Index description.
     """
     name: str
     """index name, can be empty"""
-    type: str
-    """one of "PRIMARY", "UNIQUE", "INDEX"
-    """
+    type: IndexType
+    """Type of the index"""
     columns: List[str]
     """list of column names in index"""
 
 
-class TableDef(NamedTuple):
+@dataclass
+class TableDef:
     """Table description
     """
     name: str
@@ -80,6 +94,46 @@ class TableDef(NamedTuple):
     """list of ColumnDef instances"""
     indices: List[IndexDef]
     """list of IndexDef instances, can be empty"""
+
+    @property
+    def primary_key(self) -> IndexDef:
+        """Primary key index"""
+        for index in self.indices:
+            if index.type is IndexType.PRIMARY:
+                return index
+        raise ValueError(f"Table {self.name} has no primary key.")
+
+
+@enum.unique
+class ApdbTables(enum.Enum):
+    """Names of the tables in APDB schema.
+    """
+
+    DiaObject = "DiaObject"
+    """Name of the table for DIAObject records."""
+
+    DiaSource = "DiaSource"
+    """Name of the table for DIASource records."""
+
+    DiaForcedSource = "DiaForcedSource"
+    """Name of the table for DIAForcedSource records."""
+
+    DiaObjectLast = "DiaObjectLast"
+    """Name of the table for the last version of DIAObject records.
+
+    This table may be optional for some implementations.
+    """
+
+    SSObject = "SSObject"
+    """Name of the table for SSObject records."""
+
+    DiaObject_To_Object_Match = "DiaObject_To_Object_Match"
+    """Name of the table for DiaObject_To_Object_Match records."""
+
+    def table_name(self, prefix: str = "") -> str:
+        """Return full table name.
+        """
+        return prefix + self.value
 
 
 class ApdbSchema:
@@ -102,7 +156,7 @@ class ApdbSchema:
         self.tableSchemas = self._buildSchemas(schema_file, extra_schema_file)
 
     def _buildSchemas(self, schema_file: str, extra_schema_file: Optional[str] = None,
-                      ) -> Mapping[str, TableDef]:
+                      ) -> Mapping[ApdbTables, TableDef]:
         """Create schema definitions for all tables.
 
         Reads YAML schemas and builds dictionary containing `TableDef`
@@ -170,7 +224,10 @@ class ApdbSchema:
 
             columns = table.get('columns', [])
 
-            table_name = table['table']
+            try:
+                table_enum = ApdbTables(table['table'])
+            except ValueError as exc:
+                raise ValueError(f"{table['table']} is not a valid APDB table name") from exc
 
             table_columns = []
             for col in columns:
@@ -193,12 +250,16 @@ class ApdbSchema:
 
             table_indices = []
             for idx in table.get('indices', []):
+                try:
+                    index_type = IndexType(idx.get('type'))
+                except ValueError as exc:
+                    raise ValueError(f"{idx.get('type')} is not a valid index type") from exc
                 index = IndexDef(name=idx.get('name'),
-                                 type=idx.get('type'),
+                                 type=index_type,
                                  columns=idx.get('columns'))
                 table_indices.append(index)
 
-            schemas[table_name] = TableDef(name=table_name,
+            schemas[table_enum] = TableDef(name=table_enum.value,
                                            description=table.get('description'),
                                            columns=table_columns,
                                            indices=table_indices)
