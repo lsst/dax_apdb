@@ -123,6 +123,25 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                 return index.columns
         return []
 
+    def clusteringColumns(self, table_name):
+        """Return a list of columns used for clustering.
+
+        Parameters
+        ----------
+        table_name : `str`
+            Table name in APDB schema
+
+        Returns
+        -------
+        columns : `list` of `str`
+            Names of columns for used for partitioning.
+        """
+        table_schema = self.tableSchemas[table_name]
+        for index in table_schema.indices:
+            if index.type == 'PRIMARY':
+                return index.columns
+        return []
+
     def makeSchema(self, drop=False):
         """Create or re-create all tables.
 

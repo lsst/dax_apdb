@@ -59,8 +59,6 @@ from .apdbCassandraSchema import ApdbCassandraSchema
 
 _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
-SECONDS_IN_DAY = 24 * 3600
-
 
 class CassandraMissingError(Exception):
     def __init__(self):
@@ -803,11 +801,12 @@ class ApdbCassandra(Apdb):
         fields = [column_map[field].name for field in df_fields if field in column_map]
         fields += extra_fields
 
-        # some partioning columns may not be in dataframe, they need to be added explicitly
-        part_columns = self._schema.partitionColumns(table_name)
-        part_columns = [column for column in part_columns if column not in fields]
-        assert not part_columns, f"there must be no missing partition columns: {part_columns}"
-        # fields += part_columns
+        # check that all partitioning and clustering columns are defined
+        required_columns = self._schema.partitionColumns(table_name) \
+            + self._schema.clusteringColumns(table_name)
+        missing_columns = [column for column in required_columns if column not in fields]
+        if missing_columns:
+            raise ValueError(f"Primary key columns are missing from catalog: {missing_columns}")
 
         # set of columns to fill with random values
         random_columns = []
@@ -847,9 +846,6 @@ class ApdbCassandra(Apdb):
                         blob[field] = qValue(value)
                     else:
                         values.append(qValue(value))
-                if part_columns:
-                    part_values = self._partitionValues(rec, table_name, part_columns, visit_time)
-                    values += [qValue(value) for value in part_values]
                 for col in random_columns:
                     if col.type in ("FLOAT", "DOUBLE"):
                         value = random.random()
@@ -875,8 +871,8 @@ class ApdbCassandra(Apdb):
                 if time_part is not None:
                     table = f"{table}_{time_part}"
                 query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
-                _LOG.debug("query: %r", query)
-                _LOG.debug("values: %s", values)
+                # _LOG.debug("query: %r", query)
+                # _LOG.debug("values: %s", values)
                 query = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
                 queries.add(query, values)
 
@@ -884,50 +880,6 @@ class ApdbCassandra(Apdb):
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
         with Timer(table_name + ' insert', self.config.timer):
             self._session.execute(queries)
-
-    def _partitionValues(self, rec, table_name, part_columns, visit_time):
-        """Return values of partition columns for a record.
-
-        Parameters
-        ----------
-        rec :
-            Single record from a catalog.
-        table_name : `str`
-            Table name as defined in APDB schema.
-        part_columns : `list` of `str`
-            Names of the columns for which to return values.
-        visit_time : `lsst.daf.base.DateTime`
-            Time of the current visit.
-
-        Returns
-        -------
-        values : `list`
-            List of column values.
-        """
-
-        part_by_time = False
-        if not self.config.time_partition_tables and \
-                table_name in ("DiaSource", "DiaForcedSource"):
-            part_by_time = True
-        if table_name == "DiaObject":
-            part_by_time = True
-
-        if part_by_time:
-            if part_columns != ["apdb_part", "apdb_time_part"]:
-                raise ValueError("unexpected partitionig columns for {}: {}".format(
-                    table_name, part_columns))
-            pos = pos_func(rec)
-            part = self._partitioner.pixel(pos)
-            value = int((dt - datetime.utcfromtimestamp(0)).total_seconds())
-            time_part = value // (self.config.time_partition_days * SECONDS_IN_DAY)
-            return [part, time_part]
-        else:
-            if part_columns != ["apdb_part"]:
-                raise ValueError("unexpected partitionig columns for {}: {}".format(
-                    table_name, part_columns))
-            pos = pos_func(rec)
-            part = self._partitioner.pixel(pos)
-            return [part]
 
     def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spacial partition for each record and add it to a
