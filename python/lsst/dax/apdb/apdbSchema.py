@@ -27,7 +27,7 @@ implement APDB.
 
 from __future__ import annotations
 
-__all__ = ["ColumnDef", "IndexDef", "TableDef", "ApdbBaseSchema"]
+__all__ = ["ColumnDef", "IndexDef", "TableDef", "ApdbSchema"]
 
 import logging
 import os
@@ -82,7 +82,7 @@ class TableDef(NamedTuple):
     """list of IndexDef instances, can be empty"""
 
 
-class ApdbBaseSchema:
+class ApdbSchema:
     """Class for management of APDB schema.
 
     Attributes

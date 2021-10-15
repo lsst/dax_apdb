@@ -1,6 +1,6 @@
 
 from .apdb import *
-from .apdbBaseSchema import *
+from .apdbSchema import *
 from .apdbSqlSchema import *
 from .apdbSql import *
 from .apdbCassandraSchema import *

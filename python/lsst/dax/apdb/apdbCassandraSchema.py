@@ -28,7 +28,7 @@ import functools
 import logging
 from typing import List, Mapping, Optional, TYPE_CHECKING
 
-from .apdbBaseSchema import ApdbBaseSchema, ColumnDef
+from .apdbSchema import ApdbSchema, ColumnDef
 
 if TYPE_CHECKING:
     import cassandra.cluster
@@ -39,7 +39,7 @@ _LOG = logging.getLogger(__name__)
 SECONDS_IN_DAY = 24 * 3600
 
 
-class ApdbCassandraSchema(ApdbBaseSchema):
+class ApdbCassandraSchema(ApdbSchema):
     """Class for management of APDB schema.
 
     Parameters

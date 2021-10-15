@@ -53,7 +53,7 @@ from lsst.pex.config import ChoiceField, Field, ListField
 from lsst import sphgeom
 from . import timer
 from .apdb import Apdb, ApdbConfig
-from .apdbBaseSchema import ColumnDef
+from .apdbSchema import ColumnDef
 from .apdbCassandraSchema import ApdbCassandraSchema
 
 

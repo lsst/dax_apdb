@@ -33,13 +33,13 @@ import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
                         UniqueConstraint, Table)
 
-from .apdbBaseSchema import ApdbBaseSchema
+from .apdbSchema import ApdbSchema
 
 
 _LOG = logging.getLogger(__name__)
 
 
-class ApdbSqlSchema(ApdbBaseSchema):
+class ApdbSqlSchema(ApdbSchema):
     """Class for management of APDB schema.
 
     Attributes
