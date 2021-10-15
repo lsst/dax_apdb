@@ -19,8 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Module defining Apdb class and related methods.
-"""
+from __future__ import annotations
 
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
@@ -30,7 +29,7 @@ import numpy as np
 import pandas
 import random
 import string
-from typing import Dict, Iterable, Optional
+from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple
 
 try:
     import cbor
@@ -54,6 +53,7 @@ from lsst.pex.config import ChoiceField, Field, ListField
 from lsst import sphgeom
 from . import timer
 from .apdb import Apdb, ApdbConfig
+from .apdbBaseSchema import ColumnDef
 from .apdbCassandraSchema import ApdbCassandraSchema
 
 
@@ -61,7 +61,7 @@ _LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
 
 
 class CassandraMissingError(Exception):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("cassandra-driver module cannot be imported")
 
 
@@ -77,13 +77,13 @@ class Timer(object):
 
     See also :py:mod:`timer` module.
     """
-    def __init__(self, name, do_logging=True, log_before_cursor_execute=False):
+    def __init__(self, name: str, do_logging: bool = True, log_before_cursor_execute: bool = False):
         self._log_before_cursor_execute = log_before_cursor_execute
         self._do_logging = do_logging
         self._timer1 = timer.Timer(name)
         self._timer2 = timer.Timer(name + " (before/after cursor)")
 
-    def __enter__(self):
+    def __enter__(self) -> Any:
         """
         Enter context, start timer
         """
@@ -92,7 +92,7 @@ class Timer(object):
         self._timer1.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any:
         """
         Exit context, stop and dump timer
         """
@@ -104,20 +104,20 @@ class Timer(object):
 #         event.remove(engine.Engine, "after_cursor_execute", self._stop_timer)
         return False
 
-    def _start_timer(self, conn, cursor, statement, parameters, context, executemany):
+    def _start_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
         """Start counting"""
         if self._log_before_cursor_execute:
             _LOG.debug("before_cursor_execute")
         self._timer2.start()
 
-    def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):
+    def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
         """Stop counting"""
         self._timer2.stop()
         if self._do_logging:
             self._timer2.dump()
 
 
-def _split(seq, nItems):
+def _split(seq: Iterable[Any], nItems: int) -> Iterator[List[Any]]:
     """Split a sequence into smaller sequences"""
     seq = list(seq)
     while seq:
@@ -214,13 +214,6 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Packing method for table records.",
         default="none"
     )
-    pandas_raw_src = Field(
-        dtype=bool,
-        default=False,
-        doc=(
-            "Return raw Cassandra data instead of pandas data frame."
-        )
-    )
 
 
 class Partitioner:
@@ -232,7 +225,7 @@ class Partitioner:
     ----------
     config : `ApdbCassandraConfig`
     """
-    def __init__(self, config):
+    def __init__(self, config: ApdbCassandraConfig):
         pix = config.part_pixelization
         if pix == "htm":
             self.pixelator = sphgeom.HtmPixelization(config.part_pix_level)
@@ -243,7 +236,7 @@ class Partitioner:
         else:
             raise ValueError(f"unknown pixelization: {pix}")
 
-    def pixels(self, region):
+    def pixels(self, region: sphgeom.Region) -> List[int]:
         """Compute set of the pixel indices for given region.
 
         Parameters
@@ -257,7 +250,7 @@ class Partitioner:
             indices += list(range(lower, upper))
         return indices
 
-    def pixel(self, direction):
+    def pixel(self, direction: sphgeom.UnitVector3d) -> int:
         """Compute the index of the pixel for given direction.
 
         Parameters
@@ -275,14 +268,15 @@ if CASSANDRA_IMPORTED:
 
         Only used for docker-based setup, not viable long-term solution.
         """
-        def __init__(self, public_ips, private_ips):
+        def __init__(self, public_ips: List[str], private_ips: List[str]):
             self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
 
-        def translate(self, private_ip):
+        def translate(self, private_ip: str) -> str:
             return self._map.get(private_ip, private_ip)
 
 
-def _rows_to_pandas(colnames, rows, packedColumns):
+def _rows_to_pandas(colnames: List[str], rows: List[Tuple],
+                    packedColumns: List[ColumnDef]) -> pandas.DataFrame:
     """Convert result rows to pandas.
 
     Unpacks BLOBs that were packed on insert.
@@ -339,10 +333,10 @@ class _PandasRowFactory:
     packedColumns : `list` [ `ColumnDef` ]
         Column definitions for packed columns.
     """
-    def __init__(self, packedColumns):
+    def __init__(self, packedColumns: Iterable[ColumnDef]):
         self.packedColumns = list(packedColumns)
 
-    def __call__(self, colnames, rows):
+    def __call__(self, colnames: List[str], rows: List[Tuple]) -> pandas.DataFrame:
         """Convert result set into output catalog.
 
         Parameters
@@ -368,10 +362,10 @@ class _RawRowFactory:
     packedColumns : `list` [ `ColumnDef` ]
         Column definitions for packed columns.
     """
-    def __init__(self, packedColumns):
+    def __init__(self, packedColumns: Iterable[ColumnDef]):
         self.packedColumns = list(packedColumns)
 
-    def __call__(self, colnames, rows):
+    def __call__(self, colnames: List[str], rows: List[Tuple]) -> Tuple[List[str], List[Tuple]]:
         """Return parameters without change.
 
         Parameters
@@ -407,7 +401,7 @@ class ApdbCassandra(Apdb):
     partition_zero_epoch = dafBase.DateTime(1970, 1, 1, 0, 0, 0, dafBase.DateTime.TAI)
     """Start time for partition 0"""
 
-    def __init__(self, config):
+    def __init__(self, config: ApdbCassandraConfig):
 
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
@@ -431,12 +425,12 @@ class ApdbCassandra(Apdb):
 
         self._partitioner = Partitioner(config)
 
+        addressTranslator: Optional[AddressTranslator] = None
         if config.private_ips:
             loadBalancePolicy = WhiteListRoundRobinPolicy(hosts=config.contact_points)
             addressTranslator = _AddressTranslator(config.contact_points, config.private_ips)
         else:
             loadBalancePolicy = RoundRobinPolicy()
-            addressTranslator = None
 
         self._read_consistency = getattr(cassandra.ConsistencyLevel, config.read_consistency)
         self._write_consistency = getattr(cassandra.ConsistencyLevel, config.write_consistency)
@@ -468,10 +462,10 @@ class ApdbCassandra(Apdb):
 
         pixels = self._partitioner.pixels(region)
         _LOG.debug("getDiaObjects: #partitions: %s", len(pixels))
-        pixels = ",".join([str(pix) for pix in pixels])
+        pixels_str = ",".join([str(pix) for pix in pixels])
 
-        queries = []
-        query = f'SELECT * from "DiaObjectLast" WHERE "apdb_part" IN ({pixels})'
+        queries: List[Tuple] = []
+        query = f'SELECT * from "DiaObjectLast" WHERE "apdb_part" IN ({pixels_str})'
         queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})]
         _LOG.debug("getDiaObjects: #queries: %s", len(queries))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
@@ -534,12 +528,15 @@ class ApdbCassandra(Apdb):
         """
         if months == 0:
             return None
-        if object_ids is not None and len(object_ids) == 0:
-            # TODO: need correct column schema for this
-            return pandas.DataFrame()
+        object_id_set: Set[int] = set()
+        if object_ids is not None:
+            object_id_set = set(object_ids)
+            if len(object_id_set) == 0:
+                # TODO: need correct column schema for this
+                return pandas.DataFrame()
 
         packedColumns = self._schema.packedColumns(table_name)
-        if self.config.pandas_delay_conv or self.config.pandas_raw_src:
+        if self.config.pandas_delay_conv:
             self._session.row_factory = _RawRowFactory(packedColumns)
         else:
             self._session.row_factory = _PandasRowFactory(packedColumns)
@@ -578,7 +575,7 @@ class ApdbCassandra(Apdb):
                 temporal_where = [f'"apdb_time_part" IN ({time_part_list})']
 
         # Build all queries
-        queries = []
+        queries: List[str] = []
         for table in tables:
             query = f'SELECT * from "{table}" WHERE '
             for spacial in spatial_where:
@@ -589,19 +586,18 @@ class ApdbCassandra(Apdb):
                     queries.append(query + spacial)
         # _LOG.debug("_getSources: queries: %s", queries)
 
-        queries = [
+        statements: List[Tuple] = [
             (cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})
             for query in queries
         ]
-        _LOG.debug("_getSources %s: #queries: %s", table_name, len(queries))
+        _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
-        catalog = None
         with Timer(table_name + ' select', self.config.timer):
             # submit all queries
-            results = execute_concurrent(self._session, queries, concurrency=500)
-            if self.config.pandas_delay_conv or self.config.pandas_raw_src:
+            results = execute_concurrent(self._session, statements, concurrency=500)
+            if self.config.pandas_delay_conv:
                 _LOG.debug("making pandas data frame out of rows/columns")
-                columns = None
+                columns: Any = None
                 rows = []
                 for success, result in results:
                     result = result._current_rows
@@ -618,16 +614,11 @@ class ApdbCassandra(Apdb):
                     else:
                         _LOG.error("error returned by query: %s", result)
                         raise result
-                if self.config.pandas_raw_src:
-                    catalog = rows
-                    shape = len(rows), len(columns)
-                    _LOG.debug("pandas catalog shape: %s", shape)
-                else:
-                    catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
-                    _LOG.debug("pandas catalog shape: %s", catalog.shape)
-                    # filter by given object IDs
-                    if object_ids is not None:
-                        catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
+                catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
+                _LOG.debug("pandas catalog shape: %s", catalog.shape)
+                # filter by given object IDs
+                if len(object_id_set) > 0:
+                    catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
             else:
                 _LOG.debug("making pandas data frame out of set of data frames")
                 dataframes = []
@@ -644,11 +635,11 @@ class ApdbCassandra(Apdb):
                     catalog = pandas.concat(dataframes)
                 _LOG.debug("pandas catalog shape: %s", catalog.shape)
                 # filter by given object IDs
-                if object_ids is not None:
-                    catalog = catalog[catalog.diaObjectId.isin(set(object_ids))]
+                if len(object_id_set) > 0:
+                    catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
 
         # precise filtering on midPointTai
-        catalog = catalog[catalog.midPointTai > mjd_begin]
+        catalog = cast(pandas.DataFrame, catalog[catalog["midPointTai"] > mjd_begin])
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name)
         return catalog
@@ -746,7 +737,8 @@ class ApdbCassandra(Apdb):
         raise NotImplementedError()
 
     def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: str,
-                            visit_time: dafBase.DateTime, extra_columns=None, time_part=None):
+                            visit_time: dafBase.DateTime, extra_columns: Optional[Mapping] = None,
+                            time_part: Optional[int] = None) -> None:
         """Generic store method.
 
         Takes catalog of records and stores a bunch of objects in a table.
@@ -766,7 +758,7 @@ class ApdbCassandra(Apdb):
             If not `None` then insert into a per-partition table.
         """
 
-        def qValue(v):
+        def qValue(v: Any) -> Any:
             """Transform object into a value for query"""
             if v is None:
                 pass
@@ -782,7 +774,7 @@ class ApdbCassandra(Apdb):
                     pass
             return v
 
-        def quoteId(columnName):
+        def quoteId(columnName: str) -> str:
             """Smart quoting for column names.
             Lower-case names are not quoted.
             """
@@ -791,7 +783,9 @@ class ApdbCassandra(Apdb):
             return columnName
 
         # use extra columns if specified
-        extra_fields = list((extra_columns or {}).keys())
+        if extra_columns is None:
+            extra_columns = {}
+        extra_fields = list(extra_columns.keys())
 
         df_fields = [column for column in objects.columns
                      if column not in extra_fields]
@@ -822,7 +816,7 @@ class ApdbCassandra(Apdb):
         qfields = [quoteId(field) for field in fields + random_column_names if field not in blob_columns]
         if blob_columns:
             qfields += [quoteId("apdb_packed")]
-        qfields = ','.join(qfields)
+        qfields_str = ','.join(qfields)
 
         with Timer(table_name + ' query build', self.config.timer):
             queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
@@ -870,7 +864,7 @@ class ApdbCassandra(Apdb):
                 table = self._schema.tableName(table_name)
                 if time_part is not None:
                     table = f"{table}_{time_part}"
-                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields, holders)
+                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields_str, holders)
                 # _LOG.debug("query: %r", query)
                 # _LOG.debug("values: %s", values)
                 query = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)

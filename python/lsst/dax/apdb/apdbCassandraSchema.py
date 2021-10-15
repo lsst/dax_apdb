@@ -19,17 +19,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Module responsible for APDB schema operations.
-"""
+from __future__ import annotations
 
 __all__ = ["ApdbCassandraSchema"]
 
 from datetime import datetime, timedelta
 import functools
 import logging
-from typing import Mapping, Optional
+from typing import List, Mapping, Optional, TYPE_CHECKING
 
 from .apdbBaseSchema import ApdbBaseSchema, ColumnDef
+
+if TYPE_CHECKING:
+    import cassandra.cluster
 
 
 _LOG = logging.getLogger(__name__)
@@ -64,8 +66,9 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                      BOOL="BOOLEAN")
     """Map YAML column types to Cassandra"""
 
-    def __init__(self, session, schema_file: str, extra_schema_file: Optional[str] = None,
-                 prefix: str = "", time_partition_tables: bool = False, time_partition_days: int = 30,
+    def __init__(self, session: cassandra.cluster.Session, schema_file: str,
+                 extra_schema_file: Optional[str] = None, prefix: str = "",
+                 time_partition_tables: bool = False, time_partition_days: int = 30,
                  packing: str = "none"):
 
         super().__init__(schema_file, extra_schema_file)
@@ -103,7 +106,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         cmap = {column.name: column for column in table.columns}
         return cmap
 
-    def partitionColumns(self, table_name):
+    def partitionColumns(self, table_name: str) -> List[str]:
         """Return a list of columns used for table partitioning.
 
         Parameters
@@ -123,7 +126,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                 return index.columns
         return []
 
-    def clusteringColumns(self, table_name):
+    def clusteringColumns(self, table_name: str) -> List[str]:
         """Return a list of columns used for clustering.
 
         Parameters
@@ -142,7 +145,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                 return index.columns
         return []
 
-    def makeSchema(self, drop=False):
+    def makeSchema(self, drop: bool = False) -> None:
         """Create or re-create all tables.
 
         Parameters
@@ -196,7 +199,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
                 future.result()
                 _LOG.debug("query finished: %s", future.query)
 
-    def _tableColumns(self, table_name):
+    def _tableColumns(self, table_name: str) -> List[str]:
         """Return set of columns in a table
 
         Parameters
@@ -253,7 +256,7 @@ class ApdbCassandraSchema(ApdbBaseSchema):
         return column_defs
 
     @functools.lru_cache(maxsize=16)
-    def packedColumns(self, table_name):
+    def packedColumns(self, table_name: str) -> List[ColumnDef]:
         """Return set of columns that are packed into BLOB.
 
         Parameters
