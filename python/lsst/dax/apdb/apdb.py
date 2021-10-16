@@ -31,6 +31,7 @@ from typing import Iterable, Optional
 import lsst.daf.base as dafBase
 from lsst.pex.config import Config, ConfigurableField, Field
 from lsst.sphgeom import Region
+from .apdbSchema import ApdbTables, TableDef
 
 
 def _data_file_name(basename: str) -> str:
@@ -61,6 +62,23 @@ class Apdb(ABC):
     """
 
     ConfigClass = ApdbConfig
+
+    @abstractmethod
+    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+        """Return table schema definition for a given table.
+
+        Parameters
+        ----------
+        table : `ApdbTables`
+            One of the known APDB tables.
+
+        Returns
+        -------
+        tableSchema : `TableDef` or `None`
+            Table schema description, `None` is returned if table is not
+            defined by this implementation.
+        """
+        raise NotImplementedError()
 
     @abstractmethod
     def makeSchema(self, drop: bool = False) -> None:

@@ -53,7 +53,7 @@ from lsst.pex.config import ChoiceField, Field, ListField
 from lsst import sphgeom
 from . import timer
 from .apdb import Apdb, ApdbConfig
-from .apdbSchema import ApdbTables, ColumnDef
+from .apdbSchema import ApdbTables, ColumnDef, TableDef
 from .apdbCassandraSchema import ApdbCassandraSchema
 
 
@@ -449,6 +449,10 @@ class ApdbCassandra(Apdb):
                                            time_partition_tables=config.time_partition_tables,
                                            time_partition_days=config.time_partition_days,
                                            packing=config.packing)
+
+    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+        # docstring is inherited from a base class
+        return self._schema.tableSchemas.get(table)
 
     def makeSchema(self, drop: bool = False) -> None:
         # docstring is inherited from a base class

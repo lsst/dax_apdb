@@ -28,7 +28,7 @@ from typing import Iterator
 import unittest
 
 from lsst.daf.base import DateTime
-from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
+from lsst.dax.apdb import ApdbSql, ApdbSqlConfig, ApdbTables
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from lsst.geom import SpherePoint
 import lsst.utils.tests
@@ -146,6 +146,10 @@ class ApdbTestCase(unittest.TestCase):
         apdb = ApdbSql(config)
         # the essence of a test here is that there are no exceptions.
         apdb.makeSchema()
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
 
     def test_emptyGetsBaseline0months(self):
         """Test for getting data from empty database.

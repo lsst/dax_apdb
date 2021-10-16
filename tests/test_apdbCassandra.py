@@ -41,7 +41,7 @@ import unittest
 import uuid
 
 from lsst.daf.base import DateTime
-from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig
+from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbTables
 from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from lsst.geom import SpherePoint
@@ -197,6 +197,10 @@ class ApdbCassandraTestCase(unittest.TestCase):
         apdb = ApdbCassandra(self.config)
         # the essence of a test here is that there are no exceptions.
         apdb.makeSchema()
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
 
     def test_emptyGetsBaseline0months(self):
         """Test for getting data from empty database.

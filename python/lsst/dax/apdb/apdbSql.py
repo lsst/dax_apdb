@@ -39,6 +39,7 @@ import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
 from .apdb import Apdb, ApdbConfig
+from .apdbSchema import ApdbTables, TableDef
 from .apdbSqlSchema import ApdbSqlSchema
 from . import timer
 
@@ -287,6 +288,10 @@ class ApdbSql(Apdb):
             res[table.name] = count
 
         return res
+
+    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+        # docstring is inherited from a base class
+        return self._schema.tableSchemas.get(table)
 
     def makeSchema(self, drop: bool = False) -> None:
         # docstring is inherited from a base class
