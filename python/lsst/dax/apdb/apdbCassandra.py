@@ -27,8 +27,6 @@ from datetime import datetime, timedelta
 import logging
 import numpy as np
 import pandas
-import random
-import string
 from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple
 
 try:
@@ -172,10 +170,6 @@ class ApdbCassandraConfig(ApdbConfig):
     timer = Field(dtype=bool,
                   doc="If True then print/log timing information",
                   default=False)
-    fillEmptyFields = Field(dtype=bool,
-                            doc=("If True then store random values for fields not explicitly filled, "
-                                 "for testing only"),
-                            default=False)
     time_partition_tables = Field(
         dtype=bool,
         doc="Use per-partition tables for sources instead of paritioning by time",
@@ -807,18 +801,10 @@ class ApdbCassandra(Apdb):
         if missing_columns:
             raise ValueError(f"Primary key columns are missing from catalog: {missing_columns}")
 
-        # set of columns to fill with random values
-        random_columns = []
-        random_column_names = []
-        if self.config.fillEmptyFields:
-            fieldsSet = frozenset(fields)
-            random_columns = [col for col in column_map.values() if col.name not in fieldsSet]
-            random_column_names = [col.name for col in random_columns]
-
         blob_columns = set(col.name for col in self._schema.packedColumns(table_name))
         # _LOG.debug("blob_columns: %s", blob_columns)
 
-        qfields = [quoteId(field) for field in fields + random_column_names if field not in blob_columns]
+        qfields = [quoteId(field) for field in fields if field not in blob_columns]
         if blob_columns:
             qfields += [quoteId("apdb_packed")]
         qfields_str = ','.join(qfields)
@@ -832,9 +818,13 @@ class ApdbCassandra(Apdb):
                     if field not in column_map:
                         continue
                     value = getattr(rec, field)
-                    if column_map[field].type == "DATETIME" and np.isfinite(value):
-                        # Cassandra datetime is in milliseconds
-                        value = int(value * 1000)
+                    if column_map[field].type == "DATETIME":
+                        if isinstance(value, pandas.Timestamp):
+                            value = qValue(value.to_pydatetime())
+                        else:
+                            # Assume it's seconds since epoch, Cassandra
+                            # datetime is in milliseconds
+                            value = int(value*1000)
                     if field in blob_columns:
                         blob[field] = qValue(value)
                     else:
@@ -843,22 +833,6 @@ class ApdbCassandra(Apdb):
                     value = extra_columns[field]
                     if field in blob_columns:
                         blob[field] = qValue(value)
-                    else:
-                        values.append(qValue(value))
-                for col in random_columns:
-                    if col.type in ("FLOAT", "DOUBLE"):
-                        value = random.random()
-                    elif "INT" in col.type:
-                        value = random.randint(0, 1000)
-                    elif col.type == "DATETIME":
-                        value = random.randint(0, 1000000000)
-                    elif col.type == "BLOB":
-                        # random byte sequence
-                        value = ''.join(random.sample(string.ascii_letters, random.randint(10, 30))).encode()
-                    else:
-                        value = ""
-                    if col.name in blob_columns:
-                        blob[col.name] = qValue(value)
                     else:
                         values.append(qValue(value))
                 if blob_columns:

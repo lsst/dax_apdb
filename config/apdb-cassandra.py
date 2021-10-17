@@ -58,6 +58,3 @@ config.part_pix_level=10
 
 # If True then print/log timing information
 config.timer=True
-
-# If True then store random values for fields not explicitly filled, for testing only
-config.fillEmptyFields=True
