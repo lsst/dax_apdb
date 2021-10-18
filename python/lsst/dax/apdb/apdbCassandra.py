@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 import logging
 import numpy as np
 import pandas
-from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union
+from typing import cast, Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
 try:
     import cbor
@@ -49,78 +49,18 @@ except ImportError:
 import lsst.daf.base as dafBase
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst import sphgeom
-from . import timer
+from .timer import Timer
 from .apdb import Apdb, ApdbConfig
 from .apdbSchema import ApdbTables, ColumnDef, TableDef
 from .apdbCassandraSchema import ApdbCassandraSchema
 
 
-_LOG = logging.getLogger(__name__.partition(".")[2])  # strip leading "lsst."
+_LOG = logging.getLogger(__name__)
 
 
 class CassandraMissingError(Exception):
     def __init__(self) -> None:
         super().__init__("cassandra-driver module cannot be imported")
-
-
-class Timer(object):
-    """Timer class defining context manager which tracks execution timing.
-
-    Typical use:
-
-        with Timer("timer_name"):
-            do_something
-
-    On exit from block it will print elapsed time.
-
-    See also :py:mod:`timer` module.
-    """
-    def __init__(self, name: str, do_logging: bool = True, log_before_cursor_execute: bool = False):
-        self._log_before_cursor_execute = log_before_cursor_execute
-        self._do_logging = do_logging
-        self._timer1 = timer.Timer(name)
-        self._timer2 = timer.Timer(name + " (before/after cursor)")
-
-    def __enter__(self) -> Any:
-        """
-        Enter context, start timer
-        """
-#         event.listen(engine.Engine, "before_cursor_execute", self._start_timer)
-#         event.listen(engine.Engine, "after_cursor_execute", self._stop_timer)
-        self._timer1.start()
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> Any:
-        """
-        Exit context, stop and dump timer
-        """
-        if exc_type is None:
-            self._timer1.stop()
-            if self._do_logging:
-                self._timer1.dump()
-#         event.remove(engine.Engine, "before_cursor_execute", self._start_timer)
-#         event.remove(engine.Engine, "after_cursor_execute", self._stop_timer)
-        return False
-
-    def _start_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
-        """Start counting"""
-        if self._log_before_cursor_execute:
-            _LOG.debug("before_cursor_execute")
-        self._timer2.start()
-
-    def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
-        """Stop counting"""
-        self._timer2.stop()
-        if self._do_logging:
-            self._timer2.dump()
-
-
-def _split(seq: Iterable[Any], nItems: int) -> Iterator[List[Any]]:
-    """Split a sequence into smaller sequences"""
-    seq = list(seq)
-    while seq:
-        yield seq[:nItems]
-        del seq[:nItems]
 
 
 class ApdbCassandraConfig(ApdbConfig):
@@ -419,7 +359,6 @@ class ApdbCassandra(Apdb):
 
         self.config = config
 
-        # logging.getLogger('sqlalchemy').setLevel(logging.INFO)
         _LOG.debug("ApdbCassandra Configuration:")
         _LOG.debug("    read_consistency: %s", self.config.read_consistency)
         _LOG.debug("    write_consistency: %s", self.config.write_consistency)

@@ -30,7 +30,7 @@ from contextlib import contextmanager
 import logging
 import numpy as np
 import pandas
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import lsst.daf.base as dafBase
 from lsst.pex.config import Field, ChoiceField, ListField
@@ -41,62 +41,10 @@ from sqlalchemy.pool import NullPool
 from .apdb import Apdb, ApdbConfig
 from .apdbSchema import ApdbTables, TableDef
 from .apdbSqlSchema import ApdbSqlSchema
-from . import timer
+from .timer import Timer
 
 
 _LOG = logging.getLogger(__name__)
-
-
-class Timer:
-    """Timer class defining context manager which tracks execution timing.
-
-    Typical use:
-
-        with Timer("timer_name"):
-            do_something
-
-    On exit from block it will print elapsed time.
-
-    See also :py:mod:`timer` module.
-    """
-    def __init__(self, name: str, do_logging: bool = True, log_before_cursor_execute: bool = False):
-        self._log_before_cursor_execute = log_before_cursor_execute
-        self._do_logging = do_logging
-        self._timer1 = timer.Timer(name)
-        self._timer2 = timer.Timer(name + " (before/after cursor)")
-
-    def __enter__(self) -> Timer:
-        """
-        Enter context, start timer
-        """
-#         event.listen(engine.Engine, "before_cursor_execute", self._start_timer)
-#         event.listen(engine.Engine, "after_cursor_execute", self._stop_timer)
-        self._timer1.start()
-        return self
-
-    def __exit__(self, exc_type: Optional[Type], exc_val: Any, exc_tb: Any) -> Any:
-        """
-        Exit context, stop and dump timer
-        """
-        if exc_type is None:
-            self._timer1.stop()
-            if self._do_logging:
-                self._timer1.dump()
-#         event.remove(engine.Engine, "before_cursor_execute", self._start_timer)
-#         event.remove(engine.Engine, "after_cursor_execute", self._stop_timer)
-        return False
-
-    def _start_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
-        """Start counting"""
-        if self._log_before_cursor_execute:
-            _LOG.info("before_cursor_execute")
-        self._timer2.start()
-
-    def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
-        """Stop counting"""
-        self._timer2.stop()
-        if self._do_logging:
-            self._timer2.dump()
 
 
 def _split(seq: Iterable, nItems: int) -> Iterator[List]:
