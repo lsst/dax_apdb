@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 import logging
 import numpy as np
 import pandas
-from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple
+from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union
 
 try:
     import cbor
@@ -177,8 +177,25 @@ class ApdbCassandraConfig(ApdbConfig):
     )
     time_partition_days = Field(
         dtype=int,
-        doc="Time partitoning granularity in days",
+        doc="Time partitoning granularity in days, this value must not be changed"
+            " after database is initialized",
         default=30
+    )
+    time_partition_start = Field(
+        dtype=str,
+        doc=(
+            "Starting time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
+            " This is used only when time_partition_tables is True."
+        ),
+        default="2018-12-01T00:00:00"
+    )
+    time_partition_end = Field(
+        dtype=str,
+        doc=(
+            "Ending time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
+            " This is used only when time_partition_tables is True."
+        ),
+        default="2030-01-01T00:00:00"
     )
     query_per_time_part = Field(
         dtype=bool,
@@ -393,7 +410,7 @@ class ApdbCassandra(Apdb):
     """
 
     partition_zero_epoch = dafBase.DateTime(1970, 1, 1, 0, 0, 0, dafBase.DateTime.TAI)
-    """Start time for partition 0"""
+    """Start time for partition 0, this should never be changed."""
 
     def __init__(self, config: ApdbCassandraConfig):
 
@@ -440,9 +457,8 @@ class ApdbCassandra(Apdb):
                                            schema_file=self.config.schema_file,
                                            extra_schema_file=self.config.extra_schema_file,
                                            prefix=self.config.prefix,
-                                           time_partition_tables=config.time_partition_tables,
-                                           time_partition_days=config.time_partition_days,
                                            packing=config.packing)
+        self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
     def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
         # docstring is inherited from a base class
@@ -450,7 +466,17 @@ class ApdbCassandra(Apdb):
 
     def makeSchema(self, drop: bool = False) -> None:
         # docstring is inherited from a base class
-        self._schema.makeSchema(drop=drop)
+
+        if self.config.time_partition_tables:
+            time_partition_start = dafBase.DateTime(self.config.time_partition_start, dafBase.DateTime.TAI)
+            time_partition_end = dafBase.DateTime(self.config.time_partition_end, dafBase.DateTime.TAI)
+            part_range = (
+                self._time_partition(time_partition_start),
+                self._time_partition(time_partition_end) + 1
+            )
+            self._schema.makeSchema(drop=drop, part_range=part_range)
+        else:
+            self._schema.makeSchema(drop=drop)
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -560,9 +586,8 @@ class ApdbCassandra(Apdb):
         tables = [full_name]
         mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
         mjd_begin = mjd_now - months*30
-        epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
-        time_part_now = int(mjd_now - epoch) // self.config.time_partition_days
-        time_part_begin = int(mjd_begin - epoch) // self.config.time_partition_days
+        time_part_now = self._time_partition(mjd_now)
+        time_part_begin = self._time_partition(mjd_begin)
         time_parts = list(range(time_part_begin, time_part_now + 1))
         if self.config.time_partition_tables:
             tables = [f"{full_name}_{part}" for part in time_parts]
@@ -679,9 +704,7 @@ class ApdbCassandra(Apdb):
 
         extra_columns = dict(lastNonForcedSource=visit_time_dt, validityStart=visit_time_dt)
         if not self.config.time_partition_tables:
-            mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
-            epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
-            time_part = int(mjd_now - epoch) // self.config.time_partition_days
+            time_part = self._time_partition(visit_time)
             extra_columns["apdb_time_part"] = time_part
         self._storeObjectsPandas(objs, ApdbTables.DiaObject, visit_time, extra_columns=extra_columns)
 
@@ -695,9 +718,7 @@ class ApdbCassandra(Apdb):
         visit_time : `lsst.daf.base.DateTime`
             Time of the current visit.
         """
-        mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
-        epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
-        time_part = int(mjd_now - epoch) // self.config.time_partition_days
+        time_part: Optional[int] = self._time_partition(visit_time)
         extra_columns = {}
         if not self.config.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
@@ -716,9 +737,7 @@ class ApdbCassandra(Apdb):
         visit_time : `lsst.daf.base.DateTime`
             Time of the current visit.
         """
-        mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
-        epoch = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
-        time_part = int(mjd_now - epoch) // self.config.time_partition_days
+        time_part: Optional[int] = self._time_partition(visit_time)
         extra_columns = {}
         if not self.config.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
@@ -934,3 +953,25 @@ class ApdbCassandra(Apdb):
         sources = sources.copy()
         sources["apdb_part"] = apdb_part
         return sources
+
+    def _time_partition(self, time: Union[float, dafBase.DateTime]) -> int:
+        """Calculate time partiton number for a given time.
+
+        Parameters
+        ----------
+        time : `float` or `lsst.daf.base.DateTime`
+            Time for which to calculate partition number. Can be float to mean
+            MJD or `lsst.daf.base.DateTime`
+
+        Returns
+        -------
+        partition : `int`
+            Partition number for a given time.
+        """
+        if isinstance(time, dafBase.DateTime):
+            mjd = time.get(system=dafBase.DateTime.MJD)
+        else:
+            mjd = time
+        days_since_epoch = mjd - self._partition_zero_epoch_mjd
+        partition = int(days_since_epoch) // self.config.time_partition_days
+        return partition

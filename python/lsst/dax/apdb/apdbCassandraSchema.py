@@ -23,10 +23,9 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraSchema"]
 
-from datetime import datetime, timedelta
 import functools
 import logging
-from typing import List, Mapping, Optional, TYPE_CHECKING
+from typing import List, Mapping, Optional, TYPE_CHECKING, Tuple
 
 from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexType
 
@@ -35,8 +34,6 @@ if TYPE_CHECKING:
 
 
 _LOG = logging.getLogger(__name__)
-
-SECONDS_IN_DAY = 24 * 3600
 
 
 class ApdbCassandraSchema(ApdbSchema):
@@ -68,15 +65,12 @@ class ApdbCassandraSchema(ApdbSchema):
 
     def __init__(self, session: cassandra.cluster.Session, schema_file: str,
                  extra_schema_file: Optional[str] = None, prefix: str = "",
-                 time_partition_tables: bool = False, time_partition_days: int = 30,
                  packing: str = "none"):
 
         super().__init__(schema_file, extra_schema_file)
 
         self._session = session
         self._prefix = prefix
-        self._time_partition_tables = time_partition_tables
-        self._time_partition_days = time_partition_days
         self._packing = packing
 
     def tableName(self, table_name: ApdbTables) -> str:
@@ -140,13 +134,18 @@ class ApdbCassandraSchema(ApdbSchema):
                 return index.columns
         return []
 
-    def makeSchema(self, drop: bool = False) -> None:
+    def makeSchema(self, drop: bool = False, part_range: Optional[Tuple[int, int]] = None) -> None:
         """Create or re-create all tables.
 
         Parameters
         ----------
-        drop : `bool`, optional
+        drop : `bool`
             If True then drop tables before creating new ones.
+        part_range : `tuple` [ `int` ] or `None`
+            Start and end partition number for time partitions, end is not
+            inclusive. Used to create per-partition DiaSource and
+            DiaForcedSource tables. If `None` then per-partition tables are
+            not created.
         """
 
         for table in self.tableSchemas:
@@ -155,16 +154,8 @@ class ApdbCassandraSchema(ApdbSchema):
             fullTable = table.table_name(self._prefix)
 
             table_list = [fullTable]
-            if self._time_partition_tables and \
-                    table in (ApdbTables.DiaSource, ApdbTables.DiaForcedSource):
-                # TODO: this should not be hardcoded
-                start_time = datetime(2020, 1, 1)
-                seconds0 = int((start_time - datetime(1970, 1, 1)) / timedelta(seconds=1))
-                seconds1 = seconds0 + 24 * 30 * SECONDS_IN_DAY
-                seconds0 -= 13 * 30 * SECONDS_IN_DAY
-                part0 = seconds0 // (self._time_partition_days * SECONDS_IN_DAY)
-                part1 = seconds1 // (self._time_partition_days * SECONDS_IN_DAY)
-                partitions = range(part0, part1 + 1)
+            if part_range is not None and table in (ApdbTables.DiaSource, ApdbTables.DiaForcedSource):
+                partitions = range(*part_range)
                 table_list = [f"{fullTable}_{part}" for part in partitions]
 
             if drop:
