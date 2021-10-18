@@ -641,11 +641,14 @@ class ApdbCassandra(Apdb):
         extra_columns = dict(lastNonForcedSource=visit_time_dt)
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, visit_time, extra_columns=extra_columns)
 
-        extra_columns = dict(lastNonForcedSource=visit_time_dt, validityStart=visit_time_dt)
+        extra_columns["validityStart"] = visit_time_dt
+        time_part: Optional[int] = self._time_partition(visit_time)
         if not self.config.time_partition_tables:
-            time_part = self._time_partition(visit_time)
             extra_columns["apdb_time_part"] = time_part
-        self._storeObjectsPandas(objs, ApdbTables.DiaObject, visit_time, extra_columns=extra_columns)
+            time_part = None
+
+        self._storeObjectsPandas(objs, ApdbTables.DiaObject, visit_time,
+                                 extra_columns=extra_columns, time_part=time_part)
 
     def _storeDiaSources(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DIASources from current visit.

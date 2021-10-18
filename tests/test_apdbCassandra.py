@@ -64,6 +64,9 @@ class ApdbCassandraTestCase(unittest.TestCase):
     schema_file = "${DAX_APDB_DIR}/data/apdb-schema-cassandra.yaml"
     extra_schema_file = "${DAX_APDB_DIR}/data/apdb-schema-extra-cassandra.yaml"
     time_partition_tables = False
+    time_partition_start = None
+    time_partition_end = None
+    visit_time = DateTime(2021, 1, 1, 0, 0, 0, DateTime.TAI)
 
     def setUp(self):
         """Prepare config for server connection.
@@ -79,6 +82,10 @@ class ApdbCassandraTestCase(unittest.TestCase):
         self.config.schema_file = self.schema_file
         self.config.extra_schema_file = self.extra_schema_file
         self.config.time_partition_tables = self.time_partition_tables
+        if self.time_partition_start:
+            self.config.time_partition_start = self.time_partition_start
+        if self.time_partition_end:
+            self.config.time_partition_end = self.time_partition_end
 
         # create dedicated keyspace for each test
         key = uuid.uuid4()
@@ -140,7 +147,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = DateTime.now()
+        visit_time = self.visit_time
 
         # get objects by region
         res = apdb.getDiaObjects(region)
@@ -172,7 +179,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = DateTime.now()
+        visit_time = self.visit_time
 
         # get objects by region
         res = apdb.getDiaObjects(region)
@@ -207,7 +214,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = DateTime.now()
+        visit_time = self.visit_time
 
         # make catalog with Objects
         catalog = makeObjectCatalog(region, 100)
@@ -226,7 +233,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = DateTime.now()
+        visit_time = self.visit_time
 
         # have to store Objects first
         objects = makeObjectCatalog(region, 100)
@@ -255,7 +262,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         apdb.makeSchema()
 
         region = _makeRegion()
-        visit_time = DateTime.now()
+        visit_time = self.visit_time
 
         # have to store Objects first
         objects = makeObjectCatalog(region, 100)
@@ -348,13 +355,15 @@ class ApdbCassandraTestCase(unittest.TestCase):
         self._assertCatalog(res, 0)
 
 
-class ApdbCassandraPerMonthTestCase(unittest.TestCase):
+class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     """A test case for ApdbCassandra class with per-month tables.
     """
 
     schema_file = "${DAX_APDB_DIR}/data/apdb-schema-cassandra-per-month.yaml"
     extra_schema_file = "${DAX_APDB_DIR}/data/apdb-schema-extra-cassandra.yaml"
     time_partition_tables = True
+    time_partition_start = "2019-12-01T00:00:00"
+    time_partition_end = "2022-01-01T00:00:00"
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

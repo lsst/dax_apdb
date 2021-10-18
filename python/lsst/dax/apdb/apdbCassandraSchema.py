@@ -143,7 +143,7 @@ class ApdbCassandraSchema(ApdbSchema):
             If True then drop tables before creating new ones.
         part_range : `tuple` [ `int` ] or `None`
             Start and end partition number for time partitions, end is not
-            inclusive. Used to create per-partition DiaSource and
+            inclusive. Used to create per-partition DiaObject, DiaSource, and
             DiaForcedSource tables. If `None` then per-partition tables are
             not created.
         """
@@ -154,9 +154,10 @@ class ApdbCassandraSchema(ApdbSchema):
             fullTable = table.table_name(self._prefix)
 
             table_list = [fullTable]
-            if part_range is not None and table in (ApdbTables.DiaSource, ApdbTables.DiaForcedSource):
-                partitions = range(*part_range)
-                table_list = [f"{fullTable}_{part}" for part in partitions]
+            if part_range is not None:
+                if table in (ApdbTables.DiaSource, ApdbTables.DiaForcedSource, ApdbTables.DiaObject):
+                    partitions = range(*part_range)
+                    table_list = [f"{fullTable}_{part}" for part in partitions]
 
             if drop:
                 queries = [f'DROP TABLE IF EXISTS "{table_name}"' for table_name in table_list]
