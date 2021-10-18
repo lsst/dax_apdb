@@ -65,51 +65,67 @@ class CassandraMissingError(Exception):
 
 class ApdbCassandraConfig(ApdbConfig):
 
-    contact_points = ListField(dtype=str,
-                               doc="The list of contact points to try connecting for cluster discovery.",
-                               default=["127.0.0.1"])
-    private_ips = ListField(dtype=str,
-                            doc="List of internal IP addresses for contact_points.",
-                            default=[])
-    keyspace = Field(dtype=str,
-                     doc="Default keyspace for operations.",
-                     default="apdb")
+    contact_points = ListField(
+        dtype=str,
+        doc="The list of contact points to try connecting for cluster discovery.",
+        default=["127.0.0.1"]
+    )
+    private_ips = ListField(
+        dtype=str,
+        doc="List of internal IP addresses for contact_points.",
+        default=[]
+    )
+    keyspace = Field(
+        dtype=str,
+        doc="Default keyspace for operations.",
+        default="apdb"
+    )
     read_consistency = Field(
         dtype=str,
         doc="Name for consistency level of read operations, default: QUORUM, can be ONE.",
-        default="QUORUM")
+        default="QUORUM"
+    )
     write_consistency = Field(
         dtype=str,
         doc="Name for consistency level of write operations, default: QUORUM, can be ONE.",
-        default="QUORUM")
-    protocol_version = Field(dtype=int,
-                             doc="Cassandra protocol version to use, default is V4",
-                             default=cassandra.ProtocolVersion.V4 if CASSANDRA_IMPORTED else 0)
-    read_sources_months = Field(dtype=int,
-                                doc="Number of months of history to read from DiaSource",
-                                default=12)
-    read_forced_sources_months = Field(dtype=int,
-                                       doc="Number of months of history to read from DiaForcedSource",
-                                       default=12)
-    dia_object_columns = ListField(dtype=str,
-                                   doc="List of columns to read from DiaObject, by default read all columns",
-                                   default=[])
-    prefix = Field(dtype=str,
-                   doc="Prefix to add to table names",
-                   default="")
-    part_pixelization = ChoiceField(dtype=str,
-                                    allowed=dict(htm="HTM pixelization", q3c="Q3C pixelization",
-                                                 mq3c="MQ3C pixelization"),
-                                    doc="Pixelization used for patitioning index.",
-                                    default="mq3c")
-    part_pix_level = Field(dtype=int,
-                           doc="Pixelization level used for patitioning index.",
-                           default=10)
-    ra_dec_columns = ListField(dtype=str, default=["ra", "decl"],
-                               doc="Names ra/dec columns in DiaObject table")
-    timer = Field(dtype=bool,
-                  doc="If True then print/log timing information",
-                  default=False)
+        default="QUORUM"
+    )
+    protocol_version = Field(
+        dtype=int,
+        doc="Cassandra protocol version to use, default is V4",
+        default=cassandra.ProtocolVersion.V4 if CASSANDRA_IMPORTED else 0
+    )
+    dia_object_columns = ListField(
+        dtype=str,
+        doc="List of columns to read from DiaObject, by default read all columns",
+        default=[]
+    )
+    prefix = Field(
+        dtype=str,
+        doc="Prefix to add to table names",
+        default=""
+    )
+    part_pixelization = ChoiceField(
+        dtype=str,
+        allowed=dict(htm="HTM pixelization", q3c="Q3C pixelization", mq3c="MQ3C pixelization"),
+        doc="Pixelization used for patitioning index.",
+        default="mq3c"
+    )
+    part_pix_level = Field(
+        dtype=int,
+        doc="Pixelization level used for patitioning index.",
+        default=10
+    )
+    ra_dec_columns = ListField(
+        dtype=str,
+        default=["ra", "decl"],
+        doc="Names ra/dec columns in DiaObject table"
+    )
+    timer = Field(
+        dtype=bool,
+        doc="If True then print/log timing information",
+        default=False
+    )
     time_partition_tables = Field(
         dtype=bool,
         doc="Use per-partition tables for sources instead of paritioning by time",
@@ -123,41 +139,31 @@ class ApdbCassandraConfig(ApdbConfig):
     )
     time_partition_start = Field(
         dtype=str,
-        doc=(
-            "Starting time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
-            " This is used only when time_partition_tables is True."
-        ),
+        doc="Starting time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
+            " This is used only when time_partition_tables is True.",
         default="2018-12-01T00:00:00"
     )
     time_partition_end = Field(
         dtype=str,
-        doc=(
-            "Ending time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
-            " This is used only when time_partition_tables is True."
-        ),
+        doc="Ending time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
+            " This is used only when time_partition_tables is True.",
         default="2030-01-01T00:00:00"
     )
     query_per_time_part = Field(
         dtype=bool,
         default=False,
-        doc=(
-            "If True then build separate query for each time partition, otherwise build one single query. "
+        doc="If True then build separate query for each time partition, otherwise build one single query. "
             "This is only used when time_partition_tables is False in schema config."
-        )
     )
     query_per_spatial_part = Field(
         dtype=bool,
         default=False,
-        doc=(
-            "If True then build one query per spacial partition, otherwise build single query. "
-        )
+        doc="If True then build one query per spacial partition, otherwise build single query. "
     )
     pandas_delay_conv = Field(
         dtype=bool,
         default=True,
-        doc=(
-            "If True then combine result rows before converting to pandas. "
-        )
+        doc="If True then combine result rows before converting to pandas. "
     )
     packing = ChoiceField(
         dtype=str,

@@ -43,18 +43,28 @@ def _data_file_name(basename: str) -> str:
 class ApdbConfig(Config):
     """Part of Apdb configuration common to all implementations.
     """
-    read_sources_months = Field(dtype=int,
-                                doc="Number of months of history to read from DiaSource",
-                                default=12)
-    read_forced_sources_months = Field(dtype=int,
-                                       doc="Number of months of history to read from DiaForcedSource",
-                                       default=12)
-    schema_file = Field(dtype=str,
-                        doc="Location of (YAML) configuration file with standard schema",
-                        default=_data_file_name("apdb-schema.yaml"))
-    extra_schema_file = Field(dtype=str,
-                              doc="Location of (YAML) configuration file with extra schema",
-                              default=_data_file_name("apdb-schema-extra.yaml"))
+    read_sources_months = Field(
+        dtype=int,
+        doc="Number of months of history to read from DiaSource",
+        default=12
+    )
+    read_forced_sources_months = Field(
+        dtype=int,
+        doc="Number of months of history to read from DiaForcedSource",
+        default=12
+    )
+    schema_file = Field(
+        dtype=str,
+        doc="Location of (YAML) configuration file with standard schema",
+        default=_data_file_name("apdb-schema.yaml")
+    )
+    extra_schema_file = Field(
+        dtype=str,
+        doc="Location of (YAML) configuration file with extra schema, "
+            "definitions in this file are merged with the definitions in "
+            "'schema_file', extending or replacing parts of the schema.",
+        default=_data_file_name("apdb-schema-extra.yaml")
+    )
 
 
 class Apdb(ABC):
