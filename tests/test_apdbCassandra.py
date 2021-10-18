@@ -348,6 +348,15 @@ class ApdbCassandraTestCase(unittest.TestCase):
         self._assertCatalog(res, 0)
 
 
+class ApdbCassandraPerMonthTestCase(unittest.TestCase):
+    """A test case for ApdbCassandra class with per-month tables.
+    """
+
+    schema_file = "${DAX_APDB_DIR}/data/apdb-schema-cassandra-per-month.yaml"
+    extra_schema_file = "${DAX_APDB_DIR}/data/apdb-schema-extra-cassandra.yaml"
+    time_partition_tables = True
+
+
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
     pass
 
