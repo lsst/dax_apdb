@@ -23,14 +23,12 @@
 """
 
 import pandas
-import random
-from typing import Iterator
 import unittest
 
 from lsst.daf.base import DateTime
 from lsst.dax.apdb import ApdbSql, ApdbSqlConfig, ApdbTables
-from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
-from lsst.geom import SpherePoint
+from lsst.dax.apdb.tests.data_factory import makeObjectCatalog, makeForcedSourceCatalog, makeSourceCatalog
+from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 import lsst.utils.tests
 
 
@@ -40,80 +38,6 @@ def _makeRegion() -> Region:
     fov = 0.05  # radians
     region = Circle(pointing_v, Angle(fov/2))
     return region
-
-
-def _makeVectors(region: Region, count: int = 1) -> Iterator[SpherePoint]:
-    """Generate bunch of SpherePoints inside given region.
-
-    Returned vectors are random but not necessarily uniformly distributed.
-    """
-    bbox = region.getBoundingBox()
-    center = bbox.getCenter()
-    center_lon = center.getLon().asRadians()
-    center_lat = center.getLat().asRadians()
-    width = bbox.getWidth().asRadians()
-    height = bbox.getHeight().asRadians()
-    while count > 0:
-        lon = random.uniform(center_lon - width / 2, center_lon + width / 2)
-        lat = random.uniform(center_lat - height / 2, center_lat + height / 2)
-        lonlat = LonLat.fromRadians(lon, lat)
-        uv3d = UnitVector3d(lonlat)
-        if region.contains(uv3d):
-            yield SpherePoint(lonlat)
-            count -= 1
-
-
-def _makeObjectCatalogPandas(region, count: int, config: ApdbSqlConfig):
-    """Make a catalog containing a bunch of DiaObjects inside region.
-
-    The number of created records will be equal to the number of ranges (one
-    object per pixel range). Coordinates of the created objects are not usable.
-    """
-    data_list = []
-    # 0 id'ed DiaObjects don't exist and is used as a Null value for the id.
-    for oid, sp in enumerate(_makeVectors(region, count)):
-        tmp_dict = {"diaObjectId": oid + 1,
-                    "ra": sp.getRa().asDegrees(),
-                    "decl": sp.getDec().asDegrees()}
-        data_list.append(tmp_dict)
-
-    df = pandas.DataFrame(data=data_list)
-    return df
-
-
-def _makeSourceCatalogPandas(objects, visit_time, start_id=0):
-    """Make a catalog containing a bunch of DiaSources associated with the
-    input diaObjects.
-    """
-    # make some sources
-    catalog = []
-    midPointTai = visit_time.get(system=DateTime.MJD)
-    for obj in objects.itertuples(index=False):
-        catalog.append({"diaSourceId": start_id,
-                        "ccdVisitId": 1,
-                        "diaObjectId": obj.diaObjectId,
-                        "parentDiaSourceId": 0,
-                        "ra": obj.ra,
-                        "decl": obj.decl,
-                        "midPointTai": midPointTai,
-                        "flags": 0})
-        start_id += 1
-    return pandas.DataFrame(data=catalog)
-
-
-def _makeForcedSourceCatalogPandas(objects, visit_time, ccdVisitId=1):
-    """Make a catalog containing a bunch of DiaFourceSources associated with
-    the input diaObjects.
-    """
-    # make some sources
-    catalog = []
-    midPointTai = visit_time.get(system=DateTime.MJD)
-    for obj in objects.itertuples(index=False):
-        catalog.append({"diaObjectId": obj.diaObjectId,
-                        "ccdVisitId": ccdVisitId,
-                        "midPointTai": midPointTai,
-                        "flags": 0})
-    return pandas.DataFrame(data=catalog)
 
 
 class ApdbTestCase(unittest.TestCase):
@@ -261,7 +185,7 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = DateTime.now()
 
         # make catalog with Objects
-        catalog = _makeObjectCatalogPandas(region, 100, config)
+        catalog = makeObjectCatalog(region, 100)
 
         # store catalog
         apdb.store(visit_time, catalog)
@@ -283,7 +207,7 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = DateTime.now()
 
         # make catalog with Objects
-        catalog = _makeObjectCatalogPandas(region, 100, config)
+        catalog = makeObjectCatalog(region, 100)
 
         # store catalog
         apdb.store(visit_time, catalog)
@@ -304,9 +228,9 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = DateTime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
-        sources = _makeSourceCatalogPandas(objects, visit_time)
+        sources = makeSourceCatalog(objects, visit_time)
 
         # save the objects and sources
         apdb.store(visit_time, objects, sources)
@@ -336,9 +260,9 @@ class ApdbTestCase(unittest.TestCase):
         visit_time = DateTime.now()
 
         # have to store Objects first
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
-        catalog = _makeForcedSourceCatalogPandas(objects, visit_time)
+        catalog = makeForcedSourceCatalog(objects, visit_time)
 
         apdb.store(visit_time, objects, forced_sources=catalog)
 
@@ -367,12 +291,12 @@ class ApdbTestCase(unittest.TestCase):
         visit_time1 = DateTime(2021, 12, 27, 0, 0, 1, DateTime.TAI)
         visit_time2 = DateTime(2021, 12, 27, 0, 0, 3, DateTime.TAI)
 
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
-        sources = _makeSourceCatalogPandas(objects, src_time1, 0)
+        sources = makeSourceCatalog(objects, src_time1, 0)
         apdb.store(src_time1, objects, sources)
 
-        sources = _makeSourceCatalogPandas(objects, src_time2, 100)
+        sources = makeSourceCatalog(objects, src_time2, 100)
         apdb.store(src_time2, objects, sources)
 
         # reading at time of last save should read all
@@ -407,12 +331,12 @@ class ApdbTestCase(unittest.TestCase):
         visit_time1 = DateTime(2021, 12, 27, 0, 0, 1, DateTime.TAI)
         visit_time2 = DateTime(2021, 12, 27, 0, 0, 3, DateTime.TAI)
 
-        objects = _makeObjectCatalogPandas(region, 100, config)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
-        sources = _makeForcedSourceCatalogPandas(objects, src_time1, 1)
+        sources = makeForcedSourceCatalog(objects, src_time1, 1)
         apdb.store(src_time1, objects, forced_sources=sources)
 
-        sources = _makeForcedSourceCatalogPandas(objects, src_time2, 2)
+        sources = makeForcedSourceCatalog(objects, src_time2, 2)
         apdb.store(src_time2, objects, forced_sources=sources)
 
         # reading at time of last save should read all
