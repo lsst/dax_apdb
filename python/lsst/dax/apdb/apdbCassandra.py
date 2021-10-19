@@ -171,6 +171,11 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Packing method for table records.",
         default="none"
     )
+    prepared_statements = Field(
+        dtype=bool,
+        default=True,
+        doc="If True use Cassandra prepared statements."
+    )
 
 
 class Partitioner:
@@ -778,6 +783,16 @@ class ApdbCassandra(Apdb):
         qfields_str = ','.join(qfields)
 
         with Timer(table_name.name + ' query build', self.config.timer):
+
+            table = self._schema.tableName(table_name)
+            if time_part is not None:
+                table = f"{table}_{time_part}"
+
+            prepared: Optional[cassandra.query.PreparedStatement] = None
+            if self.config.prepared_statements:
+                holders = ','.join(['?']*len(qfields))
+                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields_str, holders)
+                prepared = self._session.prepare(query)
             queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
             for rec in objects.itertuples(index=False):
                 values = []
@@ -807,15 +822,15 @@ class ApdbCassandra(Apdb):
                     if self.config.packing == "cbor":
                         blob = b"cbor:" + cbor.dumps(blob)
                     values.append(blob)
-                holders = ','.join(['%s'] * len(values))
-                table = self._schema.tableName(table_name)
-                if time_part is not None:
-                    table = f"{table}_{time_part}"
-                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields_str, holders)
-                # _LOG.debug("query: %r", query)
-                # _LOG.debug("values: %s", values)
-                query = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
-                queries.add(query, values)
+                holders = ','.join(['%s']*len(values))
+                if prepared is not None:
+                    stmt = prepared
+                else:
+                    query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields_str, holders)
+                    # _LOG.debug("query: %r", query)
+                    # _LOG.debug("values: %s", values)
+                    stmt = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
+                queries.add(stmt, values)
 
         # _LOG.debug("query: %s", query)
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
