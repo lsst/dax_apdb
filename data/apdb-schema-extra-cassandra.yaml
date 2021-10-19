@@ -17,10 +17,6 @@ columns:
 # DiaObjectLast uses subset of columns from DiaObject and different index
 table: DiaObjectLast
 columns:
-- name: apdb_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, typically some spatial index.
 - name: diaObjectId
   type: BIGINT
   nullable: false
@@ -119,9 +115,6 @@ columns:
   ucd: stat.covariance
   unit: mas^2/yr
 indices:
-- name: Part_DiaObjectLast
-  columns: [apdb_part]
-  type: PARTITION
 - name: PK_DiaObjectLast
   columns:
   - diaObjectId

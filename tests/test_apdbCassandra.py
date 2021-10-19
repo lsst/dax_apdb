@@ -359,8 +359,6 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     """A test case for ApdbCassandra class with per-month tables.
     """
 
-    schema_file = "${DAX_APDB_DIR}/data/apdb-schema-cassandra-per-month.yaml"
-    extra_schema_file = "${DAX_APDB_DIR}/data/apdb-schema-extra-cassandra.yaml"
     time_partition_tables = True
     time_partition_start = "2019-12-01T00:00:00"
     time_partition_end = "2022-01-01T00:00:00"

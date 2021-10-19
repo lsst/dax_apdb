@@ -27,7 +27,7 @@ import functools
 import logging
 from typing import List, Mapping, Optional, TYPE_CHECKING, Tuple
 
-from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexType
+from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType
 
 if TYPE_CHECKING:
     import cassandra.cluster
@@ -49,6 +49,11 @@ class ApdbCassandraSchema(ApdbSchema):
         Name of the YAML schema file with extra column definitions.
     prefix : `str`, optional
         Prefix to add to all schema elements.
+    packing : `str`
+        Type of packing to apply to columns, string "none" disable packing,
+        any other value enables it.
+    time_partition_tables : `bool`
+        If True then schema will have a separate table for each time partition.
     """
 
     _type_map = dict(DOUBLE="DOUBLE",
@@ -65,13 +70,44 @@ class ApdbCassandraSchema(ApdbSchema):
 
     def __init__(self, session: cassandra.cluster.Session, schema_file: str,
                  extra_schema_file: Optional[str] = None, prefix: str = "",
-                 packing: str = "none"):
+                 packing: str = "none", time_partition_tables: bool = False):
 
         super().__init__(schema_file, extra_schema_file)
 
         self._session = session
         self._prefix = prefix
         self._packing = packing
+
+        # add columns and index for partitioning.
+        self._ignore_tables = []
+        for table, tableDef in self.tableSchemas.items():
+            columns = []
+            if table is ApdbTables.DiaObjectLast:
+                # DiaObjectLast does not need temporal partitioning
+                columns = ["apdb_part"]
+            elif table in (ApdbTables.DiaObject, ApdbTables.DiaSource, ApdbTables.DiaForcedSource):
+                # these three tables can use either pure spatial or combined
+                if time_partition_tables:
+                    columns = ["apdb_part"]
+                else:
+                    columns = ["apdb_part", "apdb_time_part"]
+            else:
+                # TODO: Do not know yet how other tables can be partitioned
+                self._ignore_tables.append(table)
+
+            # add columns to the column list
+            columnDefs = [ColumnDef(name=name,
+                                    type="BIGINT",
+                                    nullable=False,
+                                    default=None,
+                                    description="",
+                                    unit=None,
+                                    ucd=None) for name in columns]
+            tableDef.columns = columnDefs + tableDef.columns
+
+            # make an index
+            index = IndexDef(name=f"Part_{tableDef.name}", type=IndexType.PARTITION, columns=columns)
+            tableDef.indices.append(index)
 
     def tableName(self, table_name: ApdbTables) -> str:
         """Return Cassandra table name for APDB table.
@@ -149,6 +185,9 @@ class ApdbCassandraSchema(ApdbSchema):
         """
 
         for table in self.tableSchemas:
+            if table in self._ignore_tables:
+                _LOG.debug("Skipping schema for table %s", table)
+                continue
             _LOG.debug("Making table %s", table)
 
             fullTable = table.table_name(self._prefix)

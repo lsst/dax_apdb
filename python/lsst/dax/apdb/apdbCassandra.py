@@ -108,12 +108,12 @@ class ApdbCassandraConfig(ApdbConfig):
     part_pixelization = ChoiceField(
         dtype=str,
         allowed=dict(htm="HTM pixelization", q3c="Q3C pixelization", mq3c="MQ3C pixelization"),
-        doc="Pixelization used for patitioning index.",
+        doc="Pixelization used for partitioning index.",
         default="mq3c"
     )
     part_pix_level = Field(
         dtype=int,
-        doc="Pixelization level used for patitioning index.",
+        doc="Pixelization level used for partitioning index.",
         default=10
     )
     ra_dec_columns = ListField(
@@ -128,7 +128,7 @@ class ApdbCassandraConfig(ApdbConfig):
     )
     time_partition_tables = Field(
         dtype=bool,
-        doc="Use per-partition tables for sources instead of paritioning by time",
+        doc="Use per-partition tables for sources instead of partitioning by time",
         default=True
     )
     time_partition_days = Field(
@@ -174,7 +174,7 @@ class ApdbCassandraConfig(ApdbConfig):
 
 
 class Partitioner:
-    """Class that caclulates indices of the objects for paritioning.
+    """Class that calculates indices of the objects for partitioning.
 
     Used internally by `ApdbCassandra`
 
@@ -402,7 +402,8 @@ class ApdbCassandra(Apdb):
                                            schema_file=self.config.schema_file,
                                            extra_schema_file=self.config.extra_schema_file,
                                            prefix=self.config.prefix,
-                                           packing=config.packing)
+                                           packing=self.config.packing,
+                                           time_partition_tables=self.config.time_partition_tables)
         self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
     def tableDef(self, table: ApdbTables) -> Optional[TableDef]:

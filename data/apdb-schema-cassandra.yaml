@@ -4,14 +4,6 @@ table: DiaObject
 description: The DiaObject table contains descriptions of the astronomical objects
   detected on one or more difference images.
 columns:
-- name: apdb_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, typically some spatial index.
-- name: apdb_time_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, used for partitioning in time.
 - name: diaObjectId
   type: BIGINT
   nullable: false
@@ -510,9 +502,6 @@ columns:
   description: Flags, bitwise OR tbd.
   ucd: meta.code
 indices:
-- name: Part_DiaObject
-  columns: [apdb_part, apdb_time_part]
-  type: PARTITION
 - name: PK_DiaObject
   columns:
   - diaObjectId
@@ -527,10 +516,6 @@ table: SSObject
 description: The SSObject table contains description of the Solar System (moving)
   Objects.
 columns:
-- name: apdb_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, typically some spatial index.
 - name: ssObjectId
   type: BIGINT
   nullable: false
@@ -952,22 +937,11 @@ indices:
   columns:
   - ssObjectId
   type: PRIMARY
-- name: Part_SSObject
-  columns: [apdb_part]
-  type: PARTITION
 ---
 table: DiaSource
 description: Table to store 'difference image sources'; - sources detected at SNR
   >=5 on difference images.
 columns:
-- name: apdb_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, typically some spatial index.
-- name: apdb_time_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, used for partitioning in time.
 - name: diaSourceId
   type: BIGINT
   nullable: false
@@ -1567,9 +1541,6 @@ columns:
   description: Flags, bitwise OR tbd.
   ucd: meta.code
 indices:
-- name: Part_DiaSource
-  columns: [apdb_part, apdb_time_part]
-  type: PARTITION
 - name: PK_DiaSource
   columns:
   - diaSourceId
@@ -1591,14 +1562,6 @@ table: DiaForcedSource
 description: Forced-photometry source measurement on an individual difference Exposure
   based on a Multifit shape model derived from a deep detection.
 columns:
-- name: apdb_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, typically some spatial index.
-- name: apdb_time_part
-  type: INT
-  nullable: false
-  description: Special column used for partitioning, used for partitioning in time.
 - name: diaObjectId
   type: BIGINT
   nullable: false
@@ -1647,9 +1610,6 @@ columns:
   ucd: time.epoch
   unit: d
 indices:
-- name: Part_DiaForcedSource
-  columns: [apdb_part, apdb_time_part]
-  type: PARTITION
 - name: PK_DiaForcedSource
   columns:
   - diaObjectId
