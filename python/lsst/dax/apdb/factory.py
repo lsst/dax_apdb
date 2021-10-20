@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["make_apdb"]
 
 from .apdb import Apdb, ApdbConfig
+from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
 from .apdbSql import ApdbSql, ApdbSqlConfig
 
 
@@ -47,4 +48,6 @@ def make_apdb(config: ApdbConfig) -> Apdb:
     """
     if type(config) is ApdbSqlConfig:
         return ApdbSql(config)
+    elif type(config) is ApdbCassandraConfig:
+        return ApdbCassandra(config)
     raise TypeError(f"Unknown type of config object: {type(config)}")
