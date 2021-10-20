@@ -90,6 +90,21 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Name for consistency level of write operations, default: QUORUM, can be ONE.",
         default="QUORUM"
     )
+    read_timeout = Field(
+        dtype=float,
+        doc="Timeout in seconds for read operations.",
+        default=120.
+    )
+    write_timeout = Field(
+        dtype=float,
+        doc="Timeout in seconds for write operations.",
+        default=10.
+    )
+    read_concurrency = Field(
+        dtype=int,
+        doc="Concurrency level for read operations.",
+        default=500
+    )
     protocol_version = Field(
         dtype=int,
         doc="Cassandra protocol version to use, default is V4",
@@ -448,7 +463,8 @@ class ApdbCassandra(Apdb):
         objects = None
         with Timer('DiaObject select', self.config.timer):
             # submit all queries
-            futures = [self._session.execute_async(query, values, timeout=120.) for query, values in queries]
+            futures = [self._session.execute_async(query, values, timeout=self.config.read_timeout)
+                       for query, values in queries]
             # TODO: This orders result processing which is not very efficient
             dataframes = [future.result()._current_rows for future in futures]
             # concatenate all frames
@@ -569,7 +585,8 @@ class ApdbCassandra(Apdb):
 
         with Timer(table_name.name + ' select', self.config.timer):
             # submit all queries
-            results = execute_concurrent(self._session, statements, concurrency=500)
+            results = execute_concurrent(self._session, statements, results_generator=True,
+                                         concurrency=self.config.read_concurrency)
             if self.config.pandas_delay_conv:
                 _LOG.debug("making pandas data frame out of rows/columns")
                 columns: Any = None
@@ -835,7 +852,7 @@ class ApdbCassandra(Apdb):
         # _LOG.debug("query: %s", query)
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
         with Timer(table_name.name + ' insert', self.config.timer):
-            self._session.execute(queries)
+            self._session.execute(queries, timeout=self.config.write_timeout)
 
     def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spacial partition for each record and add it to a
