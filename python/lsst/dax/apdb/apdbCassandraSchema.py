@@ -23,7 +23,7 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraSchema"]
 
-import functools
+import itertools
 import logging
 from typing import List, Mapping, Optional, TYPE_CHECKING, Tuple
 
@@ -108,6 +108,15 @@ class ApdbCassandraSchema(ApdbSchema):
             # make an index
             index = IndexDef(name=f"Part_{tableDef.name}", type=IndexType.PARTITION, columns=columns)
             tableDef.indices.append(index)
+
+        self._packed_columns = {}
+        if self._packing != "none":
+            for table, tableDef in self.tableSchemas.items():
+                index_columns = set(itertools.chain.from_iterable(
+                    index.columns for index in tableDef.indices
+                ))
+                columnsDefs = [column for column in tableDef.columns if column.name not in index_columns]
+                self._packed_columns[table] = columnsDefs
 
     def tableName(self, table_name: ApdbTables) -> str:
         """Return Cassandra table name for APDB table.
@@ -278,7 +287,6 @@ class ApdbCassandraSchema(ApdbSchema):
 
         return column_defs
 
-    @functools.lru_cache(maxsize=16)
     def packedColumns(self, table_name: ApdbTables) -> List[ColumnDef]:
         """Return set of columns that are packed into BLOB.
 
@@ -293,14 +301,4 @@ class ApdbCassandraSchema(ApdbSchema):
             List of column definitions. Empty list is returned if packing is
             not configured.
         """
-        if self._packing == "none":
-            return []
-
-        table_schema = self.tableSchemas[table_name]
-
-        # index columns
-        index_columns = set()
-        for index in table_schema.indices:
-            index_columns.update(index.columns)
-
-        return [column for column in table_schema.columns if column.name not in index_columns]
+        return self._packed_columns.get(table_name, [])
