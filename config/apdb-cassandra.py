@@ -7,10 +7,10 @@ config.read_sources_months=12
 config.read_forced_sources_months=12
 
 # Location of (YAML) configuration file with standard schema
-config.schema_file='${DAX_APDB_DIR}/data/apdb-schema-cassandra.yaml'
+config.schema_file='${DAX_APDB_DIR}/data/apdb-schema.yaml'
 
 # Location of (YAML) configuration file with extra schema
-config.extra_schema_file='${DAX_APDB_DIR}/data/apdb-schema-extra-cassandra.yaml'
+config.extra_schema_file='${DAX_APDB_DIR}/data/apdb-schema-extra.yaml'
 
 # The list of contact points to try connecting for cluster discovery.
 config.contact_points=['127.0.0.1']

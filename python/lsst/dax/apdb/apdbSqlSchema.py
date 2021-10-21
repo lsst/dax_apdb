@@ -33,7 +33,7 @@ import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
                         UniqueConstraint, Table)
 
-from .apdbSchema import ApdbSchema, ApdbTables, IndexType
+from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType
 
 
 _LOG = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         self._metadata = MetaData(self._engine)
 
-        # map cat column types to alchemy
+        # map YAML column types to SQLAlchemy
         self._type_map = dict(DOUBLE=self._getDoubleType(engine),
                               FLOAT=sqlalchemy.types.Float,
                               DATETIME=sqlalchemy.types.TIMESTAMP,
@@ -96,6 +96,29 @@ class ApdbSqlSchema(ApdbSchema):
         if self._dia_object_index == 'pix_id_iov':
             objects = self.tableSchemas[ApdbTables.DiaObject]
             objects.primary_key.columns.insert(0, htm_index_column)
+
+        # Add pixelId column and index to tables that need it
+        for table in (ApdbTables.DiaObject, ApdbTables.DiaObjectLast, ApdbTables.DiaSource):
+            tableDef = self.tableSchemas.get(table)
+            if not tableDef:
+                continue
+            column = ColumnDef(name="pixelId",
+                               type="BIGINT",
+                               nullable=False,
+                               default=None,
+                               description="",
+                               unit="",
+                               ucd="")
+            tableDef.columns.append(column)
+
+            if table is ApdbTables.DiaObjectLast:
+                # use it as a leading PK column
+                tableDef.primary_key.columns.insert(0, "pixelId")
+            else:
+                # make a regular index
+                index = IndexDef(name=f"IDX_{tableDef.name}_pixelId",
+                                 type=IndexType.INDEX, columns=["pixelId"])
+                tableDef.indices.append(index)
 
         # generate schema for all tables, must be called last
         self._tables = self._makeTables()

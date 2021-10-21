@@ -119,17 +119,8 @@ columns:
   description: Covariance of pmDecl and parallax.
   ucd: stat.covariance
   unit: mas^2/yr
-- name: pixelId
-  type: BIGINT
-  nullable: false
-  description: HTM index.
 indices:
 - name: PK_DiaObjectLast
   columns:
-  - pixelId
   - diaObjectId
   type: PRIMARY
-- name: IDX_DiaObjLast_diaObjId
-  columns:
-  - diaObjectId
-  type: INDEX

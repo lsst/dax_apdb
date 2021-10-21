@@ -61,8 +61,8 @@ class ApdbCassandraTestCase(unittest.TestCase):
     """A test case for ApdbCassandra class
     """
 
-    schema_file = "${DAX_APDB_DIR}/data/apdb-schema-cassandra.yaml"
-    extra_schema_file = "${DAX_APDB_DIR}/data/apdb-schema-extra-cassandra.yaml"
+    schema_file = "${DAX_APDB_DIR}/data/apdb-schema.yaml"
+    extra_schema_file = "${DAX_APDB_DIR}/data/apdb-schema-extra.yaml"
     time_partition_tables = False
     time_partition_start = None
     time_partition_end = None
