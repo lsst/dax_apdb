@@ -650,11 +650,11 @@ class ApdbCassandra(Apdb):
         if sources is not None:
             # copy apdb_part column from DiaObjects to DiaSources
             sources = self._add_src_part(sources, objects)
-            self._storeDiaSources(sources, visit_time)
+            self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time)
 
         if forced_sources is not None:
             forced_sources = self._add_fsrc_part(forced_sources, objects)
-            self._storeDiaForcedSources(forced_sources, visit_time)
+            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, visit_time)
 
     def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DiaObjects from current visit.
@@ -679,8 +679,9 @@ class ApdbCassandra(Apdb):
         self._storeObjectsPandas(objs, ApdbTables.DiaObject, visit_time,
                                  extra_columns=extra_columns, time_part=time_part)
 
-    def _storeDiaSources(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
-        """Store catalog of DIASources from current visit.
+    def _storeDiaSources(self, table_name: ApdbTables, sources: pandas.DataFrame,
+                         visit_time: dafBase.DateTime) -> None:
+        """Store catalog of DIASources or DIAForcedSources from current visit.
 
         Parameters
         ----------
@@ -695,26 +696,7 @@ class ApdbCassandra(Apdb):
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
-        self._storeObjectsPandas(sources, ApdbTables.DiaSource, visit_time,
-                                 extra_columns=extra_columns, time_part=time_part)
-
-    def _storeDiaForcedSources(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
-        """Store a set of DIAForcedSources from current visit.
-
-        Parameters
-        ----------
-        sources : `pandas.DataFrame`
-            Catalog containing DiaForcedSource records
-        visit_time : `lsst.daf.base.DateTime`
-            Time of the current visit.
-        """
-        time_part: Optional[int] = self._time_partition(visit_time)
-        extra_columns = {}
-        if not self.config.time_partition_tables:
-            extra_columns["apdb_time_part"] = time_part
-            time_part = None
-
-        self._storeObjectsPandas(sources, ApdbTables.DiaForcedSource, visit_time,
+        self._storeObjectsPandas(sources, table_name, visit_time,
                                  extra_columns=extra_columns, time_part=time_part)
 
     def dailyJob(self) -> None:
