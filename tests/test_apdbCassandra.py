@@ -68,6 +68,11 @@ class ApdbCassandraTestCase(unittest.TestCase):
     time_partition_end = None
     visit_time = DateTime(2021, 1, 1, 0, 0, 0, DateTime.TAI)
 
+    n_obj_last_columns = 18  # including partitioning column
+    n_src_columns = 107  # without partitioning columns
+    n_fsrc_columns = 8  # without partitioning columns
+    n_part_columns = 2
+
     def setUp(self):
         """Prepare config for server connection.
         """
@@ -107,7 +112,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
         apdb._session.execute(query)
         del apdb
 
-    def _assertCatalog(self, catalog, size):
+    def _assertCatalog(self, catalog, size, columns):
         """Validate catalog type and size
 
         Parameters
@@ -116,11 +121,12 @@ class ApdbCassandraTestCase(unittest.TestCase):
             Expected type of this is ``type``.
         size : int
             Expected catalog size
-        type : `type`, optional
-            Expected catalog type
+        columns : `int`
+            Number of columns in a catalog.
         """
         self.assertIsInstance(catalog, pandas.DataFrame)
         self.assertEqual(len(catalog), size)
+        self.assertEqual(catalog.shape[1], columns)
 
     def test_makeSchema(self):
         """Test for making an instance of Apdb using in-memory sqlite engine.
@@ -151,7 +157,8 @@ class ApdbCassandraTestCase(unittest.TestCase):
 
         # get objects by region
         res = apdb.getDiaObjects(region)
-        self._assertCatalog(res, 0)
+        # DiaObjectLast always has one partitioning column
+        self._assertCatalog(res, 0, self.n_obj_last_columns)
 
         # get sources by region
         res = apdb.getDiaSources(region, None, visit_time)
@@ -183,29 +190,29 @@ class ApdbCassandraTestCase(unittest.TestCase):
 
         # get objects by region
         res = apdb.getDiaObjects(region)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_obj_last_columns)
 
         # get sources by region
         res = apdb.getDiaSources(region, None, visit_time)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_src_columns + self.n_part_columns)
 
         res = apdb.getDiaSources(region, [], visit_time)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_src_columns + self.n_part_columns)
 
         # get sources by object ID, non-empty object list
         res = apdb.getDiaSources(region, [1, 2, 3], visit_time)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_src_columns + self.n_part_columns)
 
-        apdb.getDiaForcedSources(region, None, visit_time)
-        self._assertCatalog(res, 0)
+        res = apdb.getDiaForcedSources(region, None, visit_time)
+        self._assertCatalog(res, 0, self.n_fsrc_columns + self.n_part_columns)
 
         # get forced sources by object ID, empty object list
         res = apdb.getDiaForcedSources(region, [], visit_time)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_fsrc_columns + self.n_part_columns)
 
         # get sources by object ID, non-empty object list
         res = apdb.getDiaForcedSources(region, [1, 2, 3], visit_time)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_fsrc_columns + self.n_part_columns)
 
     def test_storeObjectsBaseline(self):
         """Store and retrieve DiaObjects."""
@@ -224,7 +231,7 @@ class ApdbCassandraTestCase(unittest.TestCase):
 
         # read it back and check sizes
         res = apdb.getDiaObjects(region)
-        self._assertCatalog(res, len(catalog))
+        self._assertCatalog(res, len(catalog), self.n_obj_last_columns)
 
     def test_storeSources(self):
         """Store and retrieve DiaSources."""
@@ -245,15 +252,15 @@ class ApdbCassandraTestCase(unittest.TestCase):
 
         # read it back, no ID filtering
         res = apdb.getDiaSources(region, None, visit_time)
-        self._assertCatalog(res, len(sources))
+        self._assertCatalog(res, len(sources), self.n_src_columns + self.n_part_columns)
 
         # read it back and filter by ID
         res = apdb.getDiaSources(region, oids, visit_time)
-        self._assertCatalog(res, len(sources))
+        self._assertCatalog(res, len(sources), self.n_src_columns + self.n_part_columns)
 
         # read it back to get schema
         res = apdb.getDiaSources(region, [], visit_time)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_src_columns + self.n_part_columns)
 
     def test_storeForcedSources(self):
         """Store and retrieve DiaForcedSources."""
@@ -273,11 +280,11 @@ class ApdbCassandraTestCase(unittest.TestCase):
 
         # read it back and check sizes
         res = apdb.getDiaForcedSources(region, oids, visit_time)
-        self._assertCatalog(res, len(catalog))
+        self._assertCatalog(res, len(catalog), self.n_fsrc_columns + self.n_part_columns)
 
         # read it back to get schema
         res = apdb.getDiaForcedSources(region, [], visit_time)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_fsrc_columns + self.n_part_columns)
 
     def test_midPointTai_src(self):
         """Test for time filtering of DiaSources.
@@ -303,19 +310,19 @@ class ApdbCassandraTestCase(unittest.TestCase):
 
         # reading at time of last save should read all
         res = apdb.getDiaSources(region, oids, src_time2)
-        self._assertCatalog(res, 200)
+        self._assertCatalog(res, 200, self.n_src_columns + self.n_part_columns)
 
         # one second before 12 months
         res = apdb.getDiaSources(region, oids, visit_time0)
-        self._assertCatalog(res, 200)
+        self._assertCatalog(res, 200, self.n_src_columns + self.n_part_columns)
 
         # reading at later time of last save should only read a subset
         res = apdb.getDiaSources(region, oids, visit_time1)
-        self._assertCatalog(res, 100)
+        self._assertCatalog(res, 100, self.n_src_columns + self.n_part_columns)
 
         # reading at later time of last save should only read a subset
         res = apdb.getDiaSources(region, oids, visit_time2)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_src_columns + self.n_part_columns)
 
     def test_midPointTai_fsrc(self):
         """Test for time filtering of DiaForcedSources.
@@ -340,19 +347,19 @@ class ApdbCassandraTestCase(unittest.TestCase):
 
         # reading at time of last save should read all
         res = apdb.getDiaForcedSources(region, oids, src_time2)
-        self._assertCatalog(res, 200)
+        self._assertCatalog(res, 200, self.n_fsrc_columns + self.n_part_columns)
 
         # one second before 12 months
         res = apdb.getDiaForcedSources(region, oids, visit_time0)
-        self._assertCatalog(res, 200)
+        self._assertCatalog(res, 200, self.n_fsrc_columns + self.n_part_columns)
 
         # reading at later time of last save should only read a subset
         res = apdb.getDiaForcedSources(region, oids, visit_time1)
-        self._assertCatalog(res, 100)
+        self._assertCatalog(res, 100, self.n_fsrc_columns + self.n_part_columns)
 
         # reading at later time of last save should only read a subset
         res = apdb.getDiaForcedSources(region, oids, visit_time2)
-        self._assertCatalog(res, 0)
+        self._assertCatalog(res, 0, self.n_fsrc_columns + self.n_part_columns)
 
 
 class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
@@ -362,6 +369,7 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     time_partition_tables = True
     time_partition_start = "2019-12-01T00:00:00"
     time_partition_end = "2022-01-01T00:00:00"
+    n_part_columns = 1
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

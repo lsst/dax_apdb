@@ -523,8 +523,7 @@ class ApdbCassandra(Apdb):
         if object_ids is not None:
             object_id_set = set(object_ids)
             if len(object_id_set) == 0:
-                # TODO: need correct column schema for this
-                return pandas.DataFrame()
+                return self._make_empty_catalog(table_name)
 
         packedColumns = self._schema.packedColumns(table_name)
         if self.config.pandas_delay_conv:
@@ -938,3 +937,21 @@ class ApdbCassandra(Apdb):
         days_since_epoch = mjd - self._partition_zero_epoch_mjd
         partition = int(days_since_epoch) // self.config.time_partition_days
         return partition
+
+    def _make_empty_catalog(self, table_name: ApdbTables) -> pandas.DataFrame:
+        """Make an empty catalog for a table with a given name.
+
+        Parameters
+        ----------
+        table_name : `ApdbTables`
+            Name of the table.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            An empty catalog.
+        """
+        table = self._schema.tableSchemas[table_name]
+
+        data = {columnDef.name: pandas.Series(dtype=columnDef.dtype) for columnDef in table.columns}
+        return pandas.DataFrame(data)

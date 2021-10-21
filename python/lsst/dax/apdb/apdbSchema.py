@@ -32,12 +32,29 @@ __all__ = ["ColumnDef", "IndexType", "IndexDef", "TableDef", "ApdbTables", "Apdb
 import enum
 from dataclasses import dataclass
 import logging
+import numpy
 import os
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Mapping, Optional, Type, Union
 import yaml
 
 
 _LOG = logging.getLogger(__name__)
+
+# In most cases column types are determined by Cassandra driver, but in some
+# cases we need to create Pandas Dataframe ourselves and we use this map to
+# infer types of columns from their YAML schema.
+_dtype_map: Mapping[str, Union[Type, str]] = dict(
+    DOUBLE=numpy.float64,
+    FLOAT=numpy.float32,
+    DATETIME="datetime64[ms]",
+    BIGINT=numpy.int64,
+    INTEGER=numpy.int32,
+    INT=numpy.int32,
+    TINYINT=numpy.int8,
+    BLOB=object,
+    CHAR=object,
+    BOOL=bool,
+)
 
 
 @dataclass
@@ -58,6 +75,11 @@ class ColumnDef:
     """string with unit name, can be None"""
     ucd: Optional[str]
     """string with ucd, can be None"""
+
+    @property
+    def dtype(self) -> Union[Type, str]:
+        """Pandas dtype for this column"""
+        return _dtype_map.get(self.type, object)
 
 
 @enum.unique
