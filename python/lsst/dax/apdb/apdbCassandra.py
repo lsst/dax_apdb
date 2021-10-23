@@ -789,7 +789,7 @@ class ApdbCassandra(Apdb):
             prepared: Optional[cassandra.query.PreparedStatement] = None
             if self.config.prepared_statements:
                 holders = ','.join(['?']*len(qfields))
-                query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields_str, holders)
+                query = f'INSERT INTO "{table}" ({qfields_str}) VALUES ({holders})'
                 prepared = self._session.prepare(query)
             queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
             for rec in objects.itertuples(index=False):
@@ -824,7 +824,7 @@ class ApdbCassandra(Apdb):
                 if prepared is not None:
                     stmt = prepared
                 else:
-                    query = 'INSERT INTO "{}" ({}) VALUES ({});'.format(table, qfields_str, holders)
+                    query = f'INSERT INTO "{table}" ({qfields_str}) VALUES ({holders})'
                     # _LOG.debug("query: %r", query)
                     # _LOG.debug("values: %s", values)
                     stmt = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)

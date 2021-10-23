@@ -217,12 +217,9 @@ class ApdbCassandraSchema(ApdbSchema):
 
             queries = []
             for table_name in table_list:
-                query = "CREATE TABLE "
-                if not drop:
-                    query += "IF NOT EXISTS "
-                query += '"{}" ('.format(table_name)
-                query += ", ".join(self._tableColumns(table))
-                query += ")"
+                if_not_exists = "" if drop else "IF NOT EXISTS"
+                columns = ", ".join(self._tableColumns(table))
+                query = f'CREATE TABLE {if_not_exists} "{table_name}" ({columns})'
                 _LOG.debug("query: %s", query)
                 queries.append(query)
             futures = [self._session.execute_async(query, timeout=None) for query in queries]
@@ -259,9 +256,9 @@ class ApdbCassandraSchema(ApdbSchema):
         _LOG.debug("part_columns: %s", part_columns)
         _LOG.debug("clust_columns: %s", clust_columns)
         if not part_columns:
-            raise ValueError("Table {} configuration is missing partition index".format(table_name))
+            raise ValueError(f"Table {table_name} configuration is missing partition index")
         if not clust_columns:
-            raise ValueError("Table {} configuration is missing primary index".format(table_name))
+            raise ValueError(f"Table {table_name} configuration is missing primary index")
 
         # all columns
         column_defs = []
@@ -270,20 +267,21 @@ class ApdbCassandraSchema(ApdbSchema):
                 # when packing all non-index columns are replaced by a BLOB
                 continue
             ctype = self._type_map[column.type]
-            column_defs.append('"{}" {}'.format(column.name, ctype))
+            column_defs.append(f'"{column.name}" {ctype}')
 
         # packed content goes to a single blob column
         if self._packing != "none":
             column_defs.append('"apdb_packed" blob')
 
         # primary key definition
-        part_columns = ['"{}"'.format(col) for col in part_columns]
-        clust_columns = ['"{}"'.format(col) for col in clust_columns]
+        part_columns = [f'"{col}"' for col in part_columns]
+        clust_columns = [f'"{col}"' for col in clust_columns]
         if len(part_columns) > 1:
-            part_columns = ["(" + ", ".join(part_columns) + ")"]
-        pkey = part_columns + clust_columns
+            columns = ", ".join(part_columns)
+            part_columns = [f"({columns})"]
+        pkey = ", ".join(part_columns + clust_columns)
         _LOG.debug("pkey: %s", pkey)
-        column_defs.append('PRIMARY KEY ({})'.format(", ".join(pkey)))
+        column_defs.append(f"PRIMARY KEY ({pkey})")
 
         return column_defs
 
