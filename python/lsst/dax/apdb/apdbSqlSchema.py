@@ -24,66 +24,22 @@
 
 from __future__ import annotations
 
-__all__ = ["ColumnDef", "IndexDef", "TableDef", "ApdbSqlSchema"]
+__all__ = ["ApdbSqlSchema"]
 
 import logging
-import os
-from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Type
-import yaml
+from typing import Any, Dict, List, Mapping, Optional, Type
 
 import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
                         UniqueConstraint, Table)
 
+from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType
+
 
 _LOG = logging.getLogger(__name__)
 
 
-class ColumnDef(NamedTuple):
-    """Column representation in schema.
-    """
-    name: str
-    """column name"""
-    type: str
-    """name of cat type (INT, FLOAT, etc.)"""
-    nullable: bool
-    """True for nullable columns"""
-    default: Any
-    """default value for column, can be None"""
-    description: Optional[str]
-    """documentation, can be None or empty"""
-    unit: Optional[str]
-    """string with unit name, can be None"""
-    ucd: Optional[str]
-    """string with ucd, can be None"""
-
-
-class IndexDef(NamedTuple):
-    """Index description.
-    """
-    name: str
-    """index name, can be empty"""
-    type: str
-    """one of "PRIMARY", "UNIQUE", "INDEX"
-    """
-    columns: List[str]
-    """list of column names in index"""
-
-
-class TableDef(NamedTuple):
-    """Table description
-    """
-    name: str
-    """table name"""
-    description: Optional[str]
-    """documentation, can be None or empty"""
-    columns: List[ColumnDef]
-    """list of ColumnDef instances"""
-    indices: List[IndexDef]
-    """list of IndexDef instances, can be empty"""
-
-
-class ApdbSqlSchema(object):
+class ApdbSqlSchema(ApdbSchema):
     """Class for management of APDB schema.
 
     Attributes
@@ -102,8 +58,10 @@ class ApdbSqlSchema(object):
     engine : `sqlalchemy.engine.Engine`
         SQLAlchemy engine instance
     dia_object_index : `str`
-        Indexing mode for DiaObject table, see `ApdbConfig.dia_object_index`
+        Indexing mode for DiaObject table, see `ApdbSqlConfig.dia_object_index`
         for details.
+    htm_index_column : `str`
+        Name of a HTM index column for DiaObject and DiaSource tables.
     schema_file : `str`
         Name of the YAML schema file.
     extra_schema_file : `str`, optional
@@ -111,8 +69,10 @@ class ApdbSqlSchema(object):
     prefix : `str`, optional
         Prefix to add to all scheam elements.
     """
-    def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str,
+    def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str, htm_index_column: str,
                  schema_file: str, extra_schema_file: Optional[str] = None, prefix: str = ""):
+
+        super().__init__(schema_file, extra_schema_file)
 
         self._engine = engine
         self._dia_object_index = dia_object_index
@@ -120,15 +80,7 @@ class ApdbSqlSchema(object):
 
         self._metadata = MetaData(self._engine)
 
-        self.objects = None
-        self.objects_last = None
-        self.sources = None
-        self.forcedSources = None
-
-        # build complete table schema
-        self._schemas = self._buildSchemas(schema_file, extra_schema_file)
-
-        # map cat column types to alchemy
+        # map YAML column types to SQLAlchemy
         self._type_map = dict(DOUBLE=self._getDoubleType(engine),
                               FLOAT=sqlalchemy.types.Float,
                               DATETIME=sqlalchemy.types.TIMESTAMP,
@@ -140,10 +92,43 @@ class ApdbSqlSchema(object):
                               CHAR=sqlalchemy.types.CHAR,
                               BOOL=sqlalchemy.types.Boolean)
 
-        # generate schema for all tables, must be called last
-        self._makeTables()
+        # Adjust index if needed
+        if self._dia_object_index == 'pix_id_iov':
+            objects = self.tableSchemas[ApdbTables.DiaObject]
+            objects.primary_key.columns.insert(0, htm_index_column)
 
-    def _makeTables(self, mysql_engine: str = 'InnoDB') -> None:
+        # Add pixelId column and index to tables that need it
+        for table in (ApdbTables.DiaObject, ApdbTables.DiaObjectLast, ApdbTables.DiaSource):
+            tableDef = self.tableSchemas.get(table)
+            if not tableDef:
+                continue
+            column = ColumnDef(name="pixelId",
+                               type="BIGINT",
+                               nullable=False,
+                               default=None,
+                               description="",
+                               unit="",
+                               ucd="")
+            tableDef.columns.append(column)
+
+            if table is ApdbTables.DiaObjectLast:
+                # use it as a leading PK column
+                tableDef.primary_key.columns.insert(0, "pixelId")
+            else:
+                # make a regular index
+                index = IndexDef(name=f"IDX_{tableDef.name}_pixelId",
+                                 type=IndexType.INDEX, columns=["pixelId"])
+                tableDef.indices.append(index)
+
+        # generate schema for all tables, must be called last
+        self._tables = self._makeTables()
+
+        self.objects = self._tables[ApdbTables.DiaObject]
+        self.objects_last = self._tables.get(ApdbTables.DiaObjectLast)
+        self.sources = self._tables[ApdbTables.DiaSource]
+        self.forcedSources = self._tables[ApdbTables.DiaForcedSource]
+
+    def _makeTables(self, mysql_engine: str = 'InnoDB') -> Mapping[ApdbTables, Table]:
         """Generate schema for all tables.
 
         Parameters
@@ -154,37 +139,23 @@ class ApdbSqlSchema(object):
 
         info: Dict[str, Any] = {}
 
-        if self._dia_object_index == 'pix_id_iov':
-            # Special PK with HTM column in first position
-            constraints = self._tableIndices('DiaObjectIndexHtmFirst', info)
-        else:
-            constraints = self._tableIndices('DiaObject', info)
-        table = Table(self._prefix+'DiaObject', self._metadata,
-                      *(self._tableColumns('DiaObject') + constraints),
-                      mysql_engine=mysql_engine,
-                      info=info)
-        self.objects = table
+        tables = {}
+        for table_enum in ApdbTables:
 
-        if self._dia_object_index == 'last_object_table':
-            # Same as DiaObject but with special index
-            table = Table(self._prefix+'DiaObjectLast', self._metadata,
-                          *(self._tableColumns('DiaObjectLast')
-                            + self._tableIndices('DiaObjectLast', info)),
+            if table_enum is ApdbTables.DiaObjectLast and self._dia_object_index != "last_object_table":
+                continue
+
+            columns = self._tableColumns(table_enum)
+            constraints = self._tableIndices(table_enum, info)
+            table = Table(table_enum.table_name(self._prefix),
+                          self._metadata,
+                          *columns,
+                          *constraints,
                           mysql_engine=mysql_engine,
                           info=info)
-            self.objects_last = table
+            tables[table_enum] = table
 
-        # for all other tables use index definitions in schema
-        for table_name in ('DiaSource', 'SSObject', 'DiaForcedSource', 'DiaObject_To_Object_Match'):
-            table = Table(self._prefix+table_name, self._metadata,
-                          *(self._tableColumns(table_name)
-                            + self._tableIndices(table_name, info)),
-                          mysql_engine=mysql_engine,
-                          info=info)
-            if table_name == 'DiaSource':
-                self.sources = table
-            elif table_name == 'DiaForcedSource':
-                self.forcedSources = table
+        return tables
 
     def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB') -> None:
         """Create or re-create all tables.
@@ -210,116 +181,12 @@ class ApdbSqlSchema(object):
         _LOG.info('creating all tables')
         self._metadata.create_all()
 
-    def _buildSchemas(self, schema_file: str, extra_schema_file: Optional[str] = None,
-                      ) -> Mapping[str, TableDef]:
-        """Create schema definitions for all tables.
-
-        Reads YAML schemas and builds dictionary containing `TableDef`
-        instances for each table.
-
-        Parameters
-        ----------
-        schema_file : `str`
-            Name of YAML file with standard cat schema.
-        extra_schema_file : `str`, optional
-            Name of YAML file with extra table information or `None`.
-
-        Returns
-        -------
-        schemas : `dict`
-            Mapping of table names to `TableDef` instances.
-        """
-
-        schema_file = os.path.expandvars(schema_file)
-        _LOG.debug("Reading schema file %s", schema_file)
-        with open(schema_file) as yaml_stream:
-            tables = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
-            # index it by table name
-        _LOG.debug("Read %d tables from schema", len(tables))
-
-        if extra_schema_file:
-            extra_schema_file = os.path.expandvars(extra_schema_file)
-            _LOG.debug("Reading extra schema file %s", extra_schema_file)
-            with open(extra_schema_file) as yaml_stream:
-                extras = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
-                # index it by table name
-                schemas_extra = {table['table']: table for table in extras}
-        else:
-            schemas_extra = {}
-
-        # merge extra schema into a regular schema, for now only columns are merged
-        for table in tables:
-            table_name = table['table']
-            if table_name in schemas_extra:
-                columns = table['columns']
-                extra_columns = schemas_extra[table_name].get('columns', [])
-                extra_columns = {col['name']: col for col in extra_columns}
-                _LOG.debug("Extra columns for table %s: %s", table_name, extra_columns.keys())
-                columns = []
-                for col in table['columns']:
-                    if col['name'] in extra_columns:
-                        columns.append(extra_columns.pop(col['name']))
-                    else:
-                        columns.append(col)
-                # add all remaining extra columns
-                table['columns'] = columns + list(extra_columns.values())
-
-                if 'indices' in schemas_extra[table_name]:
-                    raise RuntimeError("Extra table definition contains indices, "
-                                       "merging is not implemented")
-
-                del schemas_extra[table_name]
-
-        # Pure "extra" table definitions may contain indices
-        tables += schemas_extra.values()
-
-        # convert all dicts into named tuples
-        schemas = {}
-        for table in tables:
-
-            columns = table.get('columns', [])
-
-            table_name = table['table']
-
-            table_columns = []
-            for col in columns:
-                # For prototype set default to 0 even if columns don't specify it
-                if "default" not in col:
-                    default = None
-                    if col['type'] not in ("BLOB", "DATETIME"):
-                        default = 0
-                else:
-                    default = col["default"]
-
-                column = ColumnDef(name=col['name'],
-                                   type=col['type'],
-                                   nullable=col.get("nullable"),
-                                   default=default,
-                                   description=col.get("description"),
-                                   unit=col.get("unit"),
-                                   ucd=col.get("ucd"))
-                table_columns.append(column)
-
-            table_indices = []
-            for idx in table.get('indices', []):
-                index = IndexDef(name=idx.get('name'),
-                                 type=idx.get('type'),
-                                 columns=idx.get('columns'))
-                table_indices.append(index)
-
-            schemas[table_name] = TableDef(name=table_name,
-                                           description=table.get('description'),
-                                           columns=table_columns,
-                                           indices=table_indices)
-
-        return schemas
-
-    def _tableColumns(self, table_name: str) -> List[Column]:
+    def _tableColumns(self, table_name: ApdbTables) -> List[Column]:
         """Return set of columns in a table
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table.
 
         Returns
@@ -330,10 +197,10 @@ class ApdbSqlSchema(object):
 
         # get the list of columns in primary key, they are treated somewhat
         # specially below
-        table_schema = self._schemas[table_name]
+        table_schema = self.tableSchemas[table_name]
         pkey_columns = set()
         for index in table_schema.indices:
-            if index.type == 'PRIMARY':
+            if index.type is IndexType.PRIMARY:
                 pkey_columns = set(index.columns)
                 break
 
@@ -350,12 +217,12 @@ class ApdbSqlSchema(object):
 
         return column_defs
 
-    def _tableIndices(self, table_name: str, info: Dict) -> List[sqlalchemy.schema.Constraint]:
+    def _tableIndices(self, table_name: ApdbTables, info: Dict) -> List[sqlalchemy.schema.Constraint]:
         """Return set of constraints/indices in a table
 
         Parameters
         ----------
-        table_name : `str`
+        table_name : `ApdbTables`
             Name of the table.
         info : `dict`
             Additional options passed to SQLAlchemy index constructor.
@@ -366,20 +233,20 @@ class ApdbSqlSchema(object):
             List of SQLAlchemy index/constraint objects.
         """
 
-        table_schema = self._schemas[table_name]
+        table_schema = self.tableSchemas[table_name]
 
         # convert all index dicts into alchemy Columns
         index_defs: List[sqlalchemy.schema.Constraint] = []
         for index in table_schema.indices:
-            if index.type == "INDEX":
+            if index.type is IndexType.INDEX:
                 index_defs.append(Index(self._prefix + index.name, *index.columns, info=info))
             else:
                 kwargs = {}
                 if index.name:
-                    kwargs['name'] = self._prefix+index.name
-                if index.type == "PRIMARY":
+                    kwargs['name'] = self._prefix + index.name
+                if index.type is IndexType.PRIMARY:
                     index_defs.append(PrimaryKeyConstraint(*index.columns, **kwargs))
-                elif index.type == "UNIQUE":
+                elif index.type is IndexType.UNIQUE:
                     index_defs.append(UniqueConstraint(*index.columns, **kwargs))
 
         return index_defs

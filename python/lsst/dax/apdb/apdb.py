@@ -31,6 +31,7 @@ from typing import Iterable, Optional
 import lsst.daf.base as dafBase
 from lsst.pex.config import Config, ConfigurableField, Field
 from lsst.sphgeom import Region
+from .apdbSchema import ApdbTables, TableDef
 
 
 def _data_file_name(basename: str) -> str:
@@ -42,18 +43,28 @@ def _data_file_name(basename: str) -> str:
 class ApdbConfig(Config):
     """Part of Apdb configuration common to all implementations.
     """
-    read_sources_months = Field(dtype=int,
-                                doc="Number of months of history to read from DiaSource",
-                                default=12)
-    read_forced_sources_months = Field(dtype=int,
-                                       doc="Number of months of history to read from DiaForcedSource",
-                                       default=12)
-    schema_file = Field(dtype=str,
-                        doc="Location of (YAML) configuration file with standard schema",
-                        default=_data_file_name("apdb-schema.yaml"))
-    extra_schema_file = Field(dtype=str,
-                              doc="Location of (YAML) configuration file with extra schema",
-                              default=_data_file_name("apdb-schema-extra.yaml"))
+    read_sources_months = Field(
+        dtype=int,
+        doc="Number of months of history to read from DiaSource",
+        default=12
+    )
+    read_forced_sources_months = Field(
+        dtype=int,
+        doc="Number of months of history to read from DiaForcedSource",
+        default=12
+    )
+    schema_file = Field(
+        dtype=str,
+        doc="Location of (YAML) configuration file with standard schema",
+        default=_data_file_name("apdb-schema.yaml")
+    )
+    extra_schema_file = Field(
+        dtype=str,
+        doc="Location of (YAML) configuration file with extra schema, "
+            "definitions in this file are merged with the definitions in "
+            "'schema_file', extending or replacing parts of the schema.",
+        default=_data_file_name("apdb-schema-extra.yaml")
+    )
 
 
 class Apdb(ABC):
@@ -61,6 +72,23 @@ class Apdb(ABC):
     """
 
     ConfigClass = ApdbConfig
+
+    @abstractmethod
+    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+        """Return table schema definition for a given table.
+
+        Parameters
+        ----------
+        table : `ApdbTables`
+            One of the known APDB tables.
+
+        Returns
+        -------
+        tableSchema : `TableDef` or `None`
+            Table schema description, `None` is returned if table is not
+            defined by this implementation.
+        """
+        raise NotImplementedError()
 
     @abstractmethod
     def makeSchema(self, drop: bool = False) -> None:

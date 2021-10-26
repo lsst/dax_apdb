@@ -71,6 +71,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         # create standard (baseline) schema
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="baseline",
+                               htm_index_column="pixelId",
                                schema_file=_data_file_name("apdb-schema.yaml"))
         schema.makeSchema()
         self._assertTable(schema.objects, "DiaObject", 92)
@@ -82,6 +83,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         # create schema using prefix
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="baseline",
+                               htm_index_column="pixelId",
                                schema_file=_data_file_name("apdb-schema.yaml"),
                                prefix="Pfx")
         # Drop existing tables (but we don't check it here)
@@ -94,6 +96,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         # use different indexing for DiaObject, need extra schema for that
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="pix_id_iov",
+                               htm_index_column="pixelId",
                                schema_file=_data_file_name("apdb-schema.yaml"),
                                extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)
@@ -106,6 +109,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         # use DiaObjectLast table for DiaObject, need extra schema for that
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="last_object_table",
+                               htm_index_column="pixelId",
                                schema_file=_data_file_name("apdb-schema.yaml"),
                                extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
         schema.makeSchema(drop=True)

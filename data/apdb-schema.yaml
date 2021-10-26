@@ -501,10 +501,6 @@ columns:
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
-- name: pixelId
-  type: BIGINT
-  nullable: false
-  description: HTM index.
 indices:
 - name: PK_DiaObject
   columns:
@@ -514,10 +510,6 @@ indices:
 - name: IDX_DiaObject_valStart
   columns:
   - validityStart
-  type: INDEX
-- name: IDX_DiaObject_htmId20
-  columns:
-  - pixelId
   type: INDEX
 ---
 table: SSObject
@@ -1548,10 +1540,6 @@ columns:
   default: '0'
   description: Flags, bitwise OR tbd.
   ucd: meta.code
-- name: pixelId
-  type: BIGINT
-  nullable: false
-  description: HTM index.
 indices:
 - name: PK_DiaSource
   columns:
@@ -1568,10 +1556,6 @@ indices:
 - name: IDX_DiaSource_ssObjId
   columns:
   - ssObjectId
-  type: INDEX
-- name: IDX_DiaSource_htmId20
-  columns:
-  - pixelId
   type: INDEX
 ---
 table: DiaForcedSource

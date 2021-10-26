@@ -30,7 +30,7 @@ from contextlib import contextmanager
 import logging
 import numpy as np
 import pandas
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Type
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import lsst.daf.base as dafBase
 from lsst.pex.config import Field, ChoiceField, ListField
@@ -39,63 +39,12 @@ import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
 from .apdb import Apdb, ApdbConfig
+from .apdbSchema import ApdbTables, TableDef
 from .apdbSqlSchema import ApdbSqlSchema
-from . import timer
+from .timer import Timer
 
 
 _LOG = logging.getLogger(__name__)
-
-
-class Timer:
-    """Timer class defining context manager which tracks execution timing.
-
-    Typical use:
-
-        with Timer("timer_name"):
-            do_something
-
-    On exit from block it will print elapsed time.
-
-    See also :py:mod:`timer` module.
-    """
-    def __init__(self, name: str, do_logging: bool = True, log_before_cursor_execute: bool = False):
-        self._log_before_cursor_execute = log_before_cursor_execute
-        self._do_logging = do_logging
-        self._timer1 = timer.Timer(name)
-        self._timer2 = timer.Timer(name + " (before/after cursor)")
-
-    def __enter__(self) -> Timer:
-        """
-        Enter context, start timer
-        """
-#         event.listen(engine.Engine, "before_cursor_execute", self._start_timer)
-#         event.listen(engine.Engine, "after_cursor_execute", self._stop_timer)
-        self._timer1.start()
-        return self
-
-    def __exit__(self, exc_type: Optional[Type], exc_val: Any, exc_tb: Any) -> Any:
-        """
-        Exit context, stop and dump timer
-        """
-        if exc_type is None:
-            self._timer1.stop()
-            if self._do_logging:
-                self._timer1.dump()
-#         event.remove(engine.Engine, "before_cursor_execute", self._start_timer)
-#         event.remove(engine.Engine, "after_cursor_execute", self._stop_timer)
-        return False
-
-    def _start_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
-        """Start counting"""
-        if self._log_before_cursor_execute:
-            _LOG.info("before_cursor_execute")
-        self._timer2.start()
-
-    def _stop_timer(self, conn, cursor, statement, parameters, context, executemany):  # type: ignore
-        """Stop counting"""
-        self._timer2.stop()
-        if self._do_logging:
-            self._timer2.dump()
 
 
 def _split(seq: Iterable, nItems: int) -> Iterator[List]:
@@ -147,60 +96,97 @@ def _ansi_session(engine: sqlalchemy.engine.Engine) -> Iterator[sqlalchemy.engin
 class ApdbSqlConfig(ApdbConfig):
     """APDB configuration class for SQL implementation (ApdbSql).
     """
-    db_url = Field(dtype=str, doc="SQLAlchemy database connection URI")
-    isolation_level = ChoiceField(dtype=str,
-                                  doc="Transaction isolation level, if unset then backend-default value "
-                                      "is used, except for SQLite backend where we use READ_UNCOMMITTED. "
-                                      "Some backends may not support every allowed value.",
-                                  allowed={"READ_COMMITTED": "Read committed",
-                                           "READ_UNCOMMITTED": "Read uncommitted",
-                                           "REPEATABLE_READ": "Repeatable read",
-                                           "SERIALIZABLE": "Serializable"},
-                                  default=None,
-                                  optional=True)
-    connection_pool = Field(dtype=bool,
-                            doc=("If False then disable SQLAlchemy connection pool. "
-                                 "Do not use connection pool when forking."),
-                            default=True)
-    connection_timeout = Field(dtype=float,
-                               doc="Maximum time to wait time for database lock to be released before "
-                                   "exiting. Defaults to sqlachemy defaults if not set.",
-                               default=None,
-                               optional=True)
-    sql_echo = Field(dtype=bool,
-                     doc="If True then pass SQLAlchemy echo option.",
-                     default=False)
-    dia_object_index = ChoiceField(dtype=str,
-                                   doc="Indexing mode for DiaObject table",
-                                   allowed={'baseline': "Index defined in baseline schema",
-                                            'pix_id_iov': "(pixelId, objectId, iovStart) PK",
-                                            'last_object_table': "Separate DiaObjectLast table"},
-                                   default='baseline')
-    htm_level = Field(dtype=int,
-                      doc="HTM indexing level",
-                      default=20)
-    htm_max_ranges = Field(dtype=int,
-                           doc="Max number of ranges in HTM envelope",
-                           default=64)
-    htm_index_column = Field(dtype=str, default="pixelId",
-                             doc="Name of a HTM index column for DiaObject and DiaSource tables")
-    ra_dec_columns = ListField(dtype=str, default=["ra", "decl"],
-                               doc="Names ra/dec columns in DiaObject table")
-    dia_object_columns = ListField(dtype=str,
-                                   doc="List of columns to read from DiaObject, by default read all columns",
-                                   default=[])
-    object_last_replace = Field(dtype=bool,
-                                doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
-                                default=True)
-    prefix = Field(dtype=str,
-                   doc="Prefix to add to table names and index names",
-                   default="")
-    explain = Field(dtype=bool,
-                    doc="If True then run EXPLAIN SQL command on each executed query",
-                    default=False)
-    timer = Field(dtype=bool,
-                  doc="If True then print/log timing information",
-                  default=False)
+    db_url = Field(
+        dtype=str,
+        doc="SQLAlchemy database connection URI"
+    )
+    isolation_level = ChoiceField(
+        dtype=str,
+        doc="Transaction isolation level, if unset then backend-default value "
+            "is used, except for SQLite backend where we use READ_UNCOMMITTED. "
+            "Some backends may not support every allowed value.",
+        allowed={
+            "READ_COMMITTED": "Read committed",
+            "READ_UNCOMMITTED": "Read uncommitted",
+            "REPEATABLE_READ": "Repeatable read",
+            "SERIALIZABLE": "Serializable"
+        },
+        default=None,
+        optional=True
+    )
+    connection_pool = Field(
+        dtype=bool,
+        doc="If False then disable SQLAlchemy connection pool. "
+            "Do not use connection pool when forking.",
+        default=True
+    )
+    connection_timeout = Field(
+        dtype=float,
+        doc="Maximum time to wait time for database lock to be released before "
+            "exiting. Defaults to sqlachemy defaults if not set.",
+        default=None,
+        optional=True
+    )
+    sql_echo = Field(
+        dtype=bool,
+        doc="If True then pass SQLAlchemy echo option.",
+        default=False
+    )
+    dia_object_index = ChoiceField(
+        dtype=str,
+        doc="Indexing mode for DiaObject table",
+        allowed={
+            'baseline': "Index defined in baseline schema",
+            'pix_id_iov': "(pixelId, objectId, iovStart) PK",
+            'last_object_table': "Separate DiaObjectLast table"
+        },
+        default='baseline'
+    )
+    htm_level = Field(
+        dtype=int,
+        doc="HTM indexing level",
+        default=20
+    )
+    htm_max_ranges = Field(
+        dtype=int,
+        doc="Max number of ranges in HTM envelope",
+        default=64
+    )
+    htm_index_column = Field(
+        dtype=str,
+        default="pixelId",
+        doc="Name of a HTM index column for DiaObject and DiaSource tables"
+    )
+    ra_dec_columns = ListField(
+        dtype=str,
+        default=["ra", "decl"],
+        doc="Names ra/dec columns in DiaObject table"
+    )
+    dia_object_columns = ListField(
+        dtype=str,
+        doc="List of columns to read from DiaObject, by default read all columns",
+        default=[]
+    )
+    object_last_replace = Field(
+        dtype=bool,
+        doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
+        default=True
+    )
+    prefix = Field(
+        dtype=str,
+        doc="Prefix to add to table names and index names",
+        default=""
+    )
+    explain = Field(
+        dtype=bool,
+        doc="If True then run EXPLAIN SQL command on each executed query",
+        default=False
+    )
+    timer = Field(
+        dtype=bool,
+        doc="If True then print/log timing information",
+        default=False
+    )
 
     def validate(self) -> None:
         super().validate()
@@ -260,7 +246,8 @@ class ApdbSql(Apdb):
                                      dia_object_index=self.config.dia_object_index,
                                      schema_file=self.config.schema_file,
                                      extra_schema_file=self.config.extra_schema_file,
-                                     prefix=self.config.prefix)
+                                     prefix=self.config.prefix,
+                                     htm_index_column=self.config.htm_index_column)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
 
@@ -286,6 +273,10 @@ class ApdbSql(Apdb):
             res[table.name] = count
 
         return res
+
+    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+        # docstring is inherited from a base class
+        return self._schema.tableSchemas.get(table)
 
     def makeSchema(self, drop: bool = False) -> None:
         # docstring is inherited from a base class
