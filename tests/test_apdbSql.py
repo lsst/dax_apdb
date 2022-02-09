@@ -49,10 +49,6 @@ class ApdbSqlTestCase(unittest.TestCase, ApdbTest):
     def n_columns(self, table: ApdbTables) -> int:
         """Return number of columns for a specified table."""
 
-        if table is ApdbTables.DiaObject and self.dia_object_index == "last_object_table":
-            # DiaObjectLast is used
-            table = ApdbTables.DiaObjectLast
-
         # Some tables add pixelId column to standard schema
         if table is ApdbTables.DiaObject:
             return self.n_obj_columns + 1
@@ -62,6 +58,12 @@ class ApdbSqlTestCase(unittest.TestCase, ApdbTest):
             return self.n_src_columns + 1
         elif table is ApdbTables.DiaForcedSource:
             return self.n_fsrc_columns
+        elif table is ApdbTables.SSObject:
+            return self.n_ssobj_columns
+
+    def getDiaObjects_table(self) -> ApdbTables:
+        """Return type of table returned from getDiaObjects method."""
+        return ApdbTables.DiaObject
 
 
 class ApdbSqlTestCaseLastObject(ApdbSqlTestCase):
@@ -69,6 +71,10 @@ class ApdbSqlTestCaseLastObject(ApdbSqlTestCase):
     """
 
     dia_object_index = "last_object_table"
+
+    def getDiaObjects_table(self) -> ApdbTables:
+        """Return type of table returned from getDiaObjects method."""
+        return ApdbTables.DiaObjectLast
 
 
 class ApdbSqlTestCasePixIdIovIndex(ApdbSqlTestCase):

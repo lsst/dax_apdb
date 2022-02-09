@@ -26,7 +26,7 @@ __all__ = ["ApdbConfig", "Apdb"]
 from abc import ABC, abstractmethod
 import os
 import pandas
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 
 import lsst.daf.base as dafBase
 from lsst.pex.config import Config, ConfigurableField, Field
@@ -201,6 +201,119 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def getDiaObjectsHistory(self,
+                             start_time: dafBase.DateTime,
+                             end_time: Optional[dafBase.DateTime] = None,
+                             region: Optional[Region] = None) -> pandas.DataFrame:
+        """Returns catalog of DiaObject instances from a given time period
+        including the history of each DiaObject.
+
+        Parameters
+        ----------
+        start_time : `dafBase.DateTime`
+            Starting time for DiaObject history search. DiaObject record is
+            selected when its ``validityStart`` falls into an interval
+            between ``start__time`` (inclusive) and ``end_time`` (exclusive).
+        end_time : `dafBase.DateTime`, optional
+            Upper limit on time for DiaObject history search, if not specified
+            then there is no restriction on upper limit.
+        region : `lsst.sphgeom.Region`, optional
+            Region to search for DiaObjects, if not specified then whole sky
+            is searched. If region is specified then some returned records may
+            fall outside of this region.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaObject records.
+
+        Notes
+        -----
+        This part of API may not be very stable and can change before the
+        implementation finalizes.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getDiaSourcesHistory(self,
+                             start_time: dafBase.DateTime,
+                             end_time: Optional[dafBase.DateTime] = None,
+                             region: Optional[Region] = None) -> pandas.DataFrame:
+        """Returns catalog of DiaSource instances from a given time period.
+
+        Parameters
+        ----------
+        start_time : `dafBase.DateTime`
+            Starting time for DiaSource history search. DiaSource record is
+            selected when its ``midPointTai`` falls into an interval between
+            ``start__time`` (inclusive) and ``end_time`` (exclusive).
+        end_time : `dafBase.DateTime`
+            Upper limit on time for DiaSource history search, if not specified
+            then there is no restriction on upper limit.
+        region : `lsst.sphgeom.Region`, optional
+            Region to search for DiaSources, if not specified then whole sky
+            is searched. If region is specified then some returned records may
+            fall outside of this region.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaObject records.
+
+        Notes
+        -----
+        This part of API may not be very stable and can change before the
+        implementation finalizes.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getDiaForcedSourcesHistory(self,
+                                   start_time: dafBase.DateTime,
+                                   end_time: Optional[dafBase.DateTime] = None,
+                                   region: Optional[Region] = None) -> pandas.DataFrame:
+        """Returns catalog of DiaForcedSource instances from a given time
+        period.
+
+        Parameters
+        ----------
+        start_time : `dafBase.DateTime`
+            Starting time for DiaForcedSource history search. DiaForcedSource
+            record is selected when its ``midPointTai`` falls into an interval
+            between ``start__time`` (inclusive) and ``end_time`` (exclusive).
+        end_time : `dafBase.DateTime`
+            Upper limit on time for DiaForcedSource history search, if not
+            specified then there is no restriction on upper limit.
+        region : `lsst.sphgeom.Region`, optional
+            Region to search for DiaForcedSources, if not specified then whole
+            sky is searched. If region is specified then some returned records
+            may fall outside of this region.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaObject records.
+
+        Notes
+        -----
+        This part of API may not be very stable and can change before the
+        implementation finalizes.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getSSObjects(self) -> pandas.DataFrame:
+        """Returns catalog of SSObject instances.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing SSObject records, all existing records are
+            returned.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def store(self,
               visit_time: dafBase.DateTime,
               objects: pandas.DataFrame,
@@ -234,6 +347,34 @@ class Apdb(ABC):
             catalog
           - source catalogs have ``diaObjectId`` column associating sources
             with objects
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def storeSSObjects(self, objects: pandas.DataFrame) -> None:
+        """Store or update SSObject catalog.
+
+        Parameters
+        ----------
+        objects : `pandas.DataFrame`
+            Catalog with SSObject records.
+
+        Notes
+        -----
+        If SSObjects with matching IDs already exist in the database, their
+        records will be updated with the information from provided records.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
+        """Associate DiaSources with SSObjects, dis-associating them
+        from DiaObjects.
+
+        Parameters
+        ----------
+        idMap : `Mapping`
+            Maps DiaSource IDs to their new SSObject IDs.
         """
         raise NotImplementedError()
 

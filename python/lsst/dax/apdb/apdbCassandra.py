@@ -635,6 +635,31 @@ class ApdbCassandra(Apdb):
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
 
+    def getDiaObjectsHistory(self,
+                             start_time: dafBase.DateTime,
+                             end_time: Optional[dafBase.DateTime] = None,
+                             region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
+
+    def getDiaSourcesHistory(self,
+                             start_time: dafBase.DateTime,
+                             end_time: Optional[dafBase.DateTime] = None,
+                             region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
+
+    def getDiaForcedSourcesHistory(self,
+                                   start_time: dafBase.DateTime,
+                                   end_time: Optional[dafBase.DateTime] = None,
+                                   region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
+
+    def getSSObjects(self) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
+
     def store(self,
               visit_time: dafBase.DateTime,
               objects: pandas.DataFrame,
@@ -697,6 +722,14 @@ class ApdbCassandra(Apdb):
 
         self._storeObjectsPandas(sources, table_name, visit_time,
                                  extra_columns=extra_columns, time_part=time_part)
+
+    def storeSSObjects(self, objects: pandas.DataFrame) -> None:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
+
+    def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class

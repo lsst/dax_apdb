@@ -110,10 +110,6 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
     def n_columns(self, table: ApdbTables) -> int:
         """Return number of columns for a specified table."""
 
-        if table is ApdbTables.DiaObject:
-            # DiaObjectLast is used
-            table = ApdbTables.DiaObjectLast
-
         # Tables add one or two partitioning columns depending on config
         if table is ApdbTables.DiaObjectLast:
             n_part_columns = 1
@@ -131,6 +127,10 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
             return self.n_src_columns + n_part_columns
         elif table is ApdbTables.DiaForcedSource:
             return self.n_fsrc_columns + n_part_columns
+
+    def getDiaObjects_table(self) -> ApdbTables:
+        """Return type of table returned from getDiaObjects method."""
+        return ApdbTables.DiaObjectLast
 
 
 class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):

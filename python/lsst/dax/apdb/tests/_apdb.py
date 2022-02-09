@@ -24,14 +24,14 @@ from __future__ import annotations
 __all__ = ["ApdbTest"]
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import pandas
 
 from lsst.daf.base import DateTime
 from lsst.dax.apdb import ApdbConfig, ApdbTables, make_apdb
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
-from .data_factory import makeObjectCatalog, makeForcedSourceCatalog, makeSourceCatalog
+from .data_factory import makeObjectCatalog, makeForcedSourceCatalog, makeSourceCatalog, makeSSObjectCatalog
 
 
 class ApdbTest(ABC):
@@ -53,6 +53,7 @@ class ApdbTest(ABC):
     n_obj_last_columns = 17
     n_src_columns = 107
     n_fsrc_columns = 8
+    n_ssobj_columns = 81
 
     @abstractmethod
     def make_config(self, **kwargs: Any) -> ApdbConfig:
@@ -64,9 +65,14 @@ class ApdbTest(ABC):
         """Return number of columns for a specified table."""
         raise NotImplementedError()
 
-    def make_region(self) -> Region:
-        """Make a region used in tests"""
-        pointing_v = UnitVector3d(1., 1., -1.)
+    @abstractmethod
+    def getDiaObjects_table(self) -> ApdbTables:
+        """Return type of table returned from getDiaObjects method."""
+        raise NotImplementedError()
+
+    def make_region(self, xyz: Tuple[float, float, float] = (1., 1., -1.)) -> Region:
+        """Make a region to use in tests"""
+        pointing_v = UnitVector3d(*xyz)
         fov = 0.05  # radians
         region = Circle(pointing_v, Angle(fov/2))
         return region
@@ -117,7 +123,7 @@ class ApdbTest(ABC):
 
         # get objects by region
         res = apdb.getDiaObjects(region)
-        self.assert_catalog(res, 0, ApdbTables.DiaObject)
+        self.assert_catalog(res, 0, self.getDiaObjects_table())
 
         # get sources by region
         res = apdb.getDiaSources(region, None, visit_time)
@@ -165,7 +171,7 @@ class ApdbTest(ABC):
 
         # get objects by region
         res = apdb.getDiaObjects(region)
-        self.assert_catalog(res, 0, ApdbTables.DiaObject)
+        self.assert_catalog(res, 0, self.getDiaObjects_table())
 
         # get sources by region
         res = apdb.getDiaSources(region, None, visit_time)
@@ -198,7 +204,86 @@ class ApdbTest(ABC):
 
         # read it back and check sizes
         res = apdb.getDiaObjects(region)
-        self.assert_catalog(res, len(catalog), ApdbTables.DiaObject)
+        self.assert_catalog(res, len(catalog), self.getDiaObjects_table())
+
+    def test_objectHistory(self) -> None:
+        """Store and retrieve DiaObject history."""
+
+        # don't care about sources.
+        config = self.make_config()
+        apdb = make_apdb(config)
+        apdb.makeSchema()
+
+        region1 = self.make_region((1., 1., -1.))
+        region2 = self.make_region((-1., -1., -1.))
+        visit_time = [
+            DateTime("2021-01-01T00:01:00", DateTime.TAI),
+            DateTime("2021-01-01T00:02:00", DateTime.TAI),
+            DateTime("2021-01-01T00:03:00", DateTime.TAI),
+            DateTime("2021-01-01T00:04:00", DateTime.TAI),
+            DateTime("2021-01-01T00:05:00", DateTime.TAI),
+            DateTime("2021-01-01T00:06:00", DateTime.TAI)
+        ]
+
+        nobj = 100
+        catalog1 = makeObjectCatalog(region1, nobj)
+        apdb.store(visit_time[0], catalog1)
+        apdb.store(visit_time[2], catalog1)
+        apdb.store(visit_time[4], catalog1)
+        catalog2 = makeObjectCatalog(region2, nobj, start_id=nobj*2)
+        apdb.store(visit_time[1], catalog2)
+        apdb.store(visit_time[3], catalog2)
+        apdb.store(visit_time[5], catalog2)
+
+        # read it back and check sizes
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI))
+        self.assert_catalog(res, nobj * 5, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI))
+        self.assert_catalog(res, nobj * 4, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 2, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI))
+        self.assert_catalog(res, 0, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:06:01", DateTime.TAI),
+        )
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:06:00", DateTime.TAI),
+        )
+        self.assert_catalog(res, nobj * 5, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:01:00", DateTime.TAI),
+        )
+        self.assert_catalog(res, 0, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), region=region1)
+        self.assert_catalog(res, nobj * 3, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:03:00", DateTime.TAI), region=region2)
+        self.assert_catalog(res, nobj * 2, ApdbTables.DiaObject)
+
+        res = apdb.getDiaObjectsHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:03:30", DateTime.TAI),
+            region1,
+        )
+        self.assert_catalog(res, nobj * 2, ApdbTables.DiaObject)
 
     def test_storeSources(self) -> None:
         """Store and retrieve DiaSources."""
@@ -229,6 +314,85 @@ class ApdbTest(ABC):
         res = apdb.getDiaSources(region, [], visit_time)
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
+    def test_sourceHistory(self) -> None:
+        """Store and retrieve DiaSource history."""
+
+        # don't care about sources.
+        config = self.make_config()
+        apdb = make_apdb(config)
+        apdb.makeSchema()
+
+        region1 = self.make_region((1., 1., -1.))
+        region2 = self.make_region((-1., -1., -1.))
+        nobj = 100
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj*2)
+
+        visits = [
+            (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:02:00", DateTime.TAI), objects2),
+            (DateTime("2021-01-01T00:03:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:04:00", DateTime.TAI), objects2),
+            (DateTime("2021-01-01T00:05:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:06:00", DateTime.TAI), objects2),
+        ]
+
+        start_id = 0
+        for visit_time, objects in visits:
+            sources = makeSourceCatalog(objects, visit_time, start_id=start_id)
+            apdb.store(visit_time, objects, sources)
+            start_id += nobj
+
+        # read it back and check sizes
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI))
+        self.assert_catalog(res, nobj * 5, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI))
+        self.assert_catalog(res, nobj * 4, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 2, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI))
+        self.assert_catalog(res, 0, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:06:01", DateTime.TAI),
+        )
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:06:00", DateTime.TAI),
+        )
+        self.assert_catalog(res, nobj * 5, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:01:00", DateTime.TAI),
+        )
+        self.assert_catalog(res, 0, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), region=region1)
+        self.assert_catalog(res, nobj * 3, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:03:00", DateTime.TAI), region=region2)
+        self.assert_catalog(res, nobj * 2, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:03:30", DateTime.TAI),
+            region1,
+        )
+        self.assert_catalog(res, nobj * 2, ApdbTables.DiaSource)
+
     def test_storeForcedSources(self) -> None:
         """Store and retrieve DiaForcedSources."""
 
@@ -253,6 +417,137 @@ class ApdbTest(ABC):
         # read it back to get schema
         res = apdb.getDiaForcedSources(region, [], visit_time)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
+
+    def test_forcedSourceHistory(self) -> None:
+        """Store and retrieve DiaForcedSource history."""
+
+        # don't care about sources.
+        config = self.make_config()
+        apdb = make_apdb(config)
+        apdb.makeSchema()
+
+        region1 = self.make_region((1., 1., -1.))
+        region2 = self.make_region((-1., -1., -1.))
+        nobj = 100
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj*2)
+
+        visits = [
+            (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:02:00", DateTime.TAI), objects2),
+            (DateTime("2021-01-01T00:03:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:04:00", DateTime.TAI), objects2),
+            (DateTime("2021-01-01T00:05:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:06:00", DateTime.TAI), objects2),
+        ]
+
+        start_id = 0
+        for visit_time, objects in visits:
+            sources = makeForcedSourceCatalog(objects, visit_time, ccdVisitId=start_id)
+            apdb.store(visit_time, objects, forced_sources=sources)
+            start_id += 1
+
+        # read it back and check sizes
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI))
+        self.assert_catalog(res, nobj * 5, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI))
+        self.assert_catalog(res, nobj * 4, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI))
+        self.assert_catalog(res, nobj * 2, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI))
+        self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:06:01", DateTime.TAI),
+        )
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:06:00", DateTime.TAI),
+        )
+        self.assert_catalog(res, nobj * 5, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:01:00", DateTime.TAI),
+        )
+        self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), region=region1)
+        self.assert_catalog(res, nobj * 6, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:03:00", DateTime.TAI), region=region2)
+        self.assert_catalog(res, nobj * 4, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI),
+            DateTime("2021-01-01T00:03:30", DateTime.TAI),
+            region1,
+        )
+        self.assert_catalog(res, nobj * 3, ApdbTables.DiaForcedSource)
+
+    def test_storeSSObjects(self) -> None:
+        """Store and retrieve SSObjects."""
+
+        # don't care about sources.
+        config = self.make_config()
+        apdb = make_apdb(config)
+        apdb.makeSchema()
+
+        # make catalog with SSObjects
+        catalog = makeSSObjectCatalog(100, flags=1)
+
+        # store catalog
+        apdb.storeSSObjects(catalog)
+
+        # read it back and check sizes
+        res = apdb.getSSObjects()
+        self.assert_catalog(res, len(catalog), ApdbTables.SSObject)
+
+        # check that override works, make catalog with SSObjects, ID = 51-150
+        catalog = makeSSObjectCatalog(100, 51, flags=2)
+        apdb.storeSSObjects(catalog)
+        res = apdb.getSSObjects()
+        self.assert_catalog(res, 150, ApdbTables.SSObject)
+        self.assertEqual(len(res[res["flags"] == 1]), 50)
+        self.assertEqual(len(res[res["flags"] == 2]), 100)
+
+    def test_reassignObjects(self) -> None:
+        """Reassign DiaObjects."""
+
+        # don't care about sources.
+        config = self.make_config()
+        apdb = make_apdb(config)
+        apdb.makeSchema()
+
+        region = self.make_region()
+        visit_time = self.visit_time
+        objects = makeObjectCatalog(region, 100)
+        oids = list(objects["diaObjectId"])
+        sources = makeSourceCatalog(objects, visit_time)
+        apdb.store(visit_time, objects, sources)
+
+        catalog = makeSSObjectCatalog(100)
+        apdb.storeSSObjects(catalog)
+
+        # read it back and filter by ID
+        res = apdb.getDiaSources(region, oids, visit_time)
+        self.assert_catalog(res, len(sources), ApdbTables.DiaSource)
+
+        apdb.reassignDiaSources({1: 1, 2: 2, 5: 5})
+        res = apdb.getDiaSources(region, oids, visit_time)
+        self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
 
     def test_midPointTai_src(self) -> None:
         """Test for time filtering of DiaSources.
