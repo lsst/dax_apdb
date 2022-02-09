@@ -30,7 +30,7 @@ from contextlib import contextmanager
 import logging
 import numpy as np
 import pandas
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 import lsst.daf.base as dafBase
 from lsst.pex.config import Field, ChoiceField, ListField
@@ -298,16 +298,7 @@ class ApdbSql(Apdb):
             query = sql.select(columns)
 
         # build selection
-        htm_index_column = table.columns[self.config.htm_index_column]
-        exprlist = []
-        pixel_ranges = self._htm_indices(region)
-        for low, upper in pixel_ranges:
-            upper -= 1
-            if low == upper:
-                exprlist.append(htm_index_column == low)
-            else:
-                exprlist.append(sql.expression.between(htm_index_column, low, upper))
-        query = query.where(sql.expression.or_(*exprlist))
+        query = query.where(self._filterRegion(table, region))
 
         # select latest version of objects
         if self.config.dia_object_index != 'last_object_table':
@@ -400,6 +391,109 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
+    def getDiaObjectsHistory(self,
+                             start_time: dafBase.DateTime,
+                             end_time: Optional[dafBase.DateTime] = None,
+                             region: Optional[Region] = None) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+
+        table = self._schema.objects
+        query = table.select()
+
+        # build selection
+        time_filter = table.columns["validityStart"] >= start_time.toPython()
+        if end_time:
+            time_filter = sql.expression.and_(
+                time_filter,
+                table.columns["validityStart"] < end_time.toPython()
+            )
+
+        if region:
+            where = sql.expression.and_(self._filterRegion(table, region), time_filter)
+            query = query.where(where)
+        else:
+            query = query.where(time_filter)
+
+        # execute select
+        with Timer('DiaObject history select', self.config.timer):
+            with self._engine.begin() as conn:
+                catalog = pandas.read_sql_query(query, conn)
+        _LOG.debug("found %s DiaObjects history records", len(catalog))
+        return catalog
+
+    def getDiaSourcesHistory(self,
+                             start_time: dafBase.DateTime,
+                             end_time: Optional[dafBase.DateTime] = None,
+                             region: Optional[Region] = None) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+
+        table = self._schema.sources
+        query = table.select()
+
+        # build selection
+        time_filter = table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD)
+        if end_time:
+            time_filter = sql.expression.and_(
+                time_filter,
+                table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
+            )
+
+        if region:
+            where = sql.expression.and_(self._filterRegion(table, region), time_filter)
+            query = query.where(where)
+        else:
+            query = query.where(time_filter)
+
+        # execute select
+        with Timer('DiaSource history select', self.config.timer):
+            with self._engine.begin() as conn:
+                catalog = pandas.read_sql_query(query, conn)
+        _LOG.debug("found %s DiaSource history records", len(catalog))
+        return catalog
+
+    def getDiaForcedSourcesHistory(self,
+                                   start_time: dafBase.DateTime,
+                                   end_time: Optional[dafBase.DateTime] = None,
+                                   region: Optional[Region] = None) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+
+        table = self._schema.forcedSources
+        query = table.select()
+
+        # build selection
+        time_filter = table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD)
+        if end_time:
+            time_filter = sql.expression.and_(
+                time_filter,
+                table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
+            )
+        # Forced sources have no pixel index, so no region filtering
+        query = query.where(time_filter)
+
+        # execute select
+        with Timer('DiaForcedSource history select', self.config.timer):
+            with self._engine.begin() as conn:
+                catalog = pandas.read_sql_query(query, conn)
+        _LOG.debug("found %s DiaForcedSource history records", len(catalog))
+        return catalog
+
+    def getSSObjects(self) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+
+        table = self._schema.ssObjects
+        query = table.select()
+
+        if self.config.explain:
+            # run the same query with explain
+            self._explain(query, self._engine)
+
+        # execute select
+        with Timer('DiaObject select', self.config.timer):
+            with self._engine.begin() as conn:
+                objects = pandas.read_sql_query(query, conn)
+        _LOG.debug("found %s SSObjects", len(objects))
+        return objects
+
     def store(self,
               visit_time: dafBase.DateTime,
               objects: pandas.DataFrame,
@@ -418,6 +512,50 @@ class ApdbSql(Apdb):
 
         if forced_sources is not None:
             self._storeDiaForcedSources(forced_sources)
+
+    def storeSSObjects(self, objects: pandas.DataFrame) -> None:
+        # docstring is inherited from a base class
+
+        idColumn = "ssObjectId"
+        table = self._schema.ssObjects
+
+        # everything to be done in single transaction
+        with self._engine.begin() as conn:
+
+            # find record IDs that already exist
+            ids = sorted(objects[idColumn])
+            query = sql.select(table.columns[idColumn], table.columns[idColumn].in_(ids))
+            result = conn.execute(query)
+            knownIds = set(row[idColumn] for row in result)
+
+            filter = objects[idColumn].isin(knownIds)
+            toUpdate = objects[filter]
+            toInsert = objects[~filter]
+
+            # insert new records
+            if len(toInsert) > 0:
+                toInsert.to_sql(ApdbTables.SSObject.table_name(), conn, if_exists='append', index=False)
+
+            # update existing records
+            if len(toUpdate) > 0:
+                whereKey = f"{idColumn}_param"
+                query = table.update().where(table.columns[idColumn] == sql.bindparam(whereKey))
+                toUpdate = toUpdate.rename({idColumn: whereKey}, axis="columns")
+                values = toUpdate.to_dict("records")
+                result = conn.execute(query, values)
+
+    def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
+        # docstring is inherited from a base class
+
+        table = self._schema.sources
+        query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
+
+        with self._engine.begin() as conn:
+            # TODO: diaObjectId should probably be None but in our current
+            # schema it is defined NOT NULL, may need to update for the future
+            # schema.
+            params = [dict(srcId=key, diaObjectId=0, ssObjectId=value) for key, value in idMap.items()]
+            conn.execute(query, params)
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
@@ -473,17 +611,8 @@ class ApdbSql(Apdb):
         query = table.select()
 
         # build selection
-        htm_index_column = table.columns[self.config.htm_index_column]
-        exprlist = []
-        pixel_ranges = self._htm_indices(region)
-        for low, upper in pixel_ranges:
-            upper -= 1
-            if low == upper:
-                exprlist.append(htm_index_column == low)
-            else:
-                exprlist.append(sql.expression.between(htm_index_column, low, upper))
         time_filter = table.columns["midPointTai"] > midPointTai_start
-        where = sql.expression.and_(sql.expression.or_(*exprlist), time_filter)
+        where = sql.expression.and_(self._filterRegion(table, region), time_filter)
         query = query.where(where)
 
         # execute select
@@ -724,6 +853,21 @@ class ApdbSql(Apdb):
                            self.pixelator.toString(irange[1]))
 
         return indices.ranges()
+
+    def _filterRegion(self, table: sqlalchemy.schema.Table, region: Region) -> sql.ClauseElement:
+        """Make SQLAlchemy expression for selecting records in a region.
+        """
+        htm_index_column = table.columns[self.config.htm_index_column]
+        exprlist = []
+        pixel_ranges = self._htm_indices(region)
+        for low, upper in pixel_ranges:
+            upper -= 1
+            if low == upper:
+                exprlist.append(htm_index_column == low)
+            else:
+                exprlist.append(sql.expression.between(htm_index_column, low, upper))
+
+        return sql.expression.or_(*exprlist)
 
     def _add_obj_htm_index(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate HTM index for each record and add it to a DataFrame.

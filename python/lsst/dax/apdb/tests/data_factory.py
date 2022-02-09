@@ -61,7 +61,7 @@ def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
             count -= 1
 
 
-def makeObjectCatalog(region: Region, count: int) -> pandas.DataFrame:
+def makeObjectCatalog(region: Region, count: int, start_id: int = 1) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaObjects inside a region.
 
     Parameters
@@ -84,7 +84,7 @@ def makeObjectCatalog(region: Region, count: int) -> pandas.DataFrame:
     points = list(_genPointsInRegion(region, count))
     # diaObjectId=0 may be used in some code for DiaSource foreign key to mean
     # the same as ``None``.
-    ids = numpy.arange(1, len(points) + 1, dtype=numpy.int64)
+    ids = numpy.arange(start_id, len(points) + start_id, dtype=numpy.int64)
     ras = numpy.array([sp.getRa().asDegrees() for sp in points], dtype=numpy.float64)
     decls = numpy.array([sp.getDec().asDegrees() for sp in points], dtype=numpy.float64)
     df = pandas.DataFrame({"diaObjectId": ids,
@@ -135,7 +135,7 @@ def makeSourceCatalog(objects: pandas.DataFrame, visit_time: DateTime,
 
 def makeForcedSourceCatalog(objects: pandas.DataFrame, visit_time: DateTime,
                             ccdVisitId: int = 1) -> pandas.DataFrame:
-    """Make a catalog containing a bunch of DiaFourceSources associated with
+    """Make a catalog containing a bunch of DiaForcedSources associated with
     the input DiaObjects.
 
     Parameters
@@ -164,4 +164,35 @@ def makeForcedSourceCatalog(objects: pandas.DataFrame, visit_time: DateTime,
         "midPointTai": numpy.full(nrows, midPointTai, dtype=numpy.float64),
         "flags": numpy.full(nrows, 0, dtype=numpy.int64),
     })
+    return df
+
+
+def makeSSObjectCatalog(count: int, start_id: int = 1, flags: int = 0) -> pandas.DataFrame:
+    """Make a catalog containing a bunch of SSObjects.
+
+    Parameters
+    ----------
+    count : `int`
+        Number of records to generate.
+    startID : `int`
+        Initial SSObject ID.
+    flags : `int`
+        Value for ``flags`` column.
+
+    Returns
+    -------
+    catalog : `pandas.DataFrame`
+        Catalog of SSObjects records.
+
+    Notes
+    -----
+    Returned catalog only contains three columns - ``ssObjectId`, ``arc``,
+    and ``flags``.
+    """
+    ids = numpy.arange(start_id, count + start_id, dtype=numpy.int64)
+    arc = numpy.full(count, 0.001, dtype=numpy.float32)
+    flags = numpy.full(count, flags, dtype=numpy.int64)
+    df = pandas.DataFrame({"ssObjectId": ids,
+                           "arc": arc,
+                           "flags": flags})
     return df

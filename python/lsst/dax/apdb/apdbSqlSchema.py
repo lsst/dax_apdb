@@ -102,7 +102,7 @@ class ApdbSqlSchema(ApdbSchema):
             tableDef = self.tableSchemas.get(table)
             if not tableDef:
                 continue
-            column = ColumnDef(name="pixelId",
+            column = ColumnDef(name=htm_index_column,
                                type="BIGINT",
                                nullable=False,
                                default=None,
@@ -113,11 +113,11 @@ class ApdbSqlSchema(ApdbSchema):
 
             if table is ApdbTables.DiaObjectLast:
                 # use it as a leading PK column
-                tableDef.primary_key.columns.insert(0, "pixelId")
+                tableDef.primary_key.columns.insert(0, htm_index_column)
             else:
                 # make a regular index
-                index = IndexDef(name=f"IDX_{tableDef.name}_pixelId",
-                                 type=IndexType.INDEX, columns=["pixelId"])
+                index = IndexDef(name=f"IDX_{tableDef.name}_{htm_index_column}",
+                                 type=IndexType.INDEX, columns=[htm_index_column])
                 tableDef.indices.append(index)
 
         # generate schema for all tables, must be called last
@@ -127,6 +127,7 @@ class ApdbSqlSchema(ApdbSchema):
         self.objects_last = self._tables.get(ApdbTables.DiaObjectLast)
         self.sources = self._tables[ApdbTables.DiaSource]
         self.forcedSources = self._tables[ApdbTables.DiaForcedSource]
+        self.ssObjects = self._tables[ApdbTables.SSObject]
 
     def _makeTables(self, mysql_engine: str = 'InnoDB') -> Mapping[ApdbTables, Table]:
         """Generate schema for all tables.
