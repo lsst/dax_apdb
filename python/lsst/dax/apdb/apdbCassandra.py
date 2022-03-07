@@ -29,11 +29,6 @@ import numpy as np
 import pandas
 from typing import cast, Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
-try:
-    import cbor
-except ImportError:
-    cbor = None
-
 # If cassandra-driver is not there the module can still be imported
 # but ApdbCassandra cannot be instantiated.
 try:
@@ -51,7 +46,7 @@ from lsst.pex.config import ChoiceField, Field, ListField
 from lsst import sphgeom
 from .timer import Timer
 from .apdb import Apdb, ApdbConfig
-from .apdbSchema import ApdbTables, ColumnDef, TableDef
+from .apdbSchema import ApdbTables, TableDef
 from .apdbCassandraSchema import ApdbCassandraSchema
 
 
@@ -180,12 +175,6 @@ class ApdbCassandraConfig(ApdbConfig):
         default=True,
         doc="If True then combine result rows before converting to pandas. "
     )
-    packing = ChoiceField(
-        dtype=str,
-        allowed=dict(none="No field packing", cbor="Pack using CBOR"),
-        doc="Packing method for table records.",
-        default="none"
-    )
     prepared_statements = Field(
         dtype=bool,
         default=True,
@@ -252,8 +241,7 @@ if CASSANDRA_IMPORTED:
             return self._map.get(private_ip, private_ip)
 
 
-def _rows_to_pandas(colnames: List[str], rows: List[Tuple],
-                    packedColumns: List[ColumnDef]) -> pandas.DataFrame:
+def _rows_to_pandas(colnames: List[str], rows: List[Tuple]) -> pandas.DataFrame:
     """Convert result rows to pandas.
 
     Unpacks BLOBs that were packed on insert.
@@ -264,54 +252,18 @@ def _rows_to_pandas(colnames: List[str], rows: List[Tuple],
         Names of the columns.
     rows : `list` of `tuple`
         Result rows.
-    packedColumns : `list` [ `ColumnDef` ]
-        Column definitions for packed columns.
 
     Returns
     -------
     catalog : `pandas.DataFrame`
         DataFrame with the result set.
     """
-    try:
-        idx = colnames.index("apdb_packed")
-    except ValueError:
-        # no packed columns
-        return pandas.DataFrame.from_records(rows, columns=colnames)
-
-    # make data frame for non-packed columns
-    df = pandas.DataFrame.from_records(rows, columns=colnames, exclude=["apdb_packed"])
-
-    # make records with packed data only as dicts
-    packed_rows = []
-    for row in rows:
-        blob = row[idx]
-        if blob[:5] == b"cbor:":
-            blob = cbor.loads(blob[5:])
-        else:
-            raise ValueError("Unexpected BLOB format: %r", blob)
-        packed_rows.append(blob)
-
-    # make data frome from packed data
-    packed = pandas.DataFrame.from_records(packed_rows, columns=[col.name for col in packedColumns])
-
-    # convert timestamps which are integer milliseconds into datetime
-    for col in packedColumns:
-        if col.type == "DATETIME":
-            packed[col.name] = pandas.to_datetime(packed[col.name], unit="ms", origin="unix")
-
-    return pandas.concat([df, packed], axis=1)
+    return pandas.DataFrame.from_records(rows, columns=colnames)
 
 
 class _PandasRowFactory:
     """Create pandas DataFrame from Cassandra result set.
-
-    Parameters
-    ----------
-    packedColumns : `list` [ `ColumnDef` ]
-        Column definitions for packed columns.
     """
-    def __init__(self, packedColumns: Iterable[ColumnDef]):
-        self.packedColumns = list(packedColumns)
 
     def __call__(self, colnames: List[str], rows: List[Tuple]) -> pandas.DataFrame:
         """Convert result set into output catalog.
@@ -328,19 +280,12 @@ class _PandasRowFactory:
         catalog : `pandas.DataFrame`
             DataFrame with the result set.
         """
-        return _rows_to_pandas(colnames, rows, self.packedColumns)
+        return _rows_to_pandas(colnames, rows)
 
 
 class _RawRowFactory:
     """Row factory that makes no conversions.
-
-    Parameters
-    ----------
-    packedColumns : `list` [ `ColumnDef` ]
-        Column definitions for packed columns.
     """
-    def __init__(self, packedColumns: Iterable[ColumnDef]):
-        self.packedColumns = list(packedColumns)
 
     def __call__(self, colnames: List[str], rows: List[Tuple]) -> Tuple[List[str], List[Tuple]]:
         """Return parameters without change.
@@ -422,7 +367,6 @@ class ApdbCassandra(Apdb):
                                            schema_file=self.config.schema_file,
                                            extra_schema_file=self.config.extra_schema_file,
                                            prefix=self.config.prefix,
-                                           packing=self.config.packing,
                                            time_partition_tables=self.config.time_partition_tables)
         self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
@@ -446,8 +390,7 @@ class ApdbCassandra(Apdb):
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        packedColumns = self._schema.packedColumns(ApdbTables.DiaObjectLast)
-        self._session.row_factory = _PandasRowFactory(packedColumns)
+        self._session.row_factory = _PandasRowFactory()
         self._session.default_fetch_size = None
 
         pixels = self._partitioner.pixels(region)
@@ -525,11 +468,10 @@ class ApdbCassandra(Apdb):
             if len(object_id_set) == 0:
                 return self._make_empty_catalog(table_name)
 
-        packedColumns = self._schema.packedColumns(table_name)
         if self.config.pandas_delay_conv:
-            self._session.row_factory = _RawRowFactory(packedColumns)
+            self._session.row_factory = _RawRowFactory()
         else:
-            self._session.row_factory = _PandasRowFactory(packedColumns)
+            self._session.row_factory = _PandasRowFactory()
         self._session.default_fetch_size = None
 
         # spatial pixels included into query
@@ -605,7 +547,7 @@ class ApdbCassandra(Apdb):
                     else:
                         _LOG.error("error returned by query: %s", result)
                         raise result
-                catalog = _rows_to_pandas(columns, rows, self._schema.packedColumns(table_name))
+                catalog = _rows_to_pandas(columns, rows)
                 _LOG.debug("pandas catalog shape: %s", catalog.shape)
                 # filter by given object IDs
                 if len(object_id_set) > 0:
@@ -805,12 +747,7 @@ class ApdbCassandra(Apdb):
         if missing_columns:
             raise ValueError(f"Primary key columns are missing from catalog: {missing_columns}")
 
-        blob_columns = set(col.name for col in self._schema.packedColumns(table_name))
-        # _LOG.debug("blob_columns: %s", blob_columns)
-
-        qfields = [quoteId(field) for field in fields if field not in blob_columns]
-        if blob_columns:
-            qfields += [quoteId("apdb_packed")]
+        qfields = [quoteId(field) for field in fields]
         qfields_str = ','.join(qfields)
 
         with Timer(table_name.name + ' query build', self.config.timer):
@@ -827,7 +764,6 @@ class ApdbCassandra(Apdb):
             queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
             for rec in objects.itertuples(index=False):
                 values = []
-                blob = {}
                 for field in df_fields:
                     if field not in column_map:
                         continue
@@ -839,20 +775,10 @@ class ApdbCassandra(Apdb):
                             # Assume it's seconds since epoch, Cassandra
                             # datetime is in milliseconds
                             value = int(value*1000)
-                    if field in blob_columns:
-                        blob[field] = qValue(value)
-                    else:
-                        values.append(qValue(value))
+                    values.append(qValue(value))
                 for field in extra_fields:
                     value = extra_columns[field]
-                    if field in blob_columns:
-                        blob[field] = qValue(value)
-                    else:
-                        values.append(qValue(value))
-                if blob_columns:
-                    if self.config.packing == "cbor":
-                        blob = b"cbor:" + cbor.dumps(blob)
-                    values.append(blob)
+                    values.append(qValue(value))
                 holders = ','.join(['%s']*len(values))
                 if prepared is not None:
                     stmt = prepared
