@@ -67,13 +67,14 @@ class ApdbCassandraSchema(ApdbSchema):
                      BOOL="BOOLEAN")
     """Map YAML column types to Cassandra"""
 
-    def __init__(self, session: cassandra.cluster.Session, schema_file: str,
+    def __init__(self, session: cassandra.cluster.Session, keyspace: str, schema_file: str,
                  extra_schema_file: Optional[str] = None, prefix: str = "",
                  time_partition_tables: bool = False):
 
         super().__init__(schema_file, extra_schema_file)
 
         self._session = session
+        self._keyspace = keyspace
         self._prefix = prefix
 
         # add columns and index for partitioning.
@@ -197,7 +198,9 @@ class ApdbCassandraSchema(ApdbSchema):
                     table_list = [f"{fullTable}_{part}" for part in partitions]
 
             if drop:
-                queries = [f'DROP TABLE IF EXISTS "{table_name}"' for table_name in table_list]
+                queries = [
+                    f'DROP TABLE IF EXISTS "{self._keyspace}"."{table_name}"' for table_name in table_list
+                ]
                 futures = [self._session.execute_async(query, timeout=None) for query in queries]
                 for future in futures:
                     _LOG.debug("wait for query: %s", future.query)
@@ -208,7 +211,7 @@ class ApdbCassandraSchema(ApdbSchema):
             for table_name in table_list:
                 if_not_exists = "" if drop else "IF NOT EXISTS"
                 columns = ", ".join(self._tableColumns(table))
-                query = f'CREATE TABLE {if_not_exists} "{table_name}" ({columns})'
+                query = f'CREATE TABLE {if_not_exists} "{self._keyspace}"."{table_name}" ({columns})'
                 _LOG.debug("query: %s", query)
                 queries.append(query)
             futures = [self._session.execute_async(query, timeout=None) for query in queries]

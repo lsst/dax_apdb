@@ -33,7 +33,7 @@ from typing import cast, Any, Dict, Iterable, List, Mapping, Optional, Set, Tupl
 # but ApdbCassandra cannot be instantiated.
 try:
     import cassandra
-    from cassandra.cluster import Cluster
+    from cassandra.cluster import Cluster, ExecutionProfile, EXEC_PROFILE_DEFAULT
     from cassandra.concurrent import execute_concurrent
     from cassandra.policies import RoundRobinPolicy, WhiteListRoundRobinPolicy, AddressTranslator
     import cassandra.query
@@ -353,17 +353,50 @@ class ApdbCassandra(Apdb):
         else:
             loadBalancePolicy = RoundRobinPolicy()
 
-        self._read_consistency = getattr(cassandra.ConsistencyLevel, config.read_consistency)
-        self._write_consistency = getattr(cassandra.ConsistencyLevel, config.write_consistency)
+        self._keyspace = config.keyspace
 
-        self._cluster = Cluster(contact_points=self.config.contact_points,
-                                load_balancing_policy=loadBalancePolicy,
+        if self.config.pandas_delay_conv:
+            src_row_factory = _RawRowFactory()
+        else:
+            src_row_factory = _PandasRowFactory()
+
+        read_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
+            request_timeout=self.config.read_timeout,
+            row_factory=_PandasRowFactory(),
+            load_balancing_policy=loadBalancePolicy,
+        )
+        read_src_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
+            request_timeout=self.config.read_timeout,
+            row_factory=src_row_factory,
+            load_balancing_policy=loadBalancePolicy,
+        )
+        write_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.write_consistency),
+            request_timeout=self.config.write_timeout,
+            load_balancing_policy=loadBalancePolicy,
+        )
+        # Also set default profile to be the same as read profile for sources
+        # because execute_concurrent() (which is used for reading sources)
+        # does not accept non-default profiles.
+        profiles = {
+            'read': read_profile,
+            'read_src': read_src_profile,
+            'write': write_profile,
+            EXEC_PROFILE_DEFAULT: read_src_profile,
+        }
+
+        self._cluster = Cluster(execution_profiles=profiles,
+                                contact_points=self.config.contact_points,
                                 address_translator=addressTranslator,
                                 protocol_version=self.config.protocol_version)
-        self._session = self._cluster.connect(keyspace=config.keyspace)
-        self._session.row_factory = cassandra.query.named_tuple_factory
+        self._session = self._cluster.connect()
+        # Disable result paging
+        self._session.default_fetch_size = None
 
         self._schema = ApdbCassandraSchema(session=self._session,
+                                           keyspace=self._keyspace,
                                            schema_file=self.config.schema_file,
                                            extra_schema_file=self.config.extra_schema_file,
                                            prefix=self.config.prefix,
@@ -390,23 +423,21 @@ class ApdbCassandra(Apdb):
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        self._session.row_factory = _PandasRowFactory()
-        self._session.default_fetch_size = None
 
         pixels = self._partitioner.pixels(region)
         _LOG.debug("getDiaObjects: #partitions: %s", len(pixels))
         pixels_str = ",".join([str(pix) for pix in pixels])
 
         queries: List[Tuple] = []
-        query = f'SELECT * from "DiaObjectLast" WHERE "apdb_part" IN ({pixels_str})'
-        queries += [(cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})]
+        query = f'SELECT * from "{self._keyspace}"."DiaObjectLast" WHERE "apdb_part" IN ({pixels_str})'
+        queries += [(cassandra.query.SimpleStatement(query), {})]
         _LOG.debug("getDiaObjects: #queries: %s", len(queries))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
 
         objects = None
         with Timer('DiaObject select', self.config.timer):
             # submit all queries
-            futures = [self._session.execute_async(query, values, timeout=self.config.read_timeout)
+            futures = [self._session.execute_async(query, values, execution_profile="read")
                        for query, values in queries]
             # TODO: This orders result processing which is not very efficient
             dataframes = [future.result()._current_rows for future in futures]
@@ -468,12 +499,6 @@ class ApdbCassandra(Apdb):
             if len(object_id_set) == 0:
                 return self._make_empty_catalog(table_name)
 
-        if self.config.pandas_delay_conv:
-            self._session.row_factory = _RawRowFactory()
-        else:
-            self._session.row_factory = _PandasRowFactory()
-        self._session.default_fetch_size = None
-
         # spatial pixels included into query
         pixels = self._partitioner.pixels(region)
         _LOG.debug("_getSources: %s #partitions: %s", table_name.name, len(pixels))
@@ -509,7 +534,7 @@ class ApdbCassandra(Apdb):
         # Build all queries
         queries: List[str] = []
         for table in tables:
-            query = f'SELECT * from "{table}" WHERE '
+            query = f'SELECT * from "{self._keyspace}"."{table}" WHERE '
             for spacial in spatial_where:
                 if temporal_where:
                     for temporal in temporal_where:
@@ -519,15 +544,17 @@ class ApdbCassandra(Apdb):
         # _LOG.debug("_getSources: queries: %s", queries)
 
         statements: List[Tuple] = [
-            (cassandra.query.SimpleStatement(query, consistency_level=self._read_consistency), {})
+            (cassandra.query.SimpleStatement(query), {})
             for query in queries
         ]
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
         with Timer(table_name.name + ' select', self.config.timer):
             # submit all queries
-            results = execute_concurrent(self._session, statements, results_generator=True,
-                                         concurrency=self.config.read_concurrency)
+            results = execute_concurrent(
+                self._session, statements, results_generator=True, raise_on_first_error=False,
+                concurrency=self.config.read_concurrency
+            )
             if self.config.pandas_delay_conv:
                 _LOG.debug("making pandas data frame out of rows/columns")
                 columns: Any = None
@@ -759,9 +786,9 @@ class ApdbCassandra(Apdb):
             prepared: Optional[cassandra.query.PreparedStatement] = None
             if self.config.prepared_statements:
                 holders = ','.join(['?']*len(qfields))
-                query = f'INSERT INTO "{table}" ({qfields_str}) VALUES ({holders})'
+                query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
                 prepared = self._session.prepare(query)
-            queries = cassandra.query.BatchStatement(consistency_level=self._write_consistency)
+            queries = cassandra.query.BatchStatement()
             for rec in objects.itertuples(index=False):
                 values = []
                 for field in df_fields:
@@ -783,16 +810,16 @@ class ApdbCassandra(Apdb):
                 if prepared is not None:
                     stmt = prepared
                 else:
-                    query = f'INSERT INTO "{table}" ({qfields_str}) VALUES ({holders})'
+                    query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
                     # _LOG.debug("query: %r", query)
                     # _LOG.debug("values: %s", values)
-                    stmt = cassandra.query.SimpleStatement(query, consistency_level=self._write_consistency)
+                    stmt = cassandra.query.SimpleStatement(query)
                 queries.add(stmt, values)
 
         # _LOG.debug("query: %s", query)
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
         with Timer(table_name.name + ' insert', self.config.timer):
-            self._session.execute(queries, timeout=self.config.write_timeout)
+            self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
 
     def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spacial partition for each record and add it to a
