@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 import logging
 import numpy as np
 import pandas
-from typing import cast, Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
+from typing import cast, Any, Dict, Callable, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
 # If cassandra-driver is not there the module can still be imported
 # but ApdbCassandra cannot be instantiated.
@@ -355,6 +355,7 @@ class ApdbCassandra(Apdb):
 
         self._keyspace = config.keyspace
 
+        src_row_factory: Callable
         if self.config.pandas_delay_conv:
             src_row_factory = _RawRowFactory()
         else:
@@ -627,7 +628,16 @@ class ApdbCassandra(Apdb):
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+        tableName = self._schema.tableName(ApdbTables.SSObject)
+        query = f'SELECT * from "{self._keyspace}"."{tableName}"'
+
+        objects = None
+        with Timer('SSObject select', self.config.timer):
+            result = self._session.execute(query, execution_profile="read")
+            objects = result._current_rows
+
+        _LOG.debug("found %s DiaObjects", objects.shape[0])
+        return objects
 
     def store(self,
               visit_time: dafBase.DateTime,
@@ -661,7 +671,7 @@ class ApdbCassandra(Apdb):
         """
         visit_time_dt = visit_time.toPython()
         extra_columns = dict(lastNonForcedSource=visit_time_dt)
-        self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, visit_time, extra_columns=extra_columns)
+        self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
         extra_columns["validityStart"] = visit_time_dt
         time_part: Optional[int] = self._time_partition(visit_time)
@@ -669,8 +679,7 @@ class ApdbCassandra(Apdb):
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
-        self._storeObjectsPandas(objs, ApdbTables.DiaObject, visit_time,
-                                 extra_columns=extra_columns, time_part=time_part)
+        self._storeObjectsPandas(objs, ApdbTables.DiaObject, extra_columns=extra_columns, time_part=time_part)
 
     def _storeDiaSources(self, table_name: ApdbTables, sources: pandas.DataFrame,
                          visit_time: dafBase.DateTime) -> None:
@@ -689,12 +698,11 @@ class ApdbCassandra(Apdb):
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
-        self._storeObjectsPandas(sources, table_name, visit_time,
-                                 extra_columns=extra_columns, time_part=time_part)
+        self._storeObjectsPandas(sources, table_name, extra_columns=extra_columns, time_part=time_part)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+        self._storeObjectsPandas(objects, ApdbTables.SSObject)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
@@ -709,7 +717,7 @@ class ApdbCassandra(Apdb):
         raise NotImplementedError()
 
     def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: ApdbTables,
-                            visit_time: dafBase.DateTime, extra_columns: Optional[Mapping] = None,
+                            extra_columns: Optional[Mapping] = None,
                             time_part: Optional[int] = None) -> None:
         """Generic store method.
 
@@ -721,8 +729,6 @@ class ApdbCassandra(Apdb):
             Catalog containing object records
         table_name : `ApdbTables`
             Name of the table as defined in APDB schema.
-        visit_time : `lsst.daf.base.DateTime`
-            Time of the current visit.
         extra_columns : `dict`, optional
             Mapping (column_name, column_value) which gives column values to add
             to every row, only if column is missing in catalog records.

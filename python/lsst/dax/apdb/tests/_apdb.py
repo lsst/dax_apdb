@@ -520,8 +520,8 @@ class ApdbTest(ABC):
         apdb.storeSSObjects(catalog)
         res = apdb.getSSObjects()
         self.assert_catalog(res, 150, ApdbTables.SSObject)
-        self.assertEqual(len(res[res["flags"] == 1]), 50)
-        self.assertEqual(len(res[res["flags"] == 2]), 100)
+        self.assertEqual(len(res[res["flags"] == 1]), 50)  # type: ignore[attr-defined]
+        self.assertEqual(len(res[res["flags"] == 2]), 100)  # type: ignore[attr-defined]
 
     def test_reassignObjects(self) -> None:
         """Reassign DiaObjects."""

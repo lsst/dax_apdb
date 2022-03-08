@@ -81,6 +81,7 @@ class ApdbCassandraSchema(ApdbSchema):
         self._ignore_tables = []
         for table, tableDef in self.tableSchemas.items():
             columns = []
+            add_columns = True
             if table is ApdbTables.DiaObjectLast:
                 # DiaObjectLast does not need temporal partitioning
                 columns = ["apdb_part"]
@@ -90,23 +91,36 @@ class ApdbCassandraSchema(ApdbSchema):
                     columns = ["apdb_part"]
                 else:
                     columns = ["apdb_part", "apdb_time_part"]
+            elif table is ApdbTables.SSObject:
+                # For SSObject there is no natural partition key but we have
+                # to partition it because there are too many of them. I'm
+                # going to partition on its primary key (and drop separate
+                # primary key index).
+                columns = ["ssObjectId"]
+                tableDef.indices = [
+                    index for index in tableDef.indices if index.type is not IndexType.PRIMARY
+                ]
+                add_columns = False
             else:
                 # TODO: Do not know yet how other tables can be partitioned
                 self._ignore_tables.append(table)
+                add_columns = False
 
-            # add columns to the column list
-            columnDefs = [ColumnDef(name=name,
-                                    type="BIGINT",
-                                    nullable=False,
-                                    default=None,
-                                    description="",
-                                    unit=None,
-                                    ucd=None) for name in columns]
-            tableDef.columns = columnDefs + tableDef.columns
+            if add_columns:
+                # add columns to the column list
+                columnDefs = [ColumnDef(name=name,
+                                        type="BIGINT",
+                                        nullable=False,
+                                        default=None,
+                                        description="",
+                                        unit=None,
+                                        ucd=None) for name in columns]
+                tableDef.columns = columnDefs + tableDef.columns
 
             # make an index
-            index = IndexDef(name=f"Part_{tableDef.name}", type=IndexType.PARTITION, columns=columns)
-            tableDef.indices.append(index)
+            if columns:
+                index = IndexDef(name=f"Part_{tableDef.name}", type=IndexType.PARTITION, columns=columns)
+                tableDef.indices.append(index)
 
     def tableName(self, table_name: ApdbTables) -> str:
         """Return Cassandra table name for APDB table.
@@ -249,8 +263,6 @@ class ApdbCassandraSchema(ApdbSchema):
         _LOG.debug("clust_columns: %s", clust_columns)
         if not part_columns:
             raise ValueError(f"Table {table_name} configuration is missing partition index")
-        if not clust_columns:
-            raise ValueError(f"Table {table_name} configuration is missing primary index")
 
         # all columns
         column_defs = []

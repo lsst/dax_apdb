@@ -191,8 +191,8 @@ def makeSSObjectCatalog(count: int, start_id: int = 1, flags: int = 0) -> pandas
     """
     ids = numpy.arange(start_id, count + start_id, dtype=numpy.int64)
     arc = numpy.full(count, 0.001, dtype=numpy.float32)
-    flags = numpy.full(count, flags, dtype=numpy.int64)
+    flags_array = numpy.full(count, flags, dtype=numpy.int64)
     df = pandas.DataFrame({"ssObjectId": ids,
                            "arc": arc,
-                           "flags": flags})
+                           "flags": flags_array})
     return df
