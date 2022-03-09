@@ -224,6 +224,7 @@ class ApdbTest(ABC):
             DateTime("2021-01-01T00:05:00", DateTime.TAI),
             DateTime("2021-01-01T00:06:00", DateTime.TAI)
         ]
+        end_time = DateTime("2021-01-02T00:00:00", DateTime.TAI)
 
         nobj = 100
         catalog1 = makeObjectCatalog(region1, nobj)
@@ -236,22 +237,22 @@ class ApdbTest(ABC):
         apdb.store(visit_time[5], catalog2)
 
         # read it back and check sizes
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI))
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 6, ApdbTables.DiaObject)
 
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI))
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 6, ApdbTables.DiaObject)
 
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI))
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 5, ApdbTables.DiaObject)
 
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI))
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 4, ApdbTables.DiaObject)
 
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI))
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 2, ApdbTables.DiaObject)
 
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI))
+        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI), end_time)
         self.assert_catalog(res, 0, ApdbTables.DiaObject)
 
         res = apdb.getDiaObjectsHistory(
@@ -272,10 +273,14 @@ class ApdbTest(ABC):
         )
         self.assert_catalog(res, 0, ApdbTables.DiaObject)
 
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), region=region1)
+        res = apdb.getDiaObjectsHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time, region=region1
+        )
         self.assert_catalog(res, nobj * 3, ApdbTables.DiaObject)
 
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:03:00", DateTime.TAI), region=region2)
+        res = apdb.getDiaObjectsHistory(
+            DateTime("2021-01-01T00:03:00", DateTime.TAI), end_time, region=region2
+        )
         self.assert_catalog(res, nobj * 2, ApdbTables.DiaObject)
 
         res = apdb.getDiaObjectsHistory(
@@ -336,6 +341,7 @@ class ApdbTest(ABC):
             (DateTime("2021-01-01T00:05:00", DateTime.TAI), objects1),
             (DateTime("2021-01-01T00:06:00", DateTime.TAI), objects2),
         ]
+        end_time = DateTime("2021-01-02T00:00:00", DateTime.TAI)
 
         start_id = 0
         for visit_time, objects in visits:
@@ -344,22 +350,22 @@ class ApdbTest(ABC):
             start_id += nobj
 
         # read it back and check sizes
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI))
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 6, ApdbTables.DiaSource)
 
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI))
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 6, ApdbTables.DiaSource)
 
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI))
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 5, ApdbTables.DiaSource)
 
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI))
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 4, ApdbTables.DiaSource)
 
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI))
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 2, ApdbTables.DiaSource)
 
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI))
+        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI), end_time)
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
         res = apdb.getDiaSourcesHistory(
@@ -380,10 +386,14 @@ class ApdbTest(ABC):
         )
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), region=region1)
+        res = apdb.getDiaSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time, region=region1
+        )
         self.assert_catalog(res, nobj * 3, ApdbTables.DiaSource)
 
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:03:00", DateTime.TAI), region=region2)
+        res = apdb.getDiaSourcesHistory(
+            DateTime("2021-01-01T00:03:00", DateTime.TAI), end_time, region=region2
+        )
         self.assert_catalog(res, nobj * 2, ApdbTables.DiaSource)
 
         res = apdb.getDiaSourcesHistory(
@@ -440,6 +450,7 @@ class ApdbTest(ABC):
             (DateTime("2021-01-01T00:05:00", DateTime.TAI), objects1),
             (DateTime("2021-01-01T00:06:00", DateTime.TAI), objects2),
         ]
+        end_time = DateTime("2021-01-02T00:00:00", DateTime.TAI)
 
         start_id = 0
         for visit_time, objects in visits:
@@ -448,22 +459,22 @@ class ApdbTest(ABC):
             start_id += 1
 
         # read it back and check sizes
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI))
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 6, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI))
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 6, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI))
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 5, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI))
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 4, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI))
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI), end_time)
         self.assert_catalog(res, nobj * 2, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI))
+        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI), end_time)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
         res = apdb.getDiaForcedSourcesHistory(
@@ -484,10 +495,14 @@ class ApdbTest(ABC):
         )
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), region=region1)
+        res = apdb.getDiaForcedSourcesHistory(
+            DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time, region=region1
+        )
         self.assert_catalog(res, nobj * 6, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:03:00", DateTime.TAI), region=region2)
+        res = apdb.getDiaForcedSourcesHistory(
+            DateTime("2021-01-01T00:03:00", DateTime.TAI), end_time, region=region2
+        )
         self.assert_catalog(res, nobj * 4, ApdbTables.DiaForcedSource)
 
         res = apdb.getDiaForcedSourcesHistory(

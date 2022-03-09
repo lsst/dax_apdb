@@ -126,6 +126,11 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Pixelization level used for partitioning index.",
         default=10
     )
+    part_pix_max_ranges = Field(
+        dtype=int,
+        doc="Max number of ranges in pixelization envelope",
+        default=64
+    )
     ra_dec_columns = ListField(
         dtype=str,
         default=["ra", "decl"],
@@ -201,6 +206,7 @@ class Partitioner:
             self.pixelator = sphgeom.Mq3cPixelization(config.part_pix_level)
         else:
             raise ValueError(f"unknown pixelization: {pix}")
+        self.part_pix_max_ranges = config.part_pix_max_ranges
 
     def pixels(self, region: sphgeom.Region) -> List[int]:
         """Compute set of the pixel indices for given region.
@@ -225,6 +231,29 @@ class Partitioner:
         """
         index = self.pixelator.index(direction)
         return index
+
+    def envelope(self, region: sphgeom.Region) -> List[Tuple[int, int]]:
+        """Generate a set of HTM indices covering specified region.
+
+        Parameters
+        ----------
+        region: `sphgeom.Region`
+            Region that needs to be indexed.
+
+        Returns
+        -------
+        ranges : `list` of `tuple`
+            Sequence of ranges, range is a tuple (minHtmID, maxHtmID).
+        """
+        _LOG.debug('region: %s', region)
+        indices = self.pixelator.envelope(region, self.part_pix_max_ranges)
+
+        if _LOG.isEnabledFor(logging.DEBUG):
+            for irange in indices.ranges():
+                _LOG.debug('range: %s %s', self.pixelator.toString(irange[0]),
+                           self.pixelator.toString(irange[1]))
+
+        return indices.ranges()
 
 
 if CASSANDRA_IMPORTED:
@@ -331,18 +360,8 @@ class ApdbCassandra(Apdb):
         self.config = config
 
         _LOG.debug("ApdbCassandra Configuration:")
-        _LOG.debug("    read_consistency: %s", self.config.read_consistency)
-        _LOG.debug("    write_consistency: %s", self.config.write_consistency)
-        _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
-        _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
-        _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
-        _LOG.debug("    schema_file: %s", self.config.schema_file)
-        _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
-        _LOG.debug("    schema prefix: %s", self.config.prefix)
-        _LOG.debug("    part_pixelization: %s", self.config.part_pixelization)
-        _LOG.debug("    part_pix_level: %s", self.config.part_pix_level)
-        _LOG.debug("    query_per_time_part: %s", self.config.query_per_time_part)
-        _LOG.debug("    query_per_spatial_part: %s", self.config.query_per_spatial_part)
+        for key, value in self.config.items():
+            _LOG.debug("    %s: %s", key, value)
 
         self._partitioner = Partitioner(config)
 
@@ -425,28 +444,18 @@ class ApdbCassandra(Apdb):
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
-        pixels = self._partitioner.pixels(region)
-        _LOG.debug("getDiaObjects: #partitions: %s", len(pixels))
-        pixels_str = ",".join([str(pix) for pix in pixels])
+        spatial_where = self._spatial_where(region)
+        _LOG.debug("getDiaObjects: #partitions: %s", len(spatial_where))
 
-        queries: List[Tuple] = []
-        query = f'SELECT * from "{self._keyspace}"."DiaObjectLast" WHERE "apdb_part" IN ({pixels_str})'
-        queries += [(cassandra.query.SimpleStatement(query), {})]
-        _LOG.debug("getDiaObjects: #queries: %s", len(queries))
+        query = f'SELECT * from "{self._keyspace}"."DiaObjectLast"'
+        statements: List[Tuple] = [
+            (cassandra.query.SimpleStatement(f'{query} WHERE {where}'), {}) for where in spatial_where
+        ]
+        _LOG.debug("getDiaObjects: #queries: %s", len(statements))
         # _LOG.debug("getDiaObjects: queries: %s", queries)
 
-        objects = None
         with Timer('DiaObject select', self.config.timer):
-            # submit all queries
-            futures = [self._session.execute_async(query, values, execution_profile="read")
-                       for query, values in queries]
-            # TODO: This orders result processing which is not very efficient
-            dataframes = [future.result()._current_rows for future in futures]
-            # concatenate all frames
-            if len(dataframes) == 1:
-                objects = dataframes[0]
-            else:
-                objects = pandas.concat(dataframes)
+            objects = self._run_queries(statements)
 
         _LOG.debug("found %s DiaObjects", objects.shape[0])
         return objects
@@ -455,20 +464,31 @@ class ApdbCassandra(Apdb):
                       object_ids: Optional[Iterable[int]],
                       visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
         # docstring is inherited from a base class
-        return self._getSources(region, object_ids, visit_time, ApdbTables.DiaSource,
-                                self.config.read_sources_months)
+        months = self.config.read_sources_months
+        if months == 0:
+            return None
+        mjd_end = visit_time.get(system=dafBase.DateTime.MJD)
+        mjd_start = mjd_end - months*30
+
+        return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaSource)
 
     def getDiaForcedSources(self, region: sphgeom.Region,
                             object_ids: Optional[Iterable[int]],
                             visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
-        return self._getSources(region, object_ids, visit_time, ApdbTables.DiaForcedSource,
-                                self.config.read_forced_sources_months)
+        # docstring is inherited from a base class
+        months = self.config.read_forced_sources_months
+        if months == 0:
+            return None
+        mjd_end = visit_time.get(system=dafBase.DateTime.MJD)
+        mjd_start = mjd_end - months*30
+
+        return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
     def _getSources(self, region: sphgeom.Region,
                     object_ids: Optional[Iterable[int]],
-                    visit_time: dafBase.DateTime,
-                    table_name: ApdbTables,
-                    months: int) -> Optional[pandas.DataFrame]:
+                    mjd_start: float,
+                    mjd_end: float,
+                    table_name: ApdbTables) -> Optional[pandas.DataFrame]:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
@@ -477,14 +497,12 @@ class ApdbCassandra(Apdb):
             Spherical region.
         object_ids :
             Collection of DiaObject IDs
-        visit_time : `lsst.daf.base.DateTime`
-            Time of the current visit
+        mjd_start : `float`
+            Lower bound of time interval.
+        mjd_end : `float`
+            Upper bound of time interval.
         table_name : `ApdbTables`
-            Name of the table, either "DiaSource" or "DiaForcedSource"
-        months : `int`
-            Number of months of history to return, if negative returns whole
-            history (Note: negative does not work with table-per-partition
-            case)
+            Name of the table.
 
         Returns
         -------
@@ -492,8 +510,6 @@ class ApdbCassandra(Apdb):
             Catalog contaning DiaSource records. `None` is returned if
             ``months`` is 0 or when ``object_ids`` is empty.
         """
-        if months == 0:
-            return None
         object_id_set: Set[int] = set()
         if object_ids is not None:
             object_id_set = set(object_ids)
@@ -518,11 +534,9 @@ class ApdbCassandra(Apdb):
         # tables depending on configuration
         full_name = self._schema.tableName(table_name)
         tables = [full_name]
-        mjd_now = visit_time.get(system=dafBase.DateTime.MJD)
-        mjd_begin = mjd_now - months*30
-        time_part_now = self._time_partition(mjd_now)
-        time_part_begin = self._time_partition(mjd_begin)
-        time_parts = list(range(time_part_begin, time_part_now + 1))
+        time_part_start = self._time_partition(mjd_start)
+        time_part_end = self._time_partition(mjd_end)
+        time_parts = list(range(time_part_start, time_part_end + 1))
         if self.config.time_partition_tables:
             tables = [f"{full_name}_{part}" for part in time_parts]
         else:
@@ -551,56 +565,14 @@ class ApdbCassandra(Apdb):
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
         with Timer(table_name.name + ' select', self.config.timer):
-            # submit all queries
-            results = execute_concurrent(
-                self._session, statements, results_generator=True, raise_on_first_error=False,
-                concurrency=self.config.read_concurrency
-            )
-            if self.config.pandas_delay_conv:
-                _LOG.debug("making pandas data frame out of rows/columns")
-                columns: Any = None
-                rows = []
-                for success, result in results:
-                    result = result._current_rows
-                    if success:
-                        if columns is None:
-                            columns = result[0]
-                        elif columns != result[0]:
-                            _LOG.error("different columns returned by queries: %s and %s",
-                                       columns, result[0])
-                            raise ValueError(
-                                f"diferent columns returned by queries: {columns} and {result[0]}"
-                            )
-                        rows += result[1]
-                    else:
-                        _LOG.error("error returned by query: %s", result)
-                        raise result
-                catalog = _rows_to_pandas(columns, rows)
-                _LOG.debug("pandas catalog shape: %s", catalog.shape)
-                # filter by given object IDs
-                if len(object_id_set) > 0:
-                    catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
-            else:
-                _LOG.debug("making pandas data frame out of set of data frames")
-                dataframes = []
-                for success, result in results:
-                    if success:
-                        dataframes.append(result._current_rows)
-                    else:
-                        _LOG.error("error returned by query: %s", result)
-                        raise result
-                # concatenate all frames
-                if len(dataframes) == 1:
-                    catalog = dataframes[0]
-                else:
-                    catalog = pandas.concat(dataframes)
-                _LOG.debug("pandas catalog shape: %s", catalog.shape)
-                # filter by given object IDs
-                if len(object_id_set) > 0:
-                    catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
+            catalog = self._run_queries(statements)
+
+        # filter by given object IDs
+        if len(object_id_set) > 0:
+            catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
 
         # precise filtering on midPointTai
-        catalog = cast(pandas.DataFrame, catalog[catalog["midPointTai"] > mjd_begin])
+        catalog = cast(pandas.DataFrame, catalog[catalog["midPointTai"] > mjd_start])
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
@@ -715,6 +687,88 @@ class ApdbCassandra(Apdb):
     def countUnassociatedObjects(self) -> int:
         # docstring is inherited from a base class
         raise NotImplementedError()
+
+    def _spatial_where(self, region: Optional[sphgeom.Region], use_ranges: bool = False) -> List[str]:
+        """Generate expressions for spatial part of WHERE clause.
+
+        Parameters
+        ----------
+        region : `sphgeom.Region`
+            Spatial region for query results.
+        use_ranges : `bool`
+            If True then use pixel ranges ("apdb_part >= p1 AND apdb_part <=
+            p2") instead of exact list of pixels. Should be set to True for
+            large regions covering very many pixels.
+
+        Returns
+        -------
+        expressions : `list` [ `str` ]
+            Empty list is returned if ``region`` is `None`, otherwise a list
+            of one or more expressions.
+        """
+        if region is None:
+            return []
+        if use_ranges:
+            pixel_ranges = self._partitioner.envelope(region)
+            expressions = []
+            for lower, upper in pixel_ranges:
+                upper -= 1
+                if lower == upper:
+                    expressions.append(f'"apdb_part" = {lower}')
+                else:
+                    expressions.append(f'"apdb_part" >= {lower} AND "apdb_part" <= {upper}')
+            return expressions
+        else:
+            pixels = self._partitioner.pixels(region)
+            if self.config.query_per_spatial_part:
+                return [f'"apdb_part" = {pixel}' for pixel in pixels]
+            else:
+                pixels_str = ",".join([str(pix) for pix in pixels])
+                return [f'"apdb_part" IN ({pixels_str})']
+
+    def _run_queries(self, statements: List[Tuple]) -> pandas.DataFrame:
+        """Execute bunch of queries concurrently and merge their results into
+        a single DataFrame."""
+        results = execute_concurrent(
+            self._session, statements, results_generator=True, raise_on_first_error=False,
+            concurrency=self.config.read_concurrency
+        )
+        if self.config.pandas_delay_conv:
+            _LOG.debug("making pandas data frame out of rows/columns")
+            columns: Any = None
+            rows = []
+            for success, result in results:
+                result = result._current_rows
+                if success:
+                    if columns is None:
+                        columns = result[0]
+                    elif columns != result[0]:
+                        _LOG.error("different columns returned by queries: %s and %s", columns, result[0])
+                        raise ValueError(
+                            f"different columns returned by queries: {columns} and {result[0]}"
+                        )
+                    rows += result[1]
+                else:
+                    _LOG.error("error returned by query: %s", result)
+                    raise result
+            catalog = _rows_to_pandas(columns, rows)
+        else:
+            _LOG.debug("making pandas data frame out of set of data frames")
+            dataframes = []
+            for success, result in results:
+                if success:
+                    dataframes.append(result._current_rows)
+                else:
+                    _LOG.error("error returned by query: %s", result)
+                    raise result
+            # concatenate all frames
+            if len(dataframes) == 1:
+                catalog = dataframes[0]
+            else:
+                catalog = pandas.concat(dataframes)
+
+        _LOG.debug("pandas catalog shape: %s", catalog.shape)
+        return catalog
 
     def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: ApdbTables,
                             extra_columns: Optional[Mapping] = None,

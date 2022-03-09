@@ -175,7 +175,7 @@ class ApdbCassandraSchema(ApdbSchema):
         Returns
         -------
         columns : `list` of `str`
-            Names of columns for used for partitioning.
+            Names of columns for used for clustering.
         """
         table_schema = self.tableSchemas[table_name]
         for index in table_schema.indices:

@@ -203,7 +203,7 @@ class Apdb(ABC):
     @abstractmethod
     def getDiaObjectsHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[Region] = None) -> pandas.DataFrame:
         """Returns catalog of DiaObject instances from a given time period
         including the history of each DiaObject.
@@ -213,10 +213,9 @@ class Apdb(ABC):
         start_time : `dafBase.DateTime`
             Starting time for DiaObject history search. DiaObject record is
             selected when its ``validityStart`` falls into an interval
-            between ``start__time`` (inclusive) and ``end_time`` (exclusive).
-        end_time : `dafBase.DateTime`, optional
-            Upper limit on time for DiaObject history search, if not specified
-            then there is no restriction on upper limit.
+            between ``start_time`` (inclusive) and ``end_time`` (exclusive).
+        end_time : `dafBase.DateTime`
+            Upper limit on time for DiaObject history search.
         region : `lsst.sphgeom.Region`, optional
             Region to search for DiaObjects, if not specified then whole sky
             is searched. If region is specified then some returned records may
@@ -237,7 +236,7 @@ class Apdb(ABC):
     @abstractmethod
     def getDiaSourcesHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[Region] = None) -> pandas.DataFrame:
         """Returns catalog of DiaSource instances from a given time period.
 
@@ -246,10 +245,9 @@ class Apdb(ABC):
         start_time : `dafBase.DateTime`
             Starting time for DiaSource history search. DiaSource record is
             selected when its ``midPointTai`` falls into an interval between
-            ``start__time`` (inclusive) and ``end_time`` (exclusive).
+            ``start_time`` (inclusive) and ``end_time`` (exclusive).
         end_time : `dafBase.DateTime`
-            Upper limit on time for DiaSource history search, if not specified
-            then there is no restriction on upper limit.
+            Upper limit on time for DiaSource history search.
         region : `lsst.sphgeom.Region`, optional
             Region to search for DiaSources, if not specified then whole sky
             is searched. If region is specified then some returned records may
@@ -270,7 +268,7 @@ class Apdb(ABC):
     @abstractmethod
     def getDiaForcedSourcesHistory(self,
                                    start_time: dafBase.DateTime,
-                                   end_time: Optional[dafBase.DateTime] = None,
+                                   end_time: dafBase.DateTime,
                                    region: Optional[Region] = None) -> pandas.DataFrame:
         """Returns catalog of DiaForcedSource instances from a given time
         period.
@@ -280,10 +278,9 @@ class Apdb(ABC):
         start_time : `dafBase.DateTime`
             Starting time for DiaForcedSource history search. DiaForcedSource
             record is selected when its ``midPointTai`` falls into an interval
-            between ``start__time`` (inclusive) and ``end_time`` (exclusive).
+            between ``start_time`` (inclusive) and ``end_time`` (exclusive).
         end_time : `dafBase.DateTime`
-            Upper limit on time for DiaForcedSource history search, if not
-            specified then there is no restriction on upper limit.
+            Upper limit on time for DiaForcedSource history search.
         region : `lsst.sphgeom.Region`, optional
             Region to search for DiaForcedSources, if not specified then whole
             sky is searched. If region is specified then some returned records

@@ -393,7 +393,7 @@ class ApdbSql(Apdb):
 
     def getDiaObjectsHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -401,12 +401,10 @@ class ApdbSql(Apdb):
         query = table.select()
 
         # build selection
-        time_filter = table.columns["validityStart"] >= start_time.toPython()
-        if end_time:
-            time_filter = sql.expression.and_(
-                time_filter,
-                table.columns["validityStart"] < end_time.toPython()
-            )
+        time_filter = sql.expression.and_(
+            table.columns["validityStart"] >= start_time.toPython(),
+            table.columns["validityStart"] < end_time.toPython()
+        )
 
         if region:
             where = sql.expression.and_(self._filterRegion(table, region), time_filter)
@@ -423,7 +421,7 @@ class ApdbSql(Apdb):
 
     def getDiaSourcesHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -431,12 +429,10 @@ class ApdbSql(Apdb):
         query = table.select()
 
         # build selection
-        time_filter = table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD)
-        if end_time:
-            time_filter = sql.expression.and_(
-                time_filter,
-                table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
-            )
+        time_filter = sql.expression.and_(
+            table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD),
+            table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
+        )
 
         if region:
             where = sql.expression.and_(self._filterRegion(table, region), time_filter)
@@ -453,7 +449,7 @@ class ApdbSql(Apdb):
 
     def getDiaForcedSourcesHistory(self,
                                    start_time: dafBase.DateTime,
-                                   end_time: Optional[dafBase.DateTime] = None,
+                                   end_time: dafBase.DateTime,
                                    region: Optional[Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -461,12 +457,10 @@ class ApdbSql(Apdb):
         query = table.select()
 
         # build selection
-        time_filter = table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD)
-        if end_time:
-            time_filter = sql.expression.and_(
-                time_filter,
-                table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
-            )
+        time_filter = sql.expression.and_(
+            table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD),
+            table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
+        )
         # Forced sources have no pixel index, so no region filtering
         query = query.where(time_filter)
 
