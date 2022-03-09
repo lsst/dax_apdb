@@ -30,7 +30,7 @@ from contextlib import contextmanager
 import logging
 import numpy as np
 import pandas
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 import lsst.daf.base as dafBase
 from lsst.pex.config import Field, ChoiceField, ListField
@@ -529,8 +529,8 @@ class ApdbSql(Apdb):
             knownIds = set(row[idColumn] for row in result)
 
             filter = objects[idColumn].isin(knownIds)
-            toUpdate = objects[filter]
-            toInsert = objects[~filter]
+            toUpdate = cast(pandas.DataFrame, objects[filter])
+            toInsert = cast(pandas.DataFrame, objects[~filter])
 
             # insert new records
             if len(toInsert) > 0:
