@@ -372,6 +372,11 @@ class Apdb(ABC):
         ----------
         idMap : `Mapping`
             Maps DiaSource IDs to their new SSObject IDs.
+
+        Raises
+        ------
+        ValueError
+            Raised if DiaSource ID does not exist in the database.
         """
         raise NotImplementedError()
 

@@ -564,6 +564,10 @@ class ApdbTest(ABC):
         res = apdb.getDiaSources(region, oids, visit_time)
         self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
 
+        with self.assertRaisesRegex(ValueError, r"do not exist.*\D1000"):  # type: ignore[attr-defined]
+            apdb.reassignDiaSources({1000: 1, 7: 3, })
+        self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
+
     def test_midPointTai_src(self) -> None:
         """Test for time filtering of DiaSources.
         """

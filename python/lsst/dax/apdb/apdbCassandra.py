@@ -42,12 +42,13 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 import lsst.daf.base as dafBase
-from lsst.pex.config import ChoiceField, Field, ListField
 from lsst import sphgeom
+from lsst.pex.config import ChoiceField, Field, ListField
+from lsst.utils.iteration import chunk_iterable
 from .timer import Timer
 from .apdb import Apdb, ApdbConfig
 from .apdbSchema import ApdbTables, TableDef
-from .apdbCassandraSchema import ApdbCassandraSchema
+from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
 
 
 _LOG = logging.getLogger(__name__)
@@ -380,6 +381,12 @@ class ApdbCassandra(Apdb):
         else:
             src_row_factory = _PandasRowFactory()
 
+        read_tuples_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
+            request_timeout=self.config.read_timeout,
+            row_factory=_PandasRowFactory(),
+            load_balancing_policy=loadBalancePolicy,
+        )
         read_profile = ExecutionProfile(
             consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
             request_timeout=self.config.read_timeout,
@@ -401,9 +408,10 @@ class ApdbCassandra(Apdb):
         # because execute_concurrent() (which is used for reading sources)
         # does not accept non-default profiles.
         profiles = {
-            'read': read_profile,
-            'read_src': read_src_profile,
-            'write': write_profile,
+            "read_tuples": read_tuples_profile,
+            "read": read_profile,
+            "read_src": read_src_profile,
+            "write": write_profile,
             EXEC_PROFILE_DEFAULT: read_src_profile,
         }
 
@@ -626,6 +634,7 @@ class ApdbCassandra(Apdb):
             # copy apdb_part column from DiaObjects to DiaSources
             sources = self._add_src_part(sources, objects)
             self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time)
+            self._storeDiaSourcesPartitions(sources, visit_time)
 
         if forced_sources is not None:
             forced_sources = self._add_fsrc_part(forced_sources, objects)
@@ -672,13 +681,86 @@ class ApdbCassandra(Apdb):
 
         self._storeObjectsPandas(sources, table_name, extra_columns=extra_columns, time_part=time_part)
 
+    def _storeDiaSourcesPartitions(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
+        """Store mapping of diaSourceId to its partitioning values.
+
+        Parameters
+        ----------
+        sources : `pandas.DataFrame`
+            Catalog containing DiaSource records
+        visit_time : `lsst.daf.base.DateTime`
+            Time of the current visit.
+        """
+        id_map = cast(pandas.DataFrame, sources[["diaSourceId", "apdb_part"]])
+        extra_columns = {
+            "apdb_time_part": self._time_partition(visit_time),
+        }
+
+        self._storeObjectsPandas(
+            id_map, ExtraTables.DiaSourceToPartition, extra_columns=extra_columns, time_part=None
+        )
+
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
         self._storeObjectsPandas(objects, ApdbTables.SSObject)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+
+        # To update a record we need to know its exact primary key (including
+        # partition key) so we start by querying for diaSourceId to find the
+        # primary keys.
+
+        table_name = self._schema.tableName(ExtraTables.DiaSourceToPartition)
+        # split it into 1k IDs per query
+        selects: List[Tuple] = []
+        for ids in chunk_iterable(idMap.keys(), 1_000):
+            ids_str = ",".join(str(item) for item in ids)
+            selects.append((
+                (f'SELECT "diaSourceId", "apdb_part", "apdb_time_part" FROM "{self._keyspace}"."{table_name}"'
+                 f' WHERE "diaSourceId" IN ({ids_str})'),
+                {}
+            ))
+
+        # We don't really need pandas DataFrame here, but execute_concurrent
+        # does not have a simple way to change execution profile.
+        result = self._run_queries(selects)
+
+        id2partitions: Dict[int, Tuple[int, int]] = {}
+        for row in result.itertuples(index=False):
+            id2partitions[row.diaSourceId] = (row.apdb_part, row.apdb_time_part)  # type: ignore
+
+        # make sure we know partitions for each ID
+        if set(id2partitions) != set(idMap):
+            missing = ",".join(str(item) for item in set(idMap) - set(id2partitions))
+            raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
+
+        queries = cassandra.query.BatchStatement()
+        table_name = self._schema.tableName(ApdbTables.DiaSource)
+        for diaSourceId, ssObjectId in idMap.items():
+            apdb_part, apdb_time_part = id2partitions[diaSourceId]
+            values: Tuple
+            if self.config.time_partition_tables:
+                query = (
+                    f'UPDATE "{self._keyspace}"."{table_name}_{apdb_time_part}"'
+                    ' SET "ssObjectId" = %s, "diaObjectId" = NULL'
+                    ' WHERE "apdb_part" = %s AND "diaSourceId" = %s'
+                )
+                values = (ssObjectId, apdb_part, diaSourceId)
+            else:
+                query = (
+                    f'UPDATE "{self._keyspace}"."{table_name}"'
+                    ' SET "ssObjectId" = %s, "diaObjectId" = NULL'
+                    ' WHERE "apdb_part" = %s AND "apdb_time_part" = %s AND "diaSourceId" = %s'
+                )
+                values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
+            stmt = cassandra.query.SimpleStatement(query)
+            queries.add(stmt, values)
+
+        # _LOG.debug("query: %s", query)
+        _LOG.debug("%s: will update %d records", table_name, len(idMap))
+        with Timer(table_name + ' update', self.config.timer):
+            self._session.execute(queries, execution_profile="write")
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
@@ -770,7 +852,7 @@ class ApdbCassandra(Apdb):
         _LOG.debug("pandas catalog shape: %s", catalog.shape)
         return catalog
 
-    def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: ApdbTables,
+    def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: Union[ApdbTables, ExtraTables],
                             extra_columns: Optional[Mapping] = None,
                             time_part: Optional[int] = None) -> None:
         """Generic store method.

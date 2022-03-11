@@ -545,11 +545,18 @@ class ApdbSql(Apdb):
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
 
         with self._engine.begin() as conn:
-            # TODO: diaObjectId should probably be None but in our current
-            # schema it is defined NOT NULL, may need to update for the future
-            # schema.
-            params = [dict(srcId=key, diaObjectId=0, ssObjectId=value) for key, value in idMap.items()]
-            conn.execute(query, params)
+            # Need to make sure that every ID exists in the database, but
+            # executemany may not support rowcount, so iterate and check what is
+            # missing.
+            missing_ids: List[int] = []
+            for key, value in idMap.items():
+                params = dict(srcId=key, diaObjectId=0, ssObjectId=value)
+                result = conn.execute(query, params)
+                if result.rowcount == 0:
+                    missing_ids.append(key)
+            if missing_ids:
+                missing = ",".join(str(item)for item in missing_ids)
+                raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
