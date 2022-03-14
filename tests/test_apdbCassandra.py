@@ -56,6 +56,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
     time_partition_tables = False
     time_partition_start = None
     time_partition_end = None
+    fsrc_history_region_filtering = True
 
     @classmethod
     def setUpClass(cls):

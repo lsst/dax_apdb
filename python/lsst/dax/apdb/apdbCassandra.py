@@ -26,7 +26,7 @@ __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 import logging
 import numpy as np
 import pandas
-from typing import Any, cast, Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
+from typing import Any, cast, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union
 
 # If cassandra-driver is not there the module can still be imported
 # but ApdbCassandra cannot be instantiated.
@@ -54,6 +54,7 @@ from .cassandra_utils import (
     raw_data_factory,
     select_concurrent,
 )
+from .pixelization import Pixelization
 
 _LOG = logging.getLogger(__name__)
 
@@ -187,75 +188,6 @@ class ApdbCassandraConfig(ApdbConfig):
     )
 
 
-class Partitioner:
-    """Class that calculates indices of the objects for partitioning.
-
-    Used internally by `ApdbCassandra`
-
-    Parameters
-    ----------
-    config : `ApdbCassandraConfig`
-    """
-    def __init__(self, config: ApdbCassandraConfig):
-        pix = config.part_pixelization
-        if pix == "htm":
-            self.pixelator = sphgeom.HtmPixelization(config.part_pix_level)
-        elif pix == "q3c":
-            self.pixelator = sphgeom.Q3cPixelization(config.part_pix_level)
-        elif pix == "mq3c":
-            self.pixelator = sphgeom.Mq3cPixelization(config.part_pix_level)
-        else:
-            raise ValueError(f"unknown pixelization: {pix}")
-        self.part_pix_max_ranges = config.part_pix_max_ranges
-
-    def pixels(self, region: sphgeom.Region) -> List[int]:
-        """Compute set of the pixel indices for given region.
-
-        Parameters
-        ----------
-        region : `lsst.sphgeom.Region`
-        """
-        # we want finest set of pixels, so ask as many pixel as possible
-        ranges = self.pixelator.envelope(region, 1_000_000)
-        indices = []
-        for lower, upper in ranges:
-            indices += list(range(lower, upper))
-        return indices
-
-    def pixel(self, direction: sphgeom.UnitVector3d) -> int:
-        """Compute the index of the pixel for given direction.
-
-        Parameters
-        ----------
-        direction : `lsst.sphgeom.UnitVector3d`
-        """
-        index = self.pixelator.index(direction)
-        return index
-
-    def envelope(self, region: sphgeom.Region) -> List[Tuple[int, int]]:
-        """Generate a set of HTM indices covering specified region.
-
-        Parameters
-        ----------
-        region: `sphgeom.Region`
-            Region that needs to be indexed.
-
-        Returns
-        -------
-        ranges : `list` of `tuple`
-            Sequence of ranges, range is a tuple (minHtmID, maxHtmID).
-        """
-        _LOG.debug('region: %s', region)
-        indices = self.pixelator.envelope(region, self.part_pix_max_ranges)
-
-        if _LOG.isEnabledFor(logging.DEBUG):
-            for irange in indices.ranges():
-                _LOG.debug('range: %s %s', self.pixelator.toString(irange[0]),
-                           self.pixelator.toString(irange[1]))
-
-        return indices.ranges()
-
-
 if CASSANDRA_IMPORTED:
 
     class _AddressTranslator(AddressTranslator):
@@ -297,7 +229,9 @@ class ApdbCassandra(Apdb):
         for key, value in self.config.items():
             _LOG.debug("    %s: %s", key, value)
 
-        self._partitioner = Partitioner(config)
+        self._pixelization = Pixelization(
+            config.part_pixelization, config.part_pix_level, config.part_pix_max_ranges
+        )
 
         addressTranslator: Optional[AddressTranslator] = None
         if config.private_ips:
@@ -345,13 +279,13 @@ class ApdbCassandra(Apdb):
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
-        spatial_where = self._spatial_where(region)
-        _LOG.debug("getDiaObjects: #partitions: %s", len(spatial_where))
+        sp_where = self._spatial_where(region)
+        _LOG.debug("getDiaObjects: #partitions: %s", len(sp_where))
 
         table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
         query = f'SELECT * from "{self._keyspace}"."{table_name}"'
         statements: List[Tuple] = []
-        for where, params in spatial_where:
+        for where, params in sp_where:
             full_query = f"{query} WHERE {where}"
             if params:
                 statement = self._prep_statement(full_query)
@@ -400,24 +334,53 @@ class ApdbCassandra(Apdb):
 
     def getDiaObjectsHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+
+        sp_where = self._spatial_where(region, use_ranges=True)
+        tables, temporal_where = self._temporal_where(ApdbTables.DiaObject, start_time, end_time, True)
+
+        # Build all queries
+        statements: List[Tuple] = []
+        for table in tables:
+            prefix = f'SELECT * from "{self._keyspace}"."{table}"'
+            statements += list(self._combine_where(prefix, sp_where, temporal_where, "ALLOW FILTERING"))
+        _LOG.debug("getDiaObjectsHistory: #queries: %s", len(statements))
+
+        # Run all selects in parallel
+        with Timer("DiaObject history", self.config.timer):
+            catalog = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    self._session, statements, "read_pandas_multi", self.config.read_concurrency
+                )
+            )
+
+        # precise filtering on validityStart
+        validity_start = start_time.toPython()
+        validity_end = end_time.toPython()
+        catalog = cast(
+            pandas.DataFrame,
+            catalog[(catalog["validityStart"] >= validity_start) & (catalog["validityStart"] < validity_end)]
+        )
+
+        _LOG.debug("found %d DiaObjects", catalog.shape[0])
+        return catalog
 
     def getDiaSourcesHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+        return self._getSourcesHistory(ApdbTables.DiaSource, start_time, end_time, region)
 
     def getDiaForcedSourcesHistory(self,
                                    start_time: dafBase.DateTime,
-                                   end_time: Optional[dafBase.DateTime] = None,
+                                   end_time: dafBase.DateTime,
                                    region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+        return self._getSourcesHistory(ApdbTables.DiaForcedSource, start_time, end_time, region)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -579,7 +542,7 @@ class ApdbCassandra(Apdb):
                     object_ids: Optional[Iterable[int]],
                     mjd_start: float,
                     mjd_end: float,
-                    table_name: ApdbTables) -> Optional[pandas.DataFrame]:
+                    table_name: ApdbTables) -> pandas.DataFrame:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
@@ -598,8 +561,8 @@ class ApdbCassandra(Apdb):
         Returns
         -------
         catalog : `pandas.DataFrame`, or `None`
-            Catalog contaning DiaSource records. `None` is returned if
-            ``months`` is 0 or when ``object_ids`` is empty.
+            Catalog contaning DiaSource records. Empty catalog is returned if
+            ``object_ids`` is empty.
         """
         object_id_set: Set[int] = set()
         if object_ids is not None:
@@ -607,46 +570,14 @@ class ApdbCassandra(Apdb):
             if len(object_id_set) == 0:
                 return self._make_empty_catalog(table_name)
 
-        spatial_where = self._spatial_where(region)
-        _LOG.debug("_getSources: %s #partitions: %s", table_name.name, len(spatial_where))
-
-        # temporal part of WHERE, can be empty
-        temporal_where: List[Tuple[str, Tuple]] = []
-        # time partitions and table names to query, there may be multiple
-        # tables depending on configuration
-        full_name = self._schema.tableName(table_name)
-        tables = [full_name]
-        time_part_start = self._time_partition(mjd_start)
-        time_part_end = self._time_partition(mjd_end)
-        time_parts = list(range(time_part_start, time_part_end + 1))
-        if self.config.time_partition_tables:
-            tables = [f"{full_name}_{part}" for part in time_parts]
-            temporal_where = [("", ())]
-        else:
-            if self.config.query_per_time_part:
-                temporal_where = [('"apdb_time_part" = ?', (time_part,)) for time_part in time_parts]
-            else:
-                time_part_list = ",".join([str(part) for part in time_parts])
-                temporal_where = [(f'"apdb_time_part" IN ({time_part_list})', ())]
+        sp_where = self._spatial_where(region)
+        tables, temporal_where = self._temporal_where(table_name, mjd_start, mjd_end)
 
         # Build all queries
         statements: List[Tuple] = []
         for table in tables:
-            query = f'SELECT * from "{self._keyspace}"."{table}" WHERE'
-            for spacial, sparams in spatial_where:
-                for temporal, tparams in temporal_where:
-                    full_query = f"{query} {spacial}"
-                    if temporal:
-                        full_query += f" AND {temporal}"
-                    params = sparams + tparams
-                    if params:
-                        statement = self._prep_statement(full_query)
-                    else:
-                        # If there are no params then it is likely that query
-                        # has a bunch of literals rendered already, no point
-                        # trying to prepare it.
-                        statement = cassandra.query.SimpleStatement(full_query)
-                    statements.append((statement, params))
+            prefix = f'SELECT * from "{self._keyspace}"."{table}"'
+            statements += list(self._combine_where(prefix, sp_where, temporal_where))
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
         with Timer(table_name.name + ' select', self.config.timer):
@@ -665,6 +596,63 @@ class ApdbCassandra(Apdb):
         catalog = cast(pandas.DataFrame, catalog[catalog["midPointTai"] > mjd_start])
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
+        return catalog
+
+    def _getSourcesHistory(
+        self,
+        table: ApdbTables,
+        start_time: dafBase.DateTime,
+        end_time: dafBase.DateTime,
+        region: Optional[sphgeom.Region] = None,
+    ) -> pandas.DataFrame:
+        """Returns catalog of DiaSource instances given set of DiaObject IDs.
+
+        Parameters
+        ----------
+        table : `ApdbTables`
+            Name of the table.
+        start_time : `dafBase.DateTime`
+            Starting time for DiaSource history search. DiaSource record is
+            selected when its ``midPointTai`` falls into an interval between
+            ``start_time`` (inclusive) and ``end_time`` (exclusive).
+        end_time : `dafBase.DateTime`
+            Upper limit on time for DiaSource history search.
+        region : `lsst.sphgeom.Region`
+            Spherical region.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog contaning DiaSource records.
+        """
+        sp_where = self._spatial_where(region, use_ranges=False)
+        tables, temporal_where = self._temporal_where(table, start_time, end_time, True)
+
+        # Build all queries
+        statements: List[Tuple] = []
+        for table_name in tables:
+            prefix = f'SELECT * from "{self._keyspace}"."{table_name}"'
+            statements += list(self._combine_where(prefix, sp_where, temporal_where, "ALLOW FILTERING"))
+        _LOG.debug("getDiaObjectsHistory: #queries: %s", len(statements))
+
+        # Run all selects in parallel
+        with Timer(f"{table.name} history", self.config.timer):
+            catalog = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    self._session, statements, "read_pandas_multi", self.config.read_concurrency
+                )
+            )
+
+        # precise filtering on validityStart
+        period_start = start_time.get(system=dafBase.DateTime.MJD)
+        period_end = end_time.get(system=dafBase.DateTime.MJD)
+        catalog = cast(
+            pandas.DataFrame,
+            catalog[(catalog["midPointTai"] >= period_start) & (catalog["midPointTai"] < period_end)]
+        )
+
+        _LOG.debug("found %d %ss", catalog.shape[0], table.name)
         return catalog
 
     def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
@@ -726,45 +714,6 @@ class ApdbCassandra(Apdb):
         self._storeObjectsPandas(
             id_map, ExtraTables.DiaSourceToPartition, extra_columns=extra_columns, time_part=None
         )
-
-    def _spatial_where(self, region: Optional[sphgeom.Region], use_ranges: bool = False
-                       ) -> List[Tuple[str, Tuple]]:
-        """Generate expressions for spatial part of WHERE clause.
-
-        Parameters
-        ----------
-        region : `sphgeom.Region`
-            Spatial region for query results.
-        use_ranges : `bool`
-            If True then use pixel ranges ("apdb_part >= p1 AND apdb_part <=
-            p2") instead of exact list of pixels. Should be set to True for
-            large regions covering very many pixels.
-
-        Returns
-        -------
-        expressions : `list` [ `tuple` ]
-            Empty list is returned if ``region`` is `None`, otherwise a list
-            of one or more (expression, parameters) tuples
-        """
-        if region is None:
-            return []
-        if use_ranges:
-            pixel_ranges = self._partitioner.envelope(region)
-            expressions: List[Tuple[str, Tuple]] = []
-            for lower, upper in pixel_ranges:
-                upper -= 1
-                if lower == upper:
-                    expressions.append(('"apdb_part" = ?', (lower, )))
-                else:
-                    expressions.append(('"apdb_part" >= ? AND "apdb_part" <= ?', (lower, upper)))
-            return expressions
-        else:
-            pixels = self._partitioner.pixels(region)
-            if self.config.query_per_spatial_part:
-                return [('"apdb_part" = ?', (pixel,)) for pixel in pixels]
-            else:
-                pixels_str = ",".join([str(pix) for pix in pixels])
-                return [(f'"apdb_part" IN ({pixels_str})', ())]
 
     def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: Union[ApdbTables, ExtraTables],
                             extra_columns: Optional[Mapping] = None,
@@ -857,7 +806,7 @@ class ApdbCassandra(Apdb):
         ra_col, dec_col = self.config.ra_dec_columns
         for i, (ra, dec) in enumerate(zip(df[ra_col], df[dec_col])):
             uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
-            idx = self._partitioner.pixel(uv3d)
+            idx = self._pixelization.pixel(uv3d)
             apdb_part[i] = idx
         df = df.copy()
         df["apdb_part"] = apdb_part
@@ -890,7 +839,7 @@ class ApdbCassandra(Apdb):
                 # associated DiaObject hence we skip them and set partition
                 # based on its own ra/dec
                 uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
-                idx = self._partitioner.pixel(uv3d)
+                idx = self._pixelization.pixel(uv3d)
                 apdb_part[i] = idx
             else:
                 apdb_part[i] = pixel_id_map[diaObjId]
@@ -970,3 +919,137 @@ class ApdbCassandra(Apdb):
             stmt = self._session.prepare(query)
             self._prepared_statements[query] = stmt
         return stmt
+
+    def _combine_where(
+        self,
+        prefix: str,
+        where1: List[Tuple[str, Tuple]],
+        where2: List[Tuple[str, Tuple]],
+        suffix: Optional[str] = None,
+    ) -> Iterator[Tuple[cassandra.query.Statement, Tuple]]:
+        """Make cartesian product of two parts of WHERE clause into a series
+        of statements to execute.
+
+        Parameters
+        ----------
+        prefix : `str`
+            Initial statement prefix that comes before WHERE clause, e.g.
+            "SELECT * from Table"
+        """
+        # If lists are empty use special sentinels.
+        if not where1:
+            where1 = [("", ())]
+        if not where2:
+            where2 = [("", ())]
+
+        for expr1, params1 in where1:
+            for expr2, params2 in where2:
+                full_query = prefix
+                wheres = []
+                if expr1:
+                    wheres.append(expr1)
+                if expr2:
+                    wheres.append(expr2)
+                if wheres:
+                    full_query += " WHERE " + " AND ".join(wheres)
+                if suffix:
+                    full_query += " " + suffix
+                params = params1 + params2
+                if params:
+                    statement = self._prep_statement(full_query)
+                else:
+                    # If there are no params then it is likely that query
+                    # has a bunch of literals rendered already, no point
+                    # trying to prepare it.
+                    statement = cassandra.query.SimpleStatement(full_query)
+                yield (statement, params)
+
+    def _spatial_where(
+        self, region: Optional[sphgeom.Region], use_ranges: bool = False
+    ) -> List[Tuple[str, Tuple]]:
+        """Generate expressions for spatial part of WHERE clause.
+
+        Parameters
+        ----------
+        region : `sphgeom.Region`
+            Spatial region for query results.
+        use_ranges : `bool`
+            If True then use pixel ranges ("apdb_part >= p1 AND apdb_part <=
+            p2") instead of exact list of pixels. Should be set to True for
+            large regions covering very many pixels.
+
+        Returns
+        -------
+        expressions : `list` [ `tuple` ]
+            Empty list is returned if ``region`` is `None`, otherwise a list
+            of one or more (expression, parameters) tuples
+        """
+        if region is None:
+            return []
+        if use_ranges:
+            pixel_ranges = self._pixelization.envelope(region)
+            expressions: List[Tuple[str, Tuple]] = []
+            for lower, upper in pixel_ranges:
+                upper -= 1
+                if lower == upper:
+                    expressions.append(('"apdb_part" = ?', (lower, )))
+                else:
+                    expressions.append(('"apdb_part" >= ? AND "apdb_part" <= ?', (lower, upper)))
+            return expressions
+        else:
+            pixels = self._pixelization.pixels(region)
+            if self.config.query_per_spatial_part:
+                return [('"apdb_part" = ?', (pixel,)) for pixel in pixels]
+            else:
+                pixels_str = ",".join([str(pix) for pix in pixels])
+                return [(f'"apdb_part" IN ({pixels_str})', ())]
+
+    def _temporal_where(
+        self,
+        table: ApdbTables,
+        start_time: Union[float, dafBase.DateTime],
+        end_time: Union[float, dafBase.DateTime],
+        query_per_time_part: Optional[bool] = None,
+    ) -> Tuple[List[str], List[Tuple[str, Tuple]]]:
+        """Generate table names and expressions for temporal part of WHERE
+        clauses.
+
+        Parameters
+        ----------
+        table : `ApdbTables`
+            Table to select from.
+        start_time : `dafBase.DateTime` or `float`
+            Starting Datetime of MJD value of the time range.
+        start_time : `dafBase.DateTime` or `float`
+            Starting Datetime of MJD value of the time range.
+        query_per_time_part : `bool`, optional
+            If None then use ``query_per_time_part`` from configuration.
+
+        Returns
+        -------
+        tables : `list` [ `str` ]
+            List of the table names to query.
+        expressions : `list` [ `tuple` ]
+            A list of zero or more (expression, parameters) tuples.
+        """
+        tables: List[str]
+        temporal_where: List[Tuple[str, Tuple]] = []
+        table_name = self._schema.tableName(table)
+        time_part_start = self._time_partition(start_time)
+        time_part_end = self._time_partition(end_time)
+        time_parts = list(range(time_part_start, time_part_end + 1))
+        if self.config.time_partition_tables:
+            tables = [f"{table_name}_{part}" for part in time_parts]
+        else:
+            tables = [table_name]
+            if query_per_time_part is None:
+                query_per_time_part = self.config.query_per_time_part
+            if query_per_time_part:
+                temporal_where = [
+                    ('"apdb_time_part" = ?', (time_part,)) for time_part in time_parts
+                ]
+            else:
+                time_part_list = ",".join([str(part) for part in time_parts])
+                temporal_where = [(f'"apdb_time_part" IN ({time_part_list})', ())]
+
+        return tables, temporal_where

@@ -294,7 +294,8 @@ class Apdb(ABC):
         Notes
         -----
         This part of API may not be very stable and can change before the
-        implementation finalizes.
+        implementation finalizes. Some implementations may not support region
+        filtering, they will return records from the whole sky.
         """
         raise NotImplementedError()
 
