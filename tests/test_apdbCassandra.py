@@ -56,6 +56,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
     time_partition_tables = False
     time_partition_start = None
     time_partition_end = None
+    fsrc_history_region_filtering = True
 
     @classmethod
     def setUpClass(cls):
@@ -111,6 +112,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         """Return number of columns for a specified table."""
 
         # Tables add one or two partitioning columns depending on config
+        n_part_columns = 0
         if table is ApdbTables.DiaObjectLast:
             n_part_columns = 1
         else:
@@ -127,6 +129,8 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
             return self.n_src_columns + n_part_columns
         elif table is ApdbTables.DiaForcedSource:
             return self.n_fsrc_columns + n_part_columns
+        elif table is ApdbTables.SSObject:
+            return self.n_ssobj_columns
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""

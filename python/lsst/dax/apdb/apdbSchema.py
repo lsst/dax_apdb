@@ -67,13 +67,13 @@ class ColumnDef:
     """name of cat type (INT, FLOAT, etc.)"""
     nullable: bool
     """True for nullable columns"""
-    default: Any
+    default: Any = None
     """default value for column, can be None"""
-    description: Optional[str]
+    description: Optional[str] = None
     """documentation, can be None or empty"""
-    unit: Optional[str]
+    unit: Optional[str] = None
     """string with unit name, can be None"""
-    ucd: Optional[str]
+    ucd: Optional[str] = None
     """string with ucd, can be None"""
 
     @property
@@ -110,12 +110,12 @@ class TableDef:
     """
     name: str
     """table name"""
-    description: Optional[str]
-    """documentation, can be None or empty"""
     columns: List[ColumnDef]
     """list of ColumnDef instances"""
     indices: List[IndexDef]
     """list of IndexDef instances, can be empty"""
+    description: Optional[str] = None
+    """documentation, can be None or empty"""
 
     @property
     def primary_key(self) -> IndexDef:

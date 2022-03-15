@@ -23,17 +23,29 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraSchema"]
 
-import itertools
+import enum
 import logging
-from typing import List, Mapping, Optional, TYPE_CHECKING, Tuple
+from typing import List, Mapping, Optional, TYPE_CHECKING, Tuple, Union
 
-from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType
+from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType, TableDef
 
 if TYPE_CHECKING:
     import cassandra.cluster
 
 
 _LOG = logging.getLogger(__name__)
+
+
+@enum.unique
+class ExtraTables(enum.Enum):
+    """Names of the extra tables used by Cassandra implementation."""
+
+    DiaSourceToPartition = "DiaSourceToPartition"
+    "Maps diaSourceId ro its partition values (pixel and time)."
+
+    def table_name(self, prefix: str = "") -> str:
+        """Return full table name."""
+        return prefix + self.value
 
 
 class ApdbCassandraSchema(ApdbSchema):
@@ -68,62 +80,92 @@ class ApdbCassandraSchema(ApdbSchema):
                      BOOL="BOOLEAN")
     """Map YAML column types to Cassandra"""
 
-    def __init__(self, session: cassandra.cluster.Session, schema_file: str,
+    _time_partitioned_tables = [
+        ApdbTables.DiaObject,
+        ApdbTables.DiaSource,
+        ApdbTables.DiaForcedSource,
+    ]
+    _spatially_partitioned_tables = [ApdbTables.DiaObjectLast]
+
+    def __init__(self, session: cassandra.cluster.Session, keyspace: str, schema_file: str,
                  extra_schema_file: Optional[str] = None, prefix: str = "",
-                 packing: str = "none", time_partition_tables: bool = False):
+                 time_partition_tables: bool = False):
 
         super().__init__(schema_file, extra_schema_file)
 
         self._session = session
+        self._keyspace = keyspace
         self._prefix = prefix
-        self._packing = packing
+        self._time_partition_tables = time_partition_tables
 
         # add columns and index for partitioning.
         self._ignore_tables = []
         for table, tableDef in self.tableSchemas.items():
             columns = []
-            if table is ApdbTables.DiaObjectLast:
+            add_columns = True
+            if table in self._spatially_partitioned_tables:
                 # DiaObjectLast does not need temporal partitioning
                 columns = ["apdb_part"]
-            elif table in (ApdbTables.DiaObject, ApdbTables.DiaSource, ApdbTables.DiaForcedSource):
-                # these three tables can use either pure spatial or combined
+            elif table in self._time_partitioned_tables:
                 if time_partition_tables:
                     columns = ["apdb_part"]
                 else:
                     columns = ["apdb_part", "apdb_time_part"]
+            elif table is ApdbTables.SSObject:
+                # For SSObject there is no natural partition key but we have
+                # to partition it because there are too many of them. I'm
+                # going to partition on its primary key (and drop separate
+                # primary key index).
+                columns = ["ssObjectId"]
+                tableDef.indices = [
+                    index for index in tableDef.indices if index.type is not IndexType.PRIMARY
+                ]
+                add_columns = False
             else:
                 # TODO: Do not know yet how other tables can be partitioned
                 self._ignore_tables.append(table)
+                add_columns = False
 
-            # add columns to the column list
-            columnDefs = [ColumnDef(name=name,
-                                    type="BIGINT",
-                                    nullable=False,
-                                    default=None,
-                                    description="",
-                                    unit=None,
-                                    ucd=None) for name in columns]
-            tableDef.columns = columnDefs + tableDef.columns
+            if add_columns:
+                # add columns to the column list
+                columnDefs = [
+                    ColumnDef(name=name, type="BIGINT", nullable=False) for name in columns
+                ]
+                tableDef.columns = columnDefs + tableDef.columns
 
             # make an index
-            index = IndexDef(name=f"Part_{tableDef.name}", type=IndexType.PARTITION, columns=columns)
-            tableDef.indices.append(index)
+            if columns:
+                index = IndexDef(name=f"Part_{tableDef.name}", type=IndexType.PARTITION, columns=columns)
+                tableDef.indices.append(index)
 
-        self._packed_columns = {}
-        if self._packing != "none":
-            for table, tableDef in self.tableSchemas.items():
-                index_columns = set(itertools.chain.from_iterable(
-                    index.columns for index in tableDef.indices
-                ))
-                columnsDefs = [column for column in tableDef.columns if column.name not in index_columns]
-                self._packed_columns[table] = columnsDefs
+        self._extra_tables = self._extraTableSchema()
 
-    def tableName(self, table_name: ApdbTables) -> str:
+    def _extraTableSchema(self) -> Mapping[ExtraTables, TableDef]:
+        """Generate schema for extra tables."""
+        return {
+            ExtraTables.DiaSourceToPartition: TableDef(
+                name=ExtraTables.DiaSourceToPartition.value,
+                columns=[
+                    ColumnDef(name="diaSourceId", type="BIGINT", nullable=False),
+                    ColumnDef(name="apdb_part", type="BIGINT", nullable=False),
+                    ColumnDef(name="apdb_time_part", type="INT", nullable=False),
+                ],
+                indices=[
+                    IndexDef(
+                        name=f"Part_{ExtraTables.DiaSourceToPartition.value}",
+                        type=IndexType.PARTITION,
+                        columns=["diaSourceId"],
+                    ),
+                ],
+            ),
+        }
+
+    def tableName(self, table_name: Union[ApdbTables, ExtraTables]) -> str:
         """Return Cassandra table name for APDB table.
         """
         return table_name.table_name(self._prefix)
 
-    def getColumnMap(self, table_name: ApdbTables) -> Mapping[str, ColumnDef]:
+    def getColumnMap(self, table_name: Union[ApdbTables, ExtraTables]) -> Mapping[str, ColumnDef]:
         """Returns mapping of column names to Column definitions.
 
         Parameters
@@ -136,11 +178,14 @@ class ApdbCassandraSchema(ApdbSchema):
         column_map : `dict`
             Mapping of column names to `ColumnDef` instances.
         """
-        table = self.tableSchemas[table_name]
-        cmap = {column.name: column for column in table.columns}
+        if isinstance(table_name, ApdbTables):
+            table_schema = self.tableSchemas[table_name]
+        else:
+            table_schema = self._extra_tables[table_name]
+        cmap = {column.name: column for column in table_schema.columns}
         return cmap
 
-    def partitionColumns(self, table_name: ApdbTables) -> List[str]:
+    def partitionColumns(self, table_name: Union[ApdbTables, ExtraTables]) -> List[str]:
         """Return a list of columns used for table partitioning.
 
         Parameters
@@ -153,14 +198,17 @@ class ApdbCassandraSchema(ApdbSchema):
         columns : `list` of `str`
             Names of columns for used for partitioning.
         """
-        table_schema = self.tableSchemas[table_name]
+        if isinstance(table_name, ApdbTables):
+            table_schema = self.tableSchemas[table_name]
+        else:
+            table_schema = self._extra_tables[table_name]
         for index in table_schema.indices:
             if index.type is IndexType.PARTITION:
                 # there could be just one partitoning index (possibly with few columns)
                 return index.columns
         return []
 
-    def clusteringColumns(self, table_name: ApdbTables) -> List[str]:
+    def clusteringColumns(self, table_name: Union[ApdbTables, ExtraTables]) -> List[str]:
         """Return a list of columns used for clustering.
 
         Parameters
@@ -171,9 +219,12 @@ class ApdbCassandraSchema(ApdbSchema):
         Returns
         -------
         columns : `list` of `str`
-            Names of columns for used for partitioning.
+            Names of columns for used for clustering.
         """
-        table_schema = self.tableSchemas[table_name]
+        if isinstance(table_name, ApdbTables):
+            table_schema = self.tableSchemas[table_name]
+        else:
+            table_schema = self._extra_tables[table_name]
         for index in table_schema.indices:
             if index.type is IndexType.PRIMARY:
                 return index.columns
@@ -192,43 +243,54 @@ class ApdbCassandraSchema(ApdbSchema):
             DiaForcedSource tables. If `None` then per-partition tables are
             not created.
         """
-
         for table in self.tableSchemas:
-            if table in self._ignore_tables:
-                _LOG.debug("Skipping schema for table %s", table)
-                continue
-            _LOG.debug("Making table %s", table)
+            self._makeTableSchema(table, drop, part_range)
+        for extra_table in self._extra_tables:
+            self._makeTableSchema(extra_table, drop, part_range)
 
-            fullTable = table.table_name(self._prefix)
+    def _makeTableSchema(
+        self,
+        table: Union[ApdbTables, ExtraTables],
+        drop: bool = False,
+        part_range: Optional[Tuple[int, int]] = None
+    ) -> None:
+        if table in self._ignore_tables:
+            _LOG.debug("Skipping schema for table %s", table)
+            return
+        _LOG.debug("Making table %s", table)
 
-            table_list = [fullTable]
-            if part_range is not None:
-                if table in (ApdbTables.DiaSource, ApdbTables.DiaForcedSource, ApdbTables.DiaObject):
-                    partitions = range(*part_range)
-                    table_list = [f"{fullTable}_{part}" for part in partitions]
+        fullTable = table.table_name(self._prefix)
 
-            if drop:
-                queries = [f'DROP TABLE IF EXISTS "{table_name}"' for table_name in table_list]
-                futures = [self._session.execute_async(query, timeout=None) for query in queries]
-                for future in futures:
-                    _LOG.debug("wait for query: %s", future.query)
-                    future.result()
-                    _LOG.debug("query finished: %s", future.query)
+        table_list = [fullTable]
+        if part_range is not None:
+            if table in self._time_partitioned_tables:
+                partitions = range(*part_range)
+                table_list = [f"{fullTable}_{part}" for part in partitions]
 
-            queries = []
-            for table_name in table_list:
-                if_not_exists = "" if drop else "IF NOT EXISTS"
-                columns = ", ".join(self._tableColumns(table))
-                query = f'CREATE TABLE {if_not_exists} "{table_name}" ({columns})'
-                _LOG.debug("query: %s", query)
-                queries.append(query)
+        if drop:
+            queries = [
+                f'DROP TABLE IF EXISTS "{self._keyspace}"."{table_name}"' for table_name in table_list
+            ]
             futures = [self._session.execute_async(query, timeout=None) for query in queries]
             for future in futures:
                 _LOG.debug("wait for query: %s", future.query)
                 future.result()
                 _LOG.debug("query finished: %s", future.query)
 
-    def _tableColumns(self, table_name: ApdbTables) -> List[str]:
+        queries = []
+        for table_name in table_list:
+            if_not_exists = "" if drop else "IF NOT EXISTS"
+            columns = ", ".join(self._tableColumns(table))
+            query = f'CREATE TABLE {if_not_exists} "{self._keyspace}"."{table_name}" ({columns})'
+            _LOG.debug("query: %s", query)
+            queries.append(query)
+        futures = [self._session.execute_async(query, timeout=None) for query in queries]
+        for future in futures:
+            _LOG.debug("wait for query: %s", future.query)
+            future.result()
+            _LOG.debug("query finished: %s", future.query)
+
+    def _tableColumns(self, table_name: Union[ApdbTables, ExtraTables]) -> List[str]:
         """Return set of columns in a table
 
         Parameters
@@ -241,7 +303,10 @@ class ApdbCassandraSchema(ApdbSchema):
         column_defs : `list`
             List of strings in the format "column_name type".
         """
-        table_schema = self.tableSchemas[table_name]
+        if isinstance(table_name, ApdbTables):
+            table_schema = self.tableSchemas[table_name]
+        else:
+            table_schema = self._extra_tables[table_name]
 
         # must have partition columns and clustering columns
         part_columns = []
@@ -257,21 +322,12 @@ class ApdbCassandraSchema(ApdbSchema):
         _LOG.debug("clust_columns: %s", clust_columns)
         if not part_columns:
             raise ValueError(f"Table {table_name} configuration is missing partition index")
-        if not clust_columns:
-            raise ValueError(f"Table {table_name} configuration is missing primary index")
 
         # all columns
         column_defs = []
         for column in table_schema.columns:
-            if self._packing != "none" and column.name not in index_columns:
-                # when packing all non-index columns are replaced by a BLOB
-                continue
             ctype = self._type_map[column.type]
             column_defs.append(f'"{column.name}" {ctype}')
-
-        # packed content goes to a single blob column
-        if self._packing != "none":
-            column_defs.append('"apdb_packed" blob')
 
         # primary key definition
         part_columns = [f'"{col}"' for col in part_columns]
@@ -284,19 +340,3 @@ class ApdbCassandraSchema(ApdbSchema):
         column_defs.append(f"PRIMARY KEY ({pkey})")
 
         return column_defs
-
-    def packedColumns(self, table_name: ApdbTables) -> List[ColumnDef]:
-        """Return set of columns that are packed into BLOB.
-
-        Parameters
-        ----------
-        table_name : `ApdbTables`
-            Name of the table.
-
-        Returns
-        -------
-        columns : `list` [ `ColumnDef` ]
-            List of column definitions. Empty list is returned if packing is
-            not configured.
-        """
-        return self._packed_columns.get(table_name, [])

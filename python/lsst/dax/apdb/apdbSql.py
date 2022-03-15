@@ -30,7 +30,7 @@ from contextlib import contextmanager
 import logging
 import numpy as np
 import pandas
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 import lsst.daf.base as dafBase
 from lsst.pex.config import Field, ChoiceField, ListField
@@ -393,7 +393,7 @@ class ApdbSql(Apdb):
 
     def getDiaObjectsHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -401,12 +401,10 @@ class ApdbSql(Apdb):
         query = table.select()
 
         # build selection
-        time_filter = table.columns["validityStart"] >= start_time.toPython()
-        if end_time:
-            time_filter = sql.expression.and_(
-                time_filter,
-                table.columns["validityStart"] < end_time.toPython()
-            )
+        time_filter = sql.expression.and_(
+            table.columns["validityStart"] >= start_time.toPython(),
+            table.columns["validityStart"] < end_time.toPython()
+        )
 
         if region:
             where = sql.expression.and_(self._filterRegion(table, region), time_filter)
@@ -423,7 +421,7 @@ class ApdbSql(Apdb):
 
     def getDiaSourcesHistory(self,
                              start_time: dafBase.DateTime,
-                             end_time: Optional[dafBase.DateTime] = None,
+                             end_time: dafBase.DateTime,
                              region: Optional[Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -431,12 +429,10 @@ class ApdbSql(Apdb):
         query = table.select()
 
         # build selection
-        time_filter = table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD)
-        if end_time:
-            time_filter = sql.expression.and_(
-                time_filter,
-                table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
-            )
+        time_filter = sql.expression.and_(
+            table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD),
+            table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
+        )
 
         if region:
             where = sql.expression.and_(self._filterRegion(table, region), time_filter)
@@ -453,7 +449,7 @@ class ApdbSql(Apdb):
 
     def getDiaForcedSourcesHistory(self,
                                    start_time: dafBase.DateTime,
-                                   end_time: Optional[dafBase.DateTime] = None,
+                                   end_time: dafBase.DateTime,
                                    region: Optional[Region] = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -461,12 +457,10 @@ class ApdbSql(Apdb):
         query = table.select()
 
         # build selection
-        time_filter = table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD)
-        if end_time:
-            time_filter = sql.expression.and_(
-                time_filter,
-                table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
-            )
+        time_filter = sql.expression.and_(
+            table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD),
+            table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
+        )
         # Forced sources have no pixel index, so no region filtering
         query = query.where(time_filter)
 
@@ -529,8 +523,8 @@ class ApdbSql(Apdb):
             knownIds = set(row[idColumn] for row in result)
 
             filter = objects[idColumn].isin(knownIds)
-            toUpdate = objects[filter]
-            toInsert = objects[~filter]
+            toUpdate = cast(pandas.DataFrame, objects[filter])
+            toInsert = cast(pandas.DataFrame, objects[~filter])
 
             # insert new records
             if len(toInsert) > 0:
@@ -551,11 +545,18 @@ class ApdbSql(Apdb):
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
 
         with self._engine.begin() as conn:
-            # TODO: diaObjectId should probably be None but in our current
-            # schema it is defined NOT NULL, may need to update for the future
-            # schema.
-            params = [dict(srcId=key, diaObjectId=0, ssObjectId=value) for key, value in idMap.items()]
-            conn.execute(query, params)
+            # Need to make sure that every ID exists in the database, but
+            # executemany may not support rowcount, so iterate and check what is
+            # missing.
+            missing_ids: List[int] = []
+            for key, value in idMap.items():
+                params = dict(srcId=key, diaObjectId=0, ssObjectId=value)
+                result = conn.execute(query, params)
+                if result.rowcount == 0:
+                    missing_ids.append(key)
+            if missing_ids:
+                missing = ",".join(str(item)for item in missing_ids)
+                raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
