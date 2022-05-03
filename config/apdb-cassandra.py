@@ -7,10 +7,10 @@ config.read_sources_months=12
 config.read_forced_sources_months=12
 
 # Location of (YAML) configuration file with standard schema
-config.schema_file='${DAX_APDB_DIR}/data/apdb-schema.yaml'
+config.schema_file='${SDM_SCHEMAS_DIR}/yml/apdb.yaml'
 
-# Location of (YAML) configuration file with extra schema
-config.extra_schema_file='${DAX_APDB_DIR}/data/apdb-schema-extra.yaml'
+# Name of the schema in YAML configuration file.
+config.schema_name="ApdbSchema"
 
 # The list of contact points to try connecting for cluster discovery.
 config.contact_points=['127.0.0.1']

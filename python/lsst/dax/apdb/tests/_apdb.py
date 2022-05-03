@@ -53,12 +53,12 @@ class ApdbTest(ABC):
     filtering.
     """
 
-    # number of columns as defined in schema YAML files
-    n_obj_columns = 91 + 2  # schema + schema-extra
-    n_obj_last_columns = 17
-    n_src_columns = 107
-    n_fsrc_columns = 8
-    n_ssobj_columns = 81
+    # number of columns as defined in tests/config/schema.yaml
+    n_obj_columns = 7
+    n_obj_last_columns = 5
+    n_src_columns = 9
+    n_fsrc_columns = 4
+    n_ssobj_columns = 3
 
     @abstractmethod
     def make_config(self, **kwargs: Any) -> ApdbConfig:
@@ -202,7 +202,7 @@ class ApdbTest(ABC):
         visit_time = self.visit_time
 
         # make catalog with Objects
-        catalog = makeObjectCatalog(region, 100)
+        catalog = makeObjectCatalog(region, 100, visit_time)
 
         # store catalog
         apdb.store(visit_time, catalog)
@@ -234,12 +234,12 @@ class ApdbTest(ABC):
         end_time = DateTime("2021-03-02T00:00:00", DateTime.TAI)
 
         nobj = 100
-        catalog1 = makeObjectCatalog(region1, nobj)
+        catalog1 = makeObjectCatalog(region1, nobj, visit_time[0])
         apdb.store(visit_time[0], catalog1)
         apdb.store(visit_time[2], catalog1)
         apdb.store(visit_time[4], catalog1)
         apdb.store(visit_time[6], catalog1)
-        catalog2 = makeObjectCatalog(region2, nobj, start_id=nobj*2)
+        catalog2 = makeObjectCatalog(region2, nobj, visit_time[1], start_id=nobj*2)
         apdb.store(visit_time[1], catalog2)
         apdb.store(visit_time[3], catalog2)
         apdb.store(visit_time[5], catalog2)
@@ -312,7 +312,7 @@ class ApdbTest(ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100)
+        objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time)
 
@@ -338,12 +338,13 @@ class ApdbTest(ABC):
         config = self.make_config()
         apdb = make_apdb(config)
         apdb.makeSchema()
+        visit_time = self.visit_time
 
         region1 = self.make_region((1., 1., -1.))
         region2 = self.make_region((-1., -1., -1.))
         nobj = 100
-        objects1 = makeObjectCatalog(region1, nobj)
-        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj*2)
+        objects1 = makeObjectCatalog(region1, nobj, visit_time)
+        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj*2)
 
         visits = [
             (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
@@ -431,7 +432,7 @@ class ApdbTest(ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100)
+        objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
         catalog = makeForcedSourceCatalog(objects, visit_time)
 
@@ -452,12 +453,13 @@ class ApdbTest(ABC):
         config = self.make_config()
         apdb = make_apdb(config)
         apdb.makeSchema()
+        visit_time = self.visit_time
 
         region1 = self.make_region((1., 1., -1.))
         region2 = self.make_region((-1., -1., -1.))
         nobj = 100
-        objects1 = makeObjectCatalog(region1, nobj)
-        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj*2)
+        objects1 = makeObjectCatalog(region1, nobj, visit_time)
+        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj*2)
 
         visits = [
             (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
@@ -573,7 +575,7 @@ class ApdbTest(ABC):
 
         region = self.make_region()
         visit_time = self.visit_time
-        objects = makeObjectCatalog(region, 100)
+        objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time)
         apdb.store(visit_time, objects, sources)
@@ -608,7 +610,7 @@ class ApdbTest(ABC):
         visit_time1 = DateTime("2021-12-27T00:00:01", DateTime.TAI)
         visit_time2 = DateTime("2021-12-27T00:00:03", DateTime.TAI)
 
-        objects = makeObjectCatalog(region, 100)
+        objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, src_time1, 0)
         apdb.store(src_time1, objects, sources)
@@ -646,7 +648,7 @@ class ApdbTest(ABC):
         visit_time1 = DateTime("2021-12-27T00:00:01", DateTime.TAI)
         visit_time2 = DateTime("2021-12-27T00:00:03", DateTime.TAI)
 
-        objects = makeObjectCatalog(region, 100)
+        objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
         sources = makeForcedSourceCatalog(objects, src_time1, 1)
         apdb.store(src_time1, objects, forced_sources=sources)

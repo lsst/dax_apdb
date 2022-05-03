@@ -61,7 +61,9 @@ def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
             count -= 1
 
 
-def makeObjectCatalog(region: Region, count: int, start_id: int = 1) -> pandas.DataFrame:
+def makeObjectCatalog(
+    region: Region, count: int, visit_time: DateTime, *, start_id: int = 1
+) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaObjects inside a region.
 
     Parameters
@@ -70,6 +72,10 @@ def makeObjectCatalog(region: Region, count: int, start_id: int = 1) -> pandas.D
         Spherical region.
     count : `int`
         Number of records to generate.
+    visit_time : `lsst.daf.base.DateTime`
+        Time of the visit.
+    start_id : `int`
+        Starting diaObjectId.
 
     Returns
     -------
@@ -87,14 +93,23 @@ def makeObjectCatalog(region: Region, count: int, start_id: int = 1) -> pandas.D
     ids = numpy.arange(start_id, len(points) + start_id, dtype=numpy.int64)
     ras = numpy.array([sp.getRa().asDegrees() for sp in points], dtype=numpy.float64)
     decls = numpy.array([sp.getDec().asDegrees() for sp in points], dtype=numpy.float64)
-    df = pandas.DataFrame({"diaObjectId": ids,
-                           "ra": ras,
-                           "decl": decls})
+    nDiaSources = numpy.ones(len(points), dtype=numpy.int32)
+    dt = visit_time.toPython()
+    df = pandas.DataFrame(
+        {
+            "diaObjectId": ids,
+            "ra": ras,
+            "decl": decls,
+            "nDiaSources": nDiaSources,
+            "lastNonForcedSource": dt,
+        }
+    )
     return df
 
 
-def makeSourceCatalog(objects: pandas.DataFrame, visit_time: DateTime,
-                      start_id: int = 0, ccdVisitId: int = 1) -> pandas.DataFrame:
+def makeSourceCatalog(
+    objects: pandas.DataFrame, visit_time: DateTime, start_id: int = 0, ccdVisitId: int = 1
+) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaSources associated with the
     input DiaObjects.
 
@@ -120,21 +135,24 @@ def makeSourceCatalog(objects: pandas.DataFrame, visit_time: DateTime,
     """
     nrows = len(objects)
     midPointTai = visit_time.get(system=DateTime.MJD)
-    df = pandas.DataFrame({
-        "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
-        "diaObjectId": objects["diaObjectId"],
-        "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
-        "parentDiaSourceId": 0,
-        "ra": objects["ra"],
-        "decl": objects["decl"],
-        "midPointTai": numpy.full(nrows, midPointTai, dtype=numpy.float64),
-        "flags": numpy.full(nrows, 0, dtype=numpy.int64),
-    })
+    df = pandas.DataFrame(
+        {
+            "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
+            "diaObjectId": objects["diaObjectId"],
+            "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
+            "parentDiaSourceId": 0,
+            "ra": objects["ra"],
+            "decl": objects["decl"],
+            "midPointTai": numpy.full(nrows, midPointTai, dtype=numpy.float64),
+            "flags": numpy.full(nrows, 0, dtype=numpy.int64),
+        }
+    )
     return df
 
 
-def makeForcedSourceCatalog(objects: pandas.DataFrame, visit_time: DateTime,
-                            ccdVisitId: int = 1) -> pandas.DataFrame:
+def makeForcedSourceCatalog(
+    objects: pandas.DataFrame, visit_time: DateTime, ccdVisitId: int = 1
+) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaForcedSources associated with
     the input DiaObjects.
 
@@ -158,12 +176,14 @@ def makeForcedSourceCatalog(objects: pandas.DataFrame, visit_time: DateTime,
     """
     nrows = len(objects)
     midPointTai = visit_time.get(system=DateTime.MJD)
-    df = pandas.DataFrame({
-        "diaObjectId": objects["diaObjectId"],
-        "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
-        "midPointTai": numpy.full(nrows, midPointTai, dtype=numpy.float64),
-        "flags": numpy.full(nrows, 0, dtype=numpy.int64),
-    })
+    df = pandas.DataFrame(
+        {
+            "diaObjectId": objects["diaObjectId"],
+            "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
+            "midPointTai": numpy.full(nrows, midPointTai, dtype=numpy.float64),
+            "flags": numpy.full(nrows, 0, dtype=numpy.int64),
+        }
+    )
     return df
 
 
@@ -192,7 +212,5 @@ def makeSSObjectCatalog(count: int, start_id: int = 1, flags: int = 0) -> pandas
     ids = numpy.arange(start_id, count + start_id, dtype=numpy.int64)
     arc = numpy.full(count, 0.001, dtype=numpy.float32)
     flags_array = numpy.full(count, flags, dtype=numpy.int64)
-    df = pandas.DataFrame({"ssObjectId": ids,
-                           "arc": arc,
-                           "flags": flags_array})
+    df = pandas.DataFrame({"ssObjectId": ids, "arc": arc, "flags": flags_array})
     return df

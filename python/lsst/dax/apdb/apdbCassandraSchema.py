@@ -57,27 +57,27 @@ class ApdbCassandraSchema(ApdbSchema):
         Cassandra session object
     schema_file : `str`
         Name of the YAML schema file.
-    extra_schema_file : `str`, optional
-        Name of the YAML schema file with extra column definitions.
+    schema_name : `str`, optional
+        Name of the schema in YAML files.
     prefix : `str`, optional
         Prefix to add to all schema elements.
-    packing : `str`
-        Type of packing to apply to columns, string "none" disable packing,
-        any other value enables it.
     time_partition_tables : `bool`
         If True then schema will have a separate table for each time partition.
     """
 
-    _type_map = dict(DOUBLE="DOUBLE",
-                     FLOAT="FLOAT",
-                     DATETIME="TIMESTAMP",
-                     BIGINT="BIGINT",
-                     INTEGER="INT",
-                     INT="INT",
-                     TINYINT="TINYINT",
-                     BLOB="BLOB",
-                     CHAR="TEXT",
-                     BOOL="BOOLEAN")
+    _type_map = dict(double="DOUBLE",
+                     float="FLOAT",
+                     timestamp="TIMESTAMP",
+                     long="BIGINT",
+                     int="INT",
+                     short="INT",
+                     byte="TINYINT",
+                     binary="BLOB",
+                     char="TEXT",
+                     string="TEXT",
+                     unicode="TEXT",
+                     text="TEXT",
+                     boolean="BOOLEAN")
     """Map YAML column types to Cassandra"""
 
     _time_partitioned_tables = [
@@ -87,11 +87,17 @@ class ApdbCassandraSchema(ApdbSchema):
     ]
     _spatially_partitioned_tables = [ApdbTables.DiaObjectLast]
 
-    def __init__(self, session: cassandra.cluster.Session, keyspace: str, schema_file: str,
-                 extra_schema_file: Optional[str] = None, prefix: str = "",
-                 time_partition_tables: bool = False):
+    def __init__(
+        self,
+        session: cassandra.cluster.Session,
+        keyspace: str,
+        schema_file: str,
+        schema_name: str = "ApdbSchema",
+        prefix: str = "",
+        time_partition_tables: bool = False
+    ):
 
-        super().__init__(schema_file, extra_schema_file)
+        super().__init__(schema_file, schema_name)
 
         self._session = session
         self._keyspace = keyspace
@@ -129,7 +135,7 @@ class ApdbCassandraSchema(ApdbSchema):
             if add_columns:
                 # add columns to the column list
                 columnDefs = [
-                    ColumnDef(name=name, type="BIGINT", nullable=False) for name in columns
+                    ColumnDef(name=name, type="long", nullable=False) for name in columns
                 ]
                 tableDef.columns = columnDefs + tableDef.columns
 
@@ -146,9 +152,9 @@ class ApdbCassandraSchema(ApdbSchema):
             ExtraTables.DiaSourceToPartition: TableDef(
                 name=ExtraTables.DiaSourceToPartition.value,
                 columns=[
-                    ColumnDef(name="diaSourceId", type="BIGINT", nullable=False),
-                    ColumnDef(name="apdb_part", type="BIGINT", nullable=False),
-                    ColumnDef(name="apdb_time_part", type="INT", nullable=False),
+                    ColumnDef(name="diaSourceId", type="long", nullable=False),
+                    ColumnDef(name="apdb_part", type="long", nullable=False),
+                    ColumnDef(name="apdb_time_part", type="int", nullable=False),
                 ],
                 indices=[
                     IndexDef(

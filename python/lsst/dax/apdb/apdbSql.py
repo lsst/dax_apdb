@@ -245,7 +245,7 @@ class ApdbSql(Apdb):
         self._schema = ApdbSqlSchema(engine=self._engine,
                                      dia_object_index=self.config.dia_object_index,
                                      schema_file=self.config.schema_file,
-                                     extra_schema_file=self.config.extra_schema_file,
+                                     schema_name=self.config.schema_name,
                                      prefix=self.config.prefix,
                                      htm_index_column=self.config.htm_index_column)
 

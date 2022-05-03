@@ -20,6 +20,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import numpy
+import os
 import pandas
 import unittest.mock
 import lsst.utils.tests
@@ -27,6 +28,8 @@ import lsst.utils.tests
 import lsst.geom as geom
 from lsst.daf.base import DateTime
 from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
+
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
 def createTestObjects(n_objects, id_column_name, extra_fields):
@@ -63,6 +66,7 @@ class TestApVerifyQueries(unittest.TestCase):
         self.apdbCfg = ApdbSqlConfig()
         # Create DB in memory.
         self.apdbCfg.db_url = 'sqlite://'
+        self.apdbCfg.schema_file = TEST_SCHEMA
         self.apdbCfg.dia_object_index = "baseline"
         self.apdbCfg.dia_object_columns = []
         self.apdb = ApdbSql(config=self.apdbCfg)
