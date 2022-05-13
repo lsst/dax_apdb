@@ -35,9 +35,9 @@ from .apdbSchema import ApdbTables, TableDef
 
 
 def _data_file_name(basename: str) -> str:
-    """Return path name of a data file in dax_apdb package.
+    """Return path name of a data file in sdm_schemas package.
     """
-    return os.path.join("${DAX_APDB_DIR}", "data", basename)
+    return os.path.join("${SDM_SCHEMAS_DIR}", "yml", basename)
 
 
 class ApdbConfig(Config):
@@ -56,14 +56,21 @@ class ApdbConfig(Config):
     schema_file = Field(
         dtype=str,
         doc="Location of (YAML) configuration file with standard schema",
-        default=_data_file_name("apdb-schema.yaml")
+        default=_data_file_name("apdb.yaml")
+    )
+    schema_name = Field(
+        dtype=str,
+        doc="Name of the schema in YAML configuration file.",
+        default="ApdbSchema"
     )
     extra_schema_file = Field(
         dtype=str,
         doc="Location of (YAML) configuration file with extra schema, "
             "definitions in this file are merged with the definitions in "
             "'schema_file', extending or replacing parts of the schema.",
-        default=_data_file_name("apdb-schema-extra.yaml")
+        default=None,
+        optional=True,
+        deprecated="This field is deprecated, its value is not used."
     )
 
 

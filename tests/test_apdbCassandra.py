@@ -45,6 +45,7 @@ from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
 from lsst.dax.apdb.tests import ApdbTest
 import lsst.utils.tests
 
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 logging.basicConfig(level=logging.INFO)
 
@@ -99,6 +100,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         kw = {
             "contact_points": [self.cluster_host],
             "keyspace": self.keyspace,
+            "schema_file": TEST_SCHEMA,
             "time_partition_tables": self.time_partition_tables,
         }
         if self.time_partition_start:

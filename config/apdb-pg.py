@@ -45,10 +45,10 @@ config.dia_object_columns = [
 config.object_last_replace=True
 
 # Location of (YAML) configuration file with standard schema
-# config.schema_file = 'data/apdb-schema.yaml'
+# config.schema_file = '${SDM_SCHEMAS_DIR}/yml/apdb.yaml'
 
-# Location of (YAML) configuration file with extra schema
-# config.extra_schema_file = 'data/apdb-schema-extra.yaml'
+# Name of the schema in YAML configuration file.
+# config.schema_name = "ApdbSchema"
 
 # Prefix to add to table names and index names
 config.prefix=''

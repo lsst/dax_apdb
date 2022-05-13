@@ -26,15 +26,10 @@ import os
 import unittest
 
 from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema
-from lsst.utils import getPackageDir
 import lsst.utils.tests
 from sqlalchemy import create_engine
 
-
-def _data_file_name(basename):
-    """Return path name of a data file.
-    """
-    return os.path.join(getPackageDir("dax_apdb"), "data", basename)
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
 class ApdbSchemaTestCase(unittest.TestCase):
@@ -72,53 +67,51 @@ class ApdbSchemaTestCase(unittest.TestCase):
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="baseline",
                                htm_index_column="pixelId",
-                               schema_file=_data_file_name("apdb-schema.yaml"))
+                               schema_file=TEST_SCHEMA)
         schema.makeSchema()
-        self._assertTable(schema.objects, "DiaObject", 92)
+        self._assertTable(schema.objects, "DiaObject", 8)
         self.assertEqual(len(schema.objects.primary_key), 2)
         self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "DiaSource", 108)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
+        self._assertTable(schema.sources, "DiaSource", 10)
+        self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
 
         # create schema using prefix
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="baseline",
                                htm_index_column="pixelId",
-                               schema_file=_data_file_name("apdb-schema.yaml"),
+                               schema_file=TEST_SCHEMA,
                                prefix="Pfx")
         # Drop existing tables (but we don't check it here)
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "PfxDiaObject", 92)
+        self._assertTable(schema.objects, "PfxDiaObject", 8)
         self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "PfxDiaSource", 108)
-        self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 8)
+        self._assertTable(schema.sources, "PfxDiaSource", 10)
+        self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 4)
 
         # use different indexing for DiaObject, need extra schema for that
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="pix_id_iov",
                                htm_index_column="pixelId",
-                               schema_file=_data_file_name("apdb-schema.yaml"),
-                               extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+                               schema_file=TEST_SCHEMA)
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 94)
+        self._assertTable(schema.objects, "DiaObject", 8)
         self.assertEqual(len(schema.objects.primary_key), 3)
         self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "DiaSource", 108)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
+        self._assertTable(schema.sources, "DiaSource", 10)
+        self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
 
-        # use DiaObjectLast table for DiaObject, need extra schema for that
+        # use DiaObjectLast table for DiaObject
         schema = ApdbSqlSchema(engine=engine,
                                dia_object_index="last_object_table",
                                htm_index_column="pixelId",
-                               schema_file=_data_file_name("apdb-schema.yaml"),
-                               extra_schema_file=_data_file_name("apdb-schema-extra.yaml"))
+                               schema_file=TEST_SCHEMA)
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 94)
+        self._assertTable(schema.objects, "DiaObject", 8)
         self.assertEqual(len(schema.objects.primary_key), 2)
-        self._assertTable(schema.objects_last, "DiaObjectLast", 18)
+        self._assertTable(schema.objects_last, "DiaObjectLast", 6)
         self.assertEqual(len(schema.objects_last.primary_key), 2)
-        self._assertTable(schema.sources, "DiaSource", 108)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 8)
+        self._assertTable(schema.sources, "DiaSource", 10)
+        self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

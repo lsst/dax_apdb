@@ -27,7 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlSchema"]
 
 import logging
-from typing import Any, Dict, List, Mapping, Optional, Type
+from typing import Any, Dict, List, Mapping, Type
 
 import sqlalchemy
 from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
@@ -64,15 +64,15 @@ class ApdbSqlSchema(ApdbSchema):
         Name of a HTM index column for DiaObject and DiaSource tables.
     schema_file : `str`
         Name of the YAML schema file.
-    extra_schema_file : `str`, optional
-        Name of the YAML schema file with extra column definitions.
+    schema_name : `str`, optional
+        Name of the schema in YAML files.
     prefix : `str`, optional
         Prefix to add to all scheam elements.
     """
     def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str, htm_index_column: str,
-                 schema_file: str, extra_schema_file: Optional[str] = None, prefix: str = ""):
+                 schema_file: str, schema_name: str = "ApdbSchema", prefix: str = ""):
 
-        super().__init__(schema_file, extra_schema_file)
+        super().__init__(schema_file, schema_name)
 
         self._engine = engine
         self._dia_object_index = dia_object_index
@@ -81,16 +81,19 @@ class ApdbSqlSchema(ApdbSchema):
         self._metadata = MetaData(self._engine)
 
         # map YAML column types to SQLAlchemy
-        self._type_map = dict(DOUBLE=self._getDoubleType(engine),
-                              FLOAT=sqlalchemy.types.Float,
-                              DATETIME=sqlalchemy.types.TIMESTAMP,
-                              BIGINT=sqlalchemy.types.BigInteger,
-                              INTEGER=sqlalchemy.types.Integer,
-                              INT=sqlalchemy.types.Integer,
-                              TINYINT=sqlalchemy.types.Integer,
-                              BLOB=sqlalchemy.types.LargeBinary,
-                              CHAR=sqlalchemy.types.CHAR,
-                              BOOL=sqlalchemy.types.Boolean)
+        self._type_map = dict(double=self._getDoubleType(engine),
+                              float=sqlalchemy.types.Float,
+                              timestamp=sqlalchemy.types.TIMESTAMP,
+                              long=sqlalchemy.types.BigInteger,
+                              int=sqlalchemy.types.Integer,
+                              short=sqlalchemy.types.Integer,
+                              byte=sqlalchemy.types.Integer,
+                              binary=sqlalchemy.types.LargeBinary,
+                              text=sqlalchemy.types.CHAR,
+                              string=sqlalchemy.types.CHAR,
+                              char=sqlalchemy.types.CHAR,
+                              unicode=sqlalchemy.types.CHAR,
+                              boolean=sqlalchemy.types.Boolean)
 
         # Adjust index if needed
         if self._dia_object_index == 'pix_id_iov':
@@ -103,7 +106,7 @@ class ApdbSqlSchema(ApdbSchema):
             if not tableDef:
                 continue
             column = ColumnDef(name=htm_index_column,
-                               type="BIGINT",
+                               type="long",
                                nullable=False,
                                default=None,
                                description="",

@@ -250,7 +250,7 @@ class ApdbCassandra(Apdb):
         self._schema = ApdbCassandraSchema(session=self._session,
                                            keyspace=self._keyspace,
                                            schema_file=self.config.schema_file,
-                                           extra_schema_file=self.config.extra_schema_file,
+                                           schema_name=self.config.schema_name,
                                            prefix=self.config.prefix,
                                            time_partition_tables=self.config.time_partition_tables)
         self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)

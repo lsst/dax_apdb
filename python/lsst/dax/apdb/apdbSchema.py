@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import logging
 import numpy
 import os
-from typing import Any, List, Mapping, Optional, Type, Union
+from typing import Any, Dict, List, Mapping, Optional, Type, Union
 import yaml
 
 
@@ -44,29 +44,34 @@ _LOG = logging.getLogger(__name__)
 # cases we need to create Pandas Dataframe ourselves and we use this map to
 # infer types of columns from their YAML schema.
 _dtype_map: Mapping[str, Union[Type, str]] = dict(
-    DOUBLE=numpy.float64,
-    FLOAT=numpy.float32,
-    DATETIME="datetime64[ms]",
-    BIGINT=numpy.int64,
-    INTEGER=numpy.int32,
-    INT=numpy.int32,
-    TINYINT=numpy.int8,
-    BLOB=object,
-    CHAR=object,
-    BOOL=bool,
+    double=numpy.float64,
+    float=numpy.float32,
+    timestamp="datetime64[ms]",
+    long=numpy.int64,
+    int=numpy.int32,
+    short=numpy.int16,
+    byte=numpy.int8,
+    binary=object,
+    char=object,
+    text=object,
+    string=object,
+    unicode=object,
+    boolean=bool,
 )
 
 
 @dataclass
 class ColumnDef:
-    """Column representation in schema.
-    """
+    """Column representation in schema."""
+
     name: str
     """column name"""
     type: str
     """name of cat type (INT, FLOAT, etc.)"""
     nullable: bool
     """True for nullable columns"""
+    length: Optional[int] = None
+    """Optiona length for string/binary columns"""
     default: Any = None
     """default value for column, can be None"""
     description: Optional[str] = None
@@ -84,8 +89,8 @@ class ColumnDef:
 
 @enum.unique
 class IndexType(enum.Enum):
-    """Types of indices.
-    """
+    """Types of indices."""
+
     PRIMARY = "PRIMARY"
     UNIQUE = "UNIQUE"
     INDEX = "INDEX"
@@ -94,8 +99,8 @@ class IndexType(enum.Enum):
 
 @dataclass
 class IndexDef:
-    """Index description.
-    """
+    """Index description."""
+
     name: str
     """index name, can be empty"""
     type: IndexType
@@ -106,8 +111,8 @@ class IndexDef:
 
 @dataclass
 class TableDef:
-    """Table description
-    """
+    """Table description"""
+
     name: str
     """table name"""
     columns: List[ColumnDef]
@@ -128,8 +133,7 @@ class TableDef:
 
 @enum.unique
 class ApdbTables(enum.Enum):
-    """Names of the tables in APDB schema.
-    """
+    """Names of the tables in APDB schema."""
 
     DiaObject = "DiaObject"
     """Name of the table for DIAObject records."""
@@ -153,8 +157,7 @@ class ApdbTables(enum.Enum):
     """Name of the table for DiaObject_To_Object_Match records."""
 
     def table_name(self, prefix: str = "") -> str:
-        """Return full table name.
-        """
+        """Return full table name."""
         return prefix + self.value
 
 
@@ -170,15 +173,55 @@ class ApdbSchema:
     ----------
     schema_file : `str`
         Name of the YAML schema file.
-    extra_schema_file : `str`, optional
-        Name of the YAML schema file with extra column definitions.
+    schema_name : `str`, optional
+        Name of the schema in YAML files.
     """
-    def __init__(self, schema_file: str, extra_schema_file: Optional[str] = None):
-        # build complete table schema
-        self.tableSchemas = self._buildSchemas(schema_file, extra_schema_file)
 
-    def _buildSchemas(self, schema_file: str, extra_schema_file: Optional[str] = None,
-                      ) -> Mapping[ApdbTables, TableDef]:
+    def __init__(
+        self,
+        schema_file: str,
+        schema_name: str = "ApdbSchema",
+    ):
+        # build complete table schema
+        self.tableSchemas = self._buildSchemas(schema_file, schema_name)
+
+    def _readTables(self, schema_file: str, schema_name: str) -> List[Dict[str, Any]]:
+        """Read table schema from YAML file.
+
+        Parameters
+        ----------
+        schema_file : `str`
+            Name of YAML file with ``felis`` schema.
+        schema_name : `str`, optional
+            Name of the schema in YAML files.
+
+        Returns
+        -------
+        tables : `list`
+            List of table definition objects.
+        """
+        schema_file = os.path.expandvars(schema_file)
+        _LOG.debug("Reading schema file %s", schema_file)
+        with open(schema_file) as yaml_stream:
+            schemas = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
+            schemas = [schema for schema in schemas if schema.get("name") == schema_name]
+            if not schemas:
+                raise ValueError(f"Schema file {schema_file!r} does not define schema {schema_name!r}")
+            elif len(schemas) > 1:
+                raise ValueError(f"Schema file {schema_file!r} defines multiple schemas {schema_name!r}")
+            schema = schemas[0]
+            try:
+                tables = schema["tables"]
+            except KeyError:
+                raise ValueError(f"Schema definition file {schema_file!r} defines no tables")
+        _LOG.debug("Read %d tables from schema", len(tables))
+        return tables
+
+    def _buildSchemas(
+        self,
+        schema_file: str,
+        schema_name: str = "ApdbSchema",
+    ) -> Mapping[ApdbTables, TableDef]:
         """Create schema definitions for all tables.
 
         Reads YAML schemas and builds dictionary containing `TableDef`
@@ -187,9 +230,9 @@ class ApdbSchema:
         Parameters
         ----------
         schema_file : `str`
-            Name of YAML file with standard cat schema.
-        extra_schema_file : `str`, optional
-            Name of YAML file with extra table information or `None`.
+            Name of YAML file with ``felis`` schema.
+        schema_name : `str`, optional
+            Name of the schema in YAML files.
 
         Returns
         -------
@@ -198,92 +241,69 @@ class ApdbSchema:
         """
 
         schema_file = os.path.expandvars(schema_file)
-        _LOG.debug("Reading schema file %s", schema_file)
-        with open(schema_file) as yaml_stream:
-            tables = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
-            # index it by table name
-        _LOG.debug("Read %d tables from schema", len(tables))
+        tables = self._readTables(schema_file, schema_name)
 
-        if extra_schema_file:
-            extra_schema_file = os.path.expandvars(extra_schema_file)
-            _LOG.debug("Reading extra schema file %s", extra_schema_file)
-            with open(extra_schema_file) as yaml_stream:
-                extras = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
-                # index it by table name
-                schemas_extra = {table['table']: table for table in extras}
-        else:
-            schemas_extra = {}
-
-        # merge extra schema into a regular schema, for now only columns are merged
-        for table in tables:
-            table_name = table['table']
-            if table_name in schemas_extra:
-                columns = table['columns']
-                extra_columns = schemas_extra[table_name].get('columns', [])
-                extra_columns = {col['name']: col for col in extra_columns}
-                _LOG.debug("Extra columns for table %s: %s", table_name, extra_columns.keys())
-                columns = []
-                for col in table['columns']:
-                    if col['name'] in extra_columns:
-                        columns.append(extra_columns.pop(col['name']))
-                    else:
-                        columns.append(col)
-                # add all remaining extra columns
-                table['columns'] = columns + list(extra_columns.values())
-
-                if 'indices' in schemas_extra[table_name]:
-                    raise RuntimeError("Extra table definition contains indices, "
-                                       "merging is not implemented")
-
-                del schemas_extra[table_name]
-
-        # Pure "extra" table definitions may contain indices
-        tables += schemas_extra.values()
-
-        # convert all dicts into named tuples
+        # convert all dicts into classes
         schemas = {}
         for table in tables:
-
-            columns = table.get('columns', [])
-
             try:
-                table_enum = ApdbTables(table['table'])
-            except ValueError as exc:
-                raise ValueError(f"{table['table']} is not a valid APDB table name") from exc
+                table_enum = ApdbTables(table["name"])
+            except ValueError:
+                # There may be other tables in the schema that do not belong
+                # to APDB.
+                continue
+
+            columns = table.get("columns", [])
 
             table_columns = []
+            column_map = {}
             for col in columns:
-                # For prototype set default to 0 even if columns don't specify it
-                if "default" not in col:
-                    default = None
-                    if col['type'] not in ("BLOB", "DATETIME"):
-                        default = 0
-                else:
-                    default = col["default"]
-
-                column = ColumnDef(name=col['name'],
-                                   type=col['type'],
-                                   nullable=col.get("nullable"),
-                                   default=default,
-                                   description=col.get("description"),
-                                   unit=col.get("unit"),
-                                   ucd=col.get("ucd"))
+                column = ColumnDef(
+                    name=col["name"],
+                    type=col["datatype"],
+                    nullable=col.get("nullable", True),
+                    length=col.get("length"),
+                    default=col.get("value"),
+                    description=col.get("description"),
+                    unit=col.get("fits:tunit"),
+                    ucd=col.get("ivoa:ucd"),
+                )
                 table_columns.append(column)
+                column_map[col["@id"]] = column
 
             table_indices = []
-            for idx in table.get('indices', []):
-                try:
-                    index_type = IndexType(idx.get('type'))
-                except ValueError as exc:
-                    raise ValueError(f"{idx.get('type')} is not a valid index type") from exc
-                index = IndexDef(name=idx.get('name'),
-                                 type=index_type,
-                                 columns=idx.get('columns'))
+
+            # PK
+            if (idx := table.get("primaryKey")) is not None:
+                if isinstance(idx, list):
+                    columns = [column_map[col_id].name for col_id in idx]
+                else:
+                    columns = [column_map[idx].name]
+                index = IndexDef(name="", type=IndexType.PRIMARY, columns=columns)
                 table_indices.append(index)
 
-            schemas[table_enum] = TableDef(name=table_enum.value,
-                                           description=table.get('description'),
-                                           columns=table_columns,
-                                           indices=table_indices)
+            # usual indices
+            for idx in table.get("indexes", []):
+                columns = [column_map[col_id].name for col_id in idx.get("columns")]
+                index = IndexDef(name=idx.get("name"), type=IndexType.INDEX, columns=columns)
+                table_indices.append(index)
+
+            # Other constraints, for now only Unique is going to work, foreign
+            # keys support may be added later.
+            for idx in table.get("constraints", []):
+                try:
+                    contraint_type = idx.get["@type"]
+                    index_type = IndexType(contraint_type.upper())
+                except ValueError:
+                    raise ValueError(f"{contraint_type} is not a valid index type") from None
+                index = IndexDef(name=idx.get("name"), type=index_type, columns=idx.get("columns"))
+                table_indices.append(index)
+
+            schemas[table_enum] = TableDef(
+                name=table_enum.value,
+                description=table.get("description"),
+                columns=table_columns,
+                indices=table_indices,
+            )
 
         return schemas

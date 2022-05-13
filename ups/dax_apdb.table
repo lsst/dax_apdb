@@ -2,6 +2,7 @@ setupRequired(geom)
 setupRequired(daf_base)
 setupRequired(pex_config)
 setupRequired(sconsUtils)
+setupRequired(sdm_schemas)
 setupRequired(sphgeom)
 setupRequired(utils)
 

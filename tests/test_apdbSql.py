@@ -22,12 +22,15 @@
 """Unit test for Apdb class.
 """
 
-from typing import Any
+import os
 import unittest
+from typing import Any
 
 from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
 from lsst.dax.apdb.tests import ApdbTest
 import lsst.utils.tests
+
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
 class ApdbSqlTestCase(unittest.TestCase, ApdbTest):
@@ -41,6 +44,7 @@ class ApdbSqlTestCase(unittest.TestCase, ApdbTest):
         """Make config class instance used in all tests."""
         kw = {
             "db_url": "sqlite://",
+            "schema_file": TEST_SCHEMA,
             "dia_object_index": self.dia_object_index
         }
         kw.update(kwargs)
