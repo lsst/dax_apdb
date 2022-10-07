@@ -30,8 +30,8 @@ import logging
 from typing import Any, Dict, List, Mapping, Optional, Type
 
 import sqlalchemy
-from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
-                        UniqueConstraint, Table)
+from sqlalchemy import (Column, DDL, Index, MetaData, PrimaryKeyConstraint,
+                        UniqueConstraint, Table, event)
 
 from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType
 
@@ -187,6 +187,16 @@ class ApdbSqlSchema(ApdbSchema):
         self._metadata.clear()
         _LOG.debug("re-do schema mysql_engine=%r", mysql_engine)
         self._makeTables(mysql_engine=mysql_engine)
+
+        # Create namespace if it does not exist yet, for now this only makes
+        # sense for postgres.
+        if self._metadata.schema:
+            dialect = self._engine.dialect
+            quoted_schema = dialect.preparer(dialect).quote_schema(self._metadata.schema)
+            create_schema = DDL(
+                "CREATE SCHEMA IF NOT EXISTS %(schema)s", context={"schema": quoted_schema}
+            ).execute_if(dialect='postgresql')
+            event.listen(self._metadata, "before_create", create_schema)
 
         # create all tables (optionally drop first)
         if drop:

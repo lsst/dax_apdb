@@ -27,7 +27,6 @@ import os
 import unittest
 from typing import Any
 
-import sqlalchemy
 from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
 from lsst.dax.apdb.tests import ApdbTest
 import lsst.utils.tests
@@ -147,14 +146,8 @@ class ApdbPostgresTestCase(unittest.TestCase, ApdbSqlTest):
 class ApdbPostgresNamespaceTestCase(ApdbPostgresTestCase):
     """A test case for ApdbSql class using Postgres backend with schema name"""
 
-    namespace = "apdb_schema"
-
-    def setUp(self):
-        super().setUp()
-        # create namespace
-        engine = sqlalchemy.create_engine(self.server.url())
-        with engine.connect() as connection:
-            connection.execute(sqlalchemy.schema.CreateSchema(self.namespace))
+    # use mixed case to trigger quoting
+    namespace = "ApdbSchema"
 
     def make_config(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""

@@ -174,7 +174,9 @@ class ApdbSqlConfig(ApdbConfig):
         dtype=str,
         doc=(
             "Namespace or schema name for all tables in APDB database. "
-            "Namespace/schema must already exist before APDB tables are created."
+            "Presently only makes sense for PostgresQL backend. "
+            "If schema with this name does not exist it will be created when "
+            "APDB tables are created."
         ),
         default=None,
         optional=True
