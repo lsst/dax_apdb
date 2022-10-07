@@ -22,33 +22,27 @@
 """Unit test for Apdb class.
 """
 
+import gc
 import os
 import unittest
 from typing import Any
 
+import sqlalchemy
 from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
 from lsst.dax.apdb.tests import ApdbTest
 import lsst.utils.tests
 
+try:
+    import testing.postgresql
+except ImportError:
+    testing = None
+
+
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
-class ApdbSqlTestCase(unittest.TestCase, ApdbTest):
-    """A test case for ApdbSql class
-    """
-
-    fsrc_requires_id_list = True
-    dia_object_index = "baseline"
-
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
-        """Make config class instance used in all tests."""
-        kw = {
-            "db_url": "sqlite://",
-            "schema_file": TEST_SCHEMA,
-            "dia_object_index": self.dia_object_index
-        }
-        kw.update(kwargs)
-        return ApdbSqlConfig(**kw)
+class ApdbSqlTest(ApdbTest):
+    """Base class for unit tests for SQL backends."""
 
     def n_columns(self, table: ApdbTables) -> int:
         """Return number of columns for a specified table."""
@@ -65,13 +59,31 @@ class ApdbSqlTestCase(unittest.TestCase, ApdbTest):
         elif table is ApdbTables.SSObject:
             return self.n_ssobj_columns
 
+
+class ApdbSQLiteTestCase(unittest.TestCase, ApdbSqlTest):
+    """A test case for ApdbSql class using SQLite backend."""
+
+    fsrc_requires_id_list = True
+    dia_object_index = "baseline"
+
+    def make_config(self, **kwargs: Any) -> ApdbConfig:
+        """Make config class instance used in all tests."""
+        kw = {
+            "db_url": "sqlite://",
+            "schema_file": TEST_SCHEMA,
+            "dia_object_index": self.dia_object_index
+        }
+        kw.update(kwargs)
+        return ApdbSqlConfig(**kw)
+
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
         return ApdbTables.DiaObject
 
 
-class ApdbSqlTestCaseLastObject(ApdbSqlTestCase):
-    """A test case for ApdbSql class using DiaObjectLast table
+class ApdbSQLiteTestCaseLastObject(ApdbSQLiteTestCase):
+    """A test case for ApdbSql class using SQLite backend and DiaObjectLast
+    table.
     """
 
     dia_object_index = "last_object_table"
@@ -81,11 +93,72 @@ class ApdbSqlTestCaseLastObject(ApdbSqlTestCase):
         return ApdbTables.DiaObjectLast
 
 
-class ApdbSqlTestCasePixIdIovIndex(ApdbSqlTestCase):
-    """A test case for ApdbSql class with pix_id_iov indexing
+class ApdbSQLiteTestCasePixIdIovIndex(ApdbSQLiteTestCase):
+    """A test case for ApdbSql class using SQLite backend with pix_id_iov
+    indexing.
     """
 
     dia_object_index = "pix_id_iov"
+
+
+@unittest.skipUnless(testing is not None, "testing.postgresql module not found")
+class ApdbPostgresTestCase(unittest.TestCase, ApdbSqlTest):
+    """A test case for ApdbSql class using Postgres backend."""
+
+    fsrc_requires_id_list = True
+    dia_object_index = "last_object_table"
+
+    @classmethod
+    def setUpClass(cls):
+        # Create the postgres test server.
+        cls.postgresql = testing.postgresql.PostgresqlFactory(cache_initialized_db=True)
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        # Clean up any lingering SQLAlchemy engines/connections
+        # so they're closed before we shut down the server.
+        gc.collect()
+        cls.postgresql.clear_cache()
+        super().tearDownClass()
+
+    def setUp(self):
+        self.server = self.postgresql()
+
+    def tearDown(self):
+        self.server = self.postgresql()
+
+    def make_config(self, **kwargs: Any) -> ApdbConfig:
+        """Make config class instance used in all tests."""
+        kw = {
+            "db_url": self.server.url(),
+            "schema_file": TEST_SCHEMA,
+            "dia_object_index": self.dia_object_index
+        }
+        kw.update(kwargs)
+        return ApdbSqlConfig(**kw)
+
+    def getDiaObjects_table(self) -> ApdbTables:
+        """Return type of table returned from getDiaObjects method."""
+        return ApdbTables.DiaObjectLast
+
+
+@unittest.skipUnless(testing is not None, "testing.postgresql module not found")
+class ApdbPostgresNamespaceTestCase(ApdbPostgresTestCase):
+    """A test case for ApdbSql class using Postgres backend with schema name"""
+
+    namespace = "apdb_schema"
+
+    def setUp(self):
+        super().setUp()
+        # create namespace
+        engine = sqlalchemy.create_engine(self.server.url())
+        with engine.connect() as connection:
+            connection.execute(sqlalchemy.schema.CreateSchema(self.namespace))
+
+    def make_config(self, **kwargs: Any) -> ApdbConfig:
+        """Make config class instance used in all tests."""
+        return super().make_config(namespace=self.namespace, **kwargs)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

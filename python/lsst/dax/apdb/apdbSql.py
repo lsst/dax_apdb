@@ -35,6 +35,7 @@ from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional,
 import lsst.daf.base as dafBase
 from lsst.pex.config import Field, ChoiceField, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
+from lsst.utils.iteration import chunk_iterable
 import sqlalchemy
 from sqlalchemy import (func, sql)
 from sqlalchemy.pool import NullPool
@@ -45,14 +46,6 @@ from .timer import Timer
 
 
 _LOG = logging.getLogger(__name__)
-
-
-def _split(seq: Iterable, nItems: int) -> Iterator[List]:
-    """Split a sequence into smaller sequences"""
-    seq = list(seq)
-    while seq:
-        yield seq[:nItems]
-        del seq[:nItems]
 
 
 def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
@@ -177,6 +170,15 @@ class ApdbSqlConfig(ApdbConfig):
         doc="Prefix to add to table names and index names",
         default=""
     )
+    namespace = Field(
+        dtype=str,
+        doc=(
+            "Namespace or schema name for all tables in APDB database. "
+            "Namespace/schema must already exist before APDB tables are created."
+        ),
+        default=None,
+        optional=True
+    )
     explain = Field(
         dtype=bool,
         doc="If True then run EXPLAIN SQL command on each executed query",
@@ -247,6 +249,7 @@ class ApdbSql(Apdb):
                                      schema_file=self.config.schema_file,
                                      schema_name=self.config.schema_name,
                                      prefix=self.config.prefix,
+                                     namespace=self.config.namespace,
                                      htm_index_column=self.config.htm_index_column)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
@@ -516,8 +519,10 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with self._engine.begin() as conn:
 
-            # find record IDs that already exist
-            ids = sorted(objects[idColumn])
+            # Find record IDs that already exist. Some types like np.int64 can
+            # cause issues with sqlalchemy, convert them to int.
+            ids = sorted(int(oid) for oid in objects[idColumn])
+
             query = sql.select(table.columns[idColumn], table.columns[idColumn].in_(ids))
             result = conn.execute(query)
             knownIds = set(row[idColumn] for row in result)
@@ -528,7 +533,7 @@ class ApdbSql(Apdb):
 
             # insert new records
             if len(toInsert) > 0:
-                toInsert.to_sql(ApdbTables.SSObject.table_name(), conn, if_exists='append', index=False)
+                toInsert.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
 
             # update existing records
             if len(toUpdate) > 0:
@@ -681,16 +686,23 @@ class ApdbSql(Apdb):
                 query = table.select().where(False)
                 sources = pandas.read_sql_query(query, conn)
             else:
-                for ids in _split(sorted(object_ids), 1000):
-                    query = f'SELECT *  FROM "{table.name}" WHERE '
+                for ids in chunk_iterable(sorted(object_ids), 1000):
+                    query = table.select()
+
+                    # Some types like np.int64 can cause issues with
+                    # sqlalchemy, convert them to int.
+                    int_ids = [int(oid) for oid in ids]
 
                     # select by object id
-                    ids_str = ",".join(str(id) for id in ids)
-                    query += f'"diaObjectId" IN ({ids_str})'
-                    query += f' AND "midPointTai" > {midPointTai_start}'
+                    query = query.where(
+                        sql.expression.and_(
+                            table.columns["diaObjectId"].in_(int_ids),
+                            table.columns["midPointTai"] > midPointTai_start,
+                        )
+                    )
 
                     # execute select
-                    df = pandas.read_sql_query(sql.text(query), conn)
+                    df = pandas.read_sql_query(query, conn)
                     if sources is None:
                         sources = df
                     else:
@@ -709,7 +721,9 @@ class ApdbSql(Apdb):
             Time of the visit.
         """
 
-        ids = sorted(objs['diaObjectId'])
+        # Some types like np.int64 can cause issues with sqlalchemy, convert
+        # them to int.
+        ids = sorted(int(oid) for oid in objs['diaObjectId'])
         _LOG.debug("first object ID: %d", ids[0])
 
         # NOTE: workaround for sqlite, need this here to avoid
@@ -723,8 +737,6 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with _ansi_session(self._engine) as conn:
 
-            ids_str = ",".join(str(id) for id in ids)
-
             if self.config.dia_object_index == 'last_object_table':
 
                 # insert and replace all records in LAST table, mysql and postgres have
@@ -735,15 +747,16 @@ class ApdbSql(Apdb):
                 # objects regardless of the do_replace setting due to how
                 # Pandas inserts objects.
                 if not do_replace or isinstance(objs, pandas.DataFrame):
-                    query = 'DELETE FROM "' + table.name + '" '
-                    query += 'WHERE "diaObjectId" IN (' + ids_str + ') '
+                    query = table.delete().where(
+                        table.columns["diaObjectId"].in_(ids)
+                    )
 
                     if self.config.explain:
                         # run the same query with explain
                         self._explain(query, conn)
 
                     with Timer(table.name + ' delete', self.config.timer):
-                        res = conn.execute(sql.text(query))
+                        res = conn.execute(query)
                     _LOG.debug("deleted %s objects", res.rowcount)
 
                 extra_columns: Dict[str, Any] = dict(lastNonForcedSource=dt)
@@ -751,16 +764,18 @@ class ApdbSql(Apdb):
                     objs = _coerce_uint64(objs)
                     for col, data in extra_columns.items():
                         objs[col] = data
-                    objs.to_sql("DiaObjectLast", conn, if_exists='append',
-                                index=False)
+                    objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
             else:
 
                 # truncate existing validity intervals
                 table = self._schema.objects
-                query = 'UPDATE "' + table.name + '" '
-                query += "SET \"validityEnd\" = '" + str(dt) + "' "
-                query += 'WHERE "diaObjectId" IN (' + ids_str + ') '
-                query += 'AND "validityEnd" IS NULL'
+
+                query = table.update().values(validityEnd=dt).where(
+                    sql.expression.and_(
+                        table.columns["diaObjectId"].in_(ids),
+                        table.columns["validityEnd"].is_(None),
+                    )
+                )
 
                 # _LOG.debug("query: %s", query)
 
@@ -769,7 +784,7 @@ class ApdbSql(Apdb):
                     self._explain(query, conn)
 
                 with Timer(table.name + ' truncate', self.config.timer):
-                    res = conn.execute(sql.text(query))
+                    res = conn.execute(query)
                 _LOG.debug("truncated %s intervals", res.rowcount)
 
             # insert new versions
@@ -780,8 +795,7 @@ class ApdbSql(Apdb):
                 objs = _coerce_uint64(objs)
                 for col, data in extra_columns.items():
                     objs[col] = data
-                objs.to_sql("DiaObject", conn, if_exists='append',
-                            index=False)
+                objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
 
     def _storeDiaSources(self, sources: pandas.DataFrame) -> None:
         """Store catalog of DiaSources from current visit.
@@ -796,7 +810,8 @@ class ApdbSql(Apdb):
 
             with Timer("DiaSource insert", self.config.timer):
                 sources = _coerce_uint64(sources)
-                sources.to_sql("DiaSource", conn, if_exists='append', index=False)
+                table = self._schema.sources
+                sources.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
 
     def _storeDiaForcedSources(self, sources: pandas.DataFrame) -> None:
         """Store a set of DiaForcedSources from current visit.
@@ -812,7 +827,8 @@ class ApdbSql(Apdb):
 
             with Timer("DiaForcedSource insert", self.config.timer):
                 sources = _coerce_uint64(sources)
-                sources.to_sql("DiaForcedSource", conn, if_exists='append', index=False)
+                table = self._schema.forcedSources
+                sources.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
 
     def _explain(self, query: str, conn: sqlalchemy.engine.Connection) -> None:
         """Run the query with explain
@@ -847,11 +863,6 @@ class ApdbSql(Apdb):
         """
         _LOG.debug('region: %s', region)
         indices = self.pixelator.envelope(region, self.config.htm_max_ranges)
-
-        if _LOG.isEnabledFor(logging.DEBUG):
-            for irange in indices.ranges():
-                _LOG.debug('range: %s %s', self.pixelator.toString(irange[0]),
-                           self.pixelator.toString(irange[1]))
 
         return indices.ranges()
 
