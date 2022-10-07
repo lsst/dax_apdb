@@ -27,11 +27,11 @@ from __future__ import annotations
 __all__ = ["ApdbSqlSchema"]
 
 import logging
-from typing import Any, Dict, List, Mapping, Type
+from typing import Any, Dict, List, Mapping, Optional, Type
 
 import sqlalchemy
-from sqlalchemy import (Column, Index, MetaData, PrimaryKeyConstraint,
-                        UniqueConstraint, Table)
+from sqlalchemy import (Column, DDL, Index, MetaData, PrimaryKeyConstraint,
+                        UniqueConstraint, Table, event)
 
 from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType
 
@@ -68,9 +68,19 @@ class ApdbSqlSchema(ApdbSchema):
         Name of the schema in YAML files.
     prefix : `str`, optional
         Prefix to add to all scheam elements.
+    namespace : `str`, optional
+        Namespace (or schema name) to use for all APDB tables.
     """
-    def __init__(self, engine: sqlalchemy.engine.Engine, dia_object_index: str, htm_index_column: str,
-                 schema_file: str, schema_name: str = "ApdbSchema", prefix: str = ""):
+    def __init__(
+        self,
+        engine: sqlalchemy.engine.Engine,
+        dia_object_index: str,
+        htm_index_column: str,
+        schema_file: str,
+        schema_name: str = "ApdbSchema",
+        prefix: str = "",
+        namespace: Optional[str] = None,
+    ):
 
         super().__init__(schema_file, schema_name)
 
@@ -78,7 +88,7 @@ class ApdbSqlSchema(ApdbSchema):
         self._dia_object_index = dia_object_index
         self._prefix = prefix
 
-        self._metadata = MetaData(self._engine)
+        self._metadata = MetaData(self._engine, schema=namespace)
 
         # map YAML column types to SQLAlchemy
         self._type_map = dict(double=self._getDoubleType(engine),
@@ -177,6 +187,16 @@ class ApdbSqlSchema(ApdbSchema):
         self._metadata.clear()
         _LOG.debug("re-do schema mysql_engine=%r", mysql_engine)
         self._makeTables(mysql_engine=mysql_engine)
+
+        # Create namespace if it does not exist yet, for now this only makes
+        # sense for postgres.
+        if self._metadata.schema:
+            dialect = self._engine.dialect
+            quoted_schema = dialect.preparer(dialect).quote_schema(self._metadata.schema)
+            create_schema = DDL(
+                "CREATE SCHEMA IF NOT EXISTS %(schema)s", context={"schema": quoted_schema}
+            ).execute_if(dialect='postgresql')
+            event.listen(self._metadata, "before_create", create_schema)
 
         # create all tables (optionally drop first)
         if drop:
