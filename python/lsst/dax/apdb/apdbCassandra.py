@@ -66,123 +66,100 @@ class CassandraMissingError(Exception):
 
 class ApdbCassandraConfig(ApdbConfig):
 
-    contact_points = ListField(
-        dtype=str,
+    contact_points = ListField[str](
         doc="The list of contact points to try connecting for cluster discovery.",
         default=["127.0.0.1"]
     )
-    private_ips = ListField(
-        dtype=str,
+    private_ips = ListField[str](
         doc="List of internal IP addresses for contact_points.",
         default=[]
     )
-    keyspace = Field(
-        dtype=str,
+    keyspace = Field[str](
         doc="Default keyspace for operations.",
         default="apdb"
     )
-    read_consistency = Field(
-        dtype=str,
+    read_consistency = Field[str](
         doc="Name for consistency level of read operations, default: QUORUM, can be ONE.",
         default="QUORUM"
     )
-    write_consistency = Field(
-        dtype=str,
+    write_consistency = Field[str](
         doc="Name for consistency level of write operations, default: QUORUM, can be ONE.",
         default="QUORUM"
     )
-    read_timeout = Field(
-        dtype=float,
+    read_timeout = Field[float](
         doc="Timeout in seconds for read operations.",
         default=120.
     )
-    write_timeout = Field(
-        dtype=float,
+    write_timeout = Field[float](
         doc="Timeout in seconds for write operations.",
         default=10.
     )
-    read_concurrency = Field(
-        dtype=int,
+    read_concurrency = Field[int](
         doc="Concurrency level for read operations.",
         default=500
     )
-    protocol_version = Field(
-        dtype=int,
+    protocol_version = Field[int](
         doc="Cassandra protocol version to use, default is V4",
         default=cassandra.ProtocolVersion.V4 if CASSANDRA_IMPORTED else 0
     )
-    dia_object_columns = ListField(
-        dtype=str,
+    dia_object_columns = ListField[str](
         doc="List of columns to read from DiaObject, by default read all columns",
         default=[]
     )
-    prefix = Field(
-        dtype=str,
+    prefix = Field[str](
         doc="Prefix to add to table names",
         default=""
     )
-    part_pixelization = ChoiceField(
-        dtype=str,
+    part_pixelization = ChoiceField[str](
         allowed=dict(htm="HTM pixelization", q3c="Q3C pixelization", mq3c="MQ3C pixelization"),
         doc="Pixelization used for partitioning index.",
         default="mq3c"
     )
-    part_pix_level = Field(
-        dtype=int,
+    part_pix_level = Field[int](
         doc="Pixelization level used for partitioning index.",
         default=10
     )
-    part_pix_max_ranges = Field(
-        dtype=int,
+    part_pix_max_ranges = Field[int](
         doc="Max number of ranges in pixelization envelope",
         default=64
     )
-    ra_dec_columns = ListField(
-        dtype=str,
+    ra_dec_columns = ListField[str](
         default=["ra", "decl"],
         doc="Names ra/dec columns in DiaObject table"
     )
-    timer = Field(
-        dtype=bool,
+    timer = Field[bool](
         doc="If True then print/log timing information",
         default=False
     )
-    time_partition_tables = Field(
-        dtype=bool,
+    time_partition_tables = Field[bool](
         doc="Use per-partition tables for sources instead of partitioning by time",
         default=True
     )
-    time_partition_days = Field(
-        dtype=int,
+    time_partition_days = Field[int](
         doc="Time partitoning granularity in days, this value must not be changed"
             " after database is initialized",
         default=30
     )
-    time_partition_start = Field(
-        dtype=str,
+    time_partition_start = Field[str](
         doc="Starting time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
             " This is used only when time_partition_tables is True.",
         default="2018-12-01T00:00:00"
     )
-    time_partition_end = Field(
-        dtype=str,
+    time_partition_end = Field[str](
         doc="Ending time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
             " This is used only when time_partition_tables is True.",
         default="2030-01-01T00:00:00"
     )
-    query_per_time_part = Field(
-        dtype=bool,
+    query_per_time_part = Field[bool](
         default=False,
         doc="If True then build separate query for each time partition, otherwise build one single query. "
             "This is only used when time_partition_tables is False in schema config."
     )
-    query_per_spatial_part = Field(
-        dtype=bool,
+    query_per_spatial_part = Field[bool](
         default=False,
         doc="If True then build one query per spacial partition, otherwise build single query. "
     )
-    pandas_delay_conv = Field(
-        dtype=bool,
+    pandas_delay_conv = Field[bool](
         default=True,
         doc="If True then combine result rows before converting to pandas. "
     )
@@ -258,7 +235,7 @@ class ApdbCassandra(Apdb):
         # Cache for prepared statements
         self._prepared_statements: Dict[str, cassandra.query.PreparedStatement] = {}
 
-    def __del__(self):
+    def __del__(self) -> None:
         self._cluster.shutdown()
 
     def tableDef(self, table: ApdbTables) -> Optional[TableDef]:

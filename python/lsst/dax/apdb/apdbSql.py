@@ -26,11 +26,12 @@ from __future__ import annotations
 
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 import logging
 import numpy as np
 import pandas
-from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from typing import cast, Any, Dict, List, Optional, Tuple
 
 import lsst.daf.base as dafBase
 from lsst.pex.config import Field, ChoiceField, ListField
@@ -89,12 +90,10 @@ def _ansi_session(engine: sqlalchemy.engine.Engine) -> Iterator[sqlalchemy.engin
 class ApdbSqlConfig(ApdbConfig):
     """APDB configuration class for SQL implementation (ApdbSql).
     """
-    db_url = Field(
-        dtype=str,
+    db_url = Field[str](
         doc="SQLAlchemy database connection URI"
     )
-    isolation_level = ChoiceField(
-        dtype=str,
+    isolation_level = ChoiceField[str](
         doc="Transaction isolation level, if unset then backend-default value "
             "is used, except for SQLite backend where we use READ_UNCOMMITTED. "
             "Some backends may not support every allowed value.",
@@ -107,26 +106,22 @@ class ApdbSqlConfig(ApdbConfig):
         default=None,
         optional=True
     )
-    connection_pool = Field(
-        dtype=bool,
+    connection_pool = Field[bool](
         doc="If False then disable SQLAlchemy connection pool. "
             "Do not use connection pool when forking.",
         default=True
     )
-    connection_timeout = Field(
-        dtype=float,
+    connection_timeout = Field[float](
         doc="Maximum time to wait time for database lock to be released before "
-            "exiting. Defaults to sqlachemy defaults if not set.",
+            "exiting. Defaults to sqlalchemy defaults if not set.",
         default=None,
         optional=True
     )
-    sql_echo = Field(
-        dtype=bool,
+    sql_echo = Field[bool](
         doc="If True then pass SQLAlchemy echo option.",
         default=False
     )
-    dia_object_index = ChoiceField(
-        dtype=str,
+    dia_object_index = ChoiceField[str](
         doc="Indexing mode for DiaObject table",
         allowed={
             'baseline': "Index defined in baseline schema",
@@ -135,43 +130,35 @@ class ApdbSqlConfig(ApdbConfig):
         },
         default='baseline'
     )
-    htm_level = Field(
-        dtype=int,
+    htm_level = Field[int](
         doc="HTM indexing level",
         default=20
     )
-    htm_max_ranges = Field(
-        dtype=int,
+    htm_max_ranges = Field[int](
         doc="Max number of ranges in HTM envelope",
         default=64
     )
-    htm_index_column = Field(
-        dtype=str,
+    htm_index_column = Field[str](
         default="pixelId",
         doc="Name of a HTM index column for DiaObject and DiaSource tables"
     )
-    ra_dec_columns = ListField(
-        dtype=str,
+    ra_dec_columns = ListField[str](
         default=["ra", "decl"],
         doc="Names ra/dec columns in DiaObject table"
     )
-    dia_object_columns = ListField(
-        dtype=str,
+    dia_object_columns = ListField[str](
         doc="List of columns to read from DiaObject, by default read all columns",
         default=[]
     )
-    object_last_replace = Field(
-        dtype=bool,
+    object_last_replace = Field[bool](
         doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
         default=True
     )
-    prefix = Field(
-        dtype=str,
+    prefix = Field[str](
         doc="Prefix to add to table names and index names",
         default=""
     )
-    namespace = Field(
-        dtype=str,
+    namespace = Field[str](
         doc=(
             "Namespace or schema name for all tables in APDB database. "
             "Presently only makes sense for PostgresQL backend. "
@@ -181,13 +168,11 @@ class ApdbSqlConfig(ApdbConfig):
         default=None,
         optional=True
     )
-    explain = Field(
-        dtype=bool,
+    explain = Field[bool](
         doc="If True then run EXPLAIN SQL command on each executed query",
         default=False
     )
-    timer = Field(
-        dtype=bool,
+    timer = Field[bool](
         doc="If True then print/log timing information",
         default=False
     )
@@ -229,13 +214,13 @@ class ApdbSql(Apdb):
 
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
-        kw = dict(echo=self.config.sql_echo)
+        kw: MutableMapping[str, Any] = dict(echo=self.config.sql_echo)
         conn_args: Dict[str, Any] = dict()
         if not self.config.connection_pool:
             kw.update(poolclass=NullPool)
         if self.config.isolation_level is not None:
             kw.update(isolation_level=self.config.isolation_level)
-        elif self.config.db_url.startswith("sqlite"):
+        elif self.config.db_url.startswith("sqlite"):  # type: ignore
             # Use READ_UNCOMMITTED as default value for sqlite.
             kw.update(isolation_level="READ_UNCOMMITTED")
         if self.config.connection_timeout is not None:
