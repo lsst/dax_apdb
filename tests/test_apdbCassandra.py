@@ -36,11 +36,11 @@ no need to pre-create a keyspace with predefined name.
 
 import logging
 import os
-from typing import Any
 import unittest
 import uuid
+from typing import Any, Optional
 
-from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbConfig, ApdbTables
+from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbTables
 from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
 from lsst.dax.apdb.tests import ApdbTest
 import lsst.utils.tests
@@ -55,12 +55,12 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
     """
 
     time_partition_tables = False
-    time_partition_start = None
-    time_partition_end = None
+    time_partition_start: Optional[str] = None
+    time_partition_end: Optional[str] = None
     fsrc_history_region_filtering = True
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         """Prepare config for server connection.
         """
         cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
@@ -69,7 +69,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         if not CASSANDRA_IMPORTED:
             raise unittest.SkipTest("cassandra_driver cannot be imported")
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Prepare config for server connection.
         """
         self.cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
@@ -87,7 +87,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         apdb._session.execute(query)
         del apdb
 
-    def tearDown(self):
+    def tearDown(self) -> None:
 
         config = self.make_config()
         apdb = ApdbCassandra(config)
@@ -95,7 +95,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         apdb._session.execute(query)
         del apdb
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
         """Make config class instance used in all tests."""
         kw = {
             "contact_points": [self.cluster_host],
@@ -133,6 +133,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
             return self.n_fsrc_columns + n_part_columns
         elif table is ApdbTables.SSObject:
             return self.n_ssobj_columns
+        return -1
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
@@ -152,7 +153,7 @@ class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
     pass
 
 
-def setup_module(module):
+def setup_module(module: Any) -> None:
     lsst.utils.tests.init()
 
 

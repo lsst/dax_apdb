@@ -57,6 +57,7 @@ class ApdbSqlTest(ApdbTest):
             return self.n_fsrc_columns
         elif table is ApdbTables.SSObject:
             return self.n_ssobj_columns
+        return -1
 
 
 class ApdbSQLiteTestCase(unittest.TestCase, ApdbSqlTest):
@@ -106,25 +107,26 @@ class ApdbPostgresTestCase(unittest.TestCase, ApdbSqlTest):
 
     fsrc_requires_id_list = True
     dia_object_index = "last_object_table"
+    postgresql: Any
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         # Create the postgres test server.
         cls.postgresql = testing.postgresql.PostgresqlFactory(cache_initialized_db=True)
         super().setUpClass()
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         # Clean up any lingering SQLAlchemy engines/connections
         # so they're closed before we shut down the server.
         gc.collect()
         cls.postgresql.clear_cache()
         super().tearDownClass()
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.server = self.postgresql()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.server = self.postgresql()
 
     def make_config(self, **kwargs: Any) -> ApdbConfig:
@@ -158,7 +160,7 @@ class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
     pass
 
 
-def setup_module(module):
+def setup_module(module: Any) -> None:
     lsst.utils.tests.init()
 
 

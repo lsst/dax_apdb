@@ -24,9 +24,11 @@
 
 import os
 import unittest
+from typing import Any
 
-from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema
 import lsst.utils.tests
+import sqlalchemy
+from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema
 from sqlalchemy import create_engine
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
@@ -37,10 +39,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
     """
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         pass
 
-    def _assertTable(self, table, name, ncol):
+    def _assertTable(self, table: sqlalchemy.schema.Table, name: str, ncol: int) -> None:
         """validation for tables schema.
 
         Parameters
@@ -55,7 +57,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(table.name, name)
         self.assertEqual(len(table.columns), ncol)
 
-    def test_makeSchema(self):
+    def test_makeSchema(self) -> None:
         """Test for creating schemas.
 
         Schema is defined in YAML files, some checks here depend on that
@@ -109,6 +111,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.objects, "DiaObject", 8)
         self.assertEqual(len(schema.objects.primary_key), 2)
         self._assertTable(schema.objects_last, "DiaObjectLast", 6)
+        assert schema.objects_last is not None
         self.assertEqual(len(schema.objects_last.primary_key), 2)
         self._assertTable(schema.sources, "DiaSource", 11)
         self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
@@ -118,7 +121,7 @@ class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
     pass
 
 
-def setup_module(module):
+def setup_module(module: Any) -> None:
     lsst.utils.tests.init()
 
 
