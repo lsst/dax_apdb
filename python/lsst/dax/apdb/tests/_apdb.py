@@ -56,7 +56,7 @@ class ApdbTest(ABC):
     # number of columns as defined in tests/config/schema.yaml
     n_obj_columns = 7
     n_obj_last_columns = 5
-    n_src_columns = 9
+    n_src_columns = 10
     n_fsrc_columns = 4
     n_ssobj_columns = 3
 

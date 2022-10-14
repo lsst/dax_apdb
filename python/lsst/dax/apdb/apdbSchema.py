@@ -67,7 +67,7 @@ class ColumnDef:
     name: str
     """column name"""
     type: str
-    """name of cat type (INT, FLOAT, etc.)"""
+    """name of column type (int, float, etc.)"""
     nullable: bool
     """True for nullable columns"""
     length: Optional[int] = None

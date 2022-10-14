@@ -258,6 +258,9 @@ class ApdbCassandra(Apdb):
         # Cache for prepared statements
         self._prepared_statements: Dict[str, cassandra.query.PreparedStatement] = {}
 
+    def __del__(self):
+        self._cluster.shutdown()
+
     def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
@@ -774,7 +777,7 @@ class ApdbCassandra(Apdb):
                     if field not in column_map:
                         continue
                     value = getattr(rec, field)
-                    if column_map[field].type == "DATETIME":
+                    if column_map[field].type == "timestamp":
                         if isinstance(value, pandas.Timestamp):
                             value = literal(value.to_pydatetime())
                         else:

@@ -72,7 +72,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.objects, "DiaObject", 8)
         self.assertEqual(len(schema.objects.primary_key), 2)
         self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "DiaSource", 10)
+        self._assertTable(schema.sources, "DiaSource", 11)
         self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
 
         # create schema using prefix
@@ -85,7 +85,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         schema.makeSchema(drop=True)
         self._assertTable(schema.objects, "PfxDiaObject", 8)
         self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "PfxDiaSource", 10)
+        self._assertTable(schema.sources, "PfxDiaSource", 11)
         self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 4)
 
         # use different indexing for DiaObject, need extra schema for that
@@ -97,7 +97,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self._assertTable(schema.objects, "DiaObject", 8)
         self.assertEqual(len(schema.objects.primary_key), 3)
         self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "DiaSource", 10)
+        self._assertTable(schema.sources, "DiaSource", 11)
         self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
 
         # use DiaObjectLast table for DiaObject
@@ -110,7 +110,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(len(schema.objects.primary_key), 2)
         self._assertTable(schema.objects_last, "DiaObjectLast", 6)
         self.assertEqual(len(schema.objects_last.primary_key), 2)
-        self._assertTable(schema.sources, "DiaSource", 10)
+        self._assertTable(schema.sources, "DiaSource", 11)
         self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
 
 

@@ -150,6 +150,13 @@ tables:
     mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.dec
+  - name: ssObjectReassocTime
+    "@id": "#DiaSource.ssObjectReassocTime"
+    datatype: timestamp
+    length: 6
+    description: Time when this diaSource was reassociated from diaObject to ssObject
+      (if such reassociation happens, otherwise NULL).
+    mysql:datatype: DATETIME
   - name: midPointTai
     "@id": "#DiaSource.midPointTai"
     datatype: double
