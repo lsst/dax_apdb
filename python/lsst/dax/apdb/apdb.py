@@ -23,15 +23,17 @@ from __future__ import annotations
 
 __all__ = ["ApdbConfig", "Apdb"]
 
-from abc import ABC, abstractmethod
 import os
-import pandas
+from abc import ABC, abstractmethod
 from typing import Iterable, Mapping, Optional
 
 import lsst.daf.base as dafBase
+import pandas
+from felis.simple import Table
 from lsst.pex.config import Config, ConfigurableField, Field
 from lsst.sphgeom import Region
-from .apdbSchema import ApdbTables, TableDef
+
+from .apdbSchema import ApdbTables
 
 
 def _data_file_name(basename: str) -> str:
@@ -76,7 +78,7 @@ class Apdb(ABC):
     ConfigClass = ApdbConfig
 
     @abstractmethod
-    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+    def tableDef(self, table: ApdbTables) -> Optional[Table]:
         """Return table schema definition for a given table.
 
         Parameters
@@ -86,7 +88,7 @@ class Apdb(ABC):
 
         Returns
         -------
-        tableSchema : `TableDef` or `None`
+        tableSchema : `felis.simple.Table` or `None`
             Table schema description, `None` is returned if table is not
             defined by this implementation.
         """

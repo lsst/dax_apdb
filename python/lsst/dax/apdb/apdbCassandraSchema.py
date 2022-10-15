@@ -25,9 +25,13 @@ __all__ = ["ApdbCassandraSchema"]
 
 import enum
 import logging
-from typing import List, Mapping, Optional, TYPE_CHECKING, Tuple, Union
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
-from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType, TableDef
+import felis.types
+from felis import simple
+
+from .apdbSchema import ApdbSchema, ApdbTables
 
 if TYPE_CHECKING:
     import cassandra.cluster
@@ -65,19 +69,21 @@ class ApdbCassandraSchema(ApdbSchema):
         If True then schema will have a separate table for each time partition.
     """
 
-    _type_map = dict(double="DOUBLE",
-                     float="FLOAT",
-                     timestamp="TIMESTAMP",
-                     long="BIGINT",
-                     int="INT",
-                     short="INT",
-                     byte="TINYINT",
-                     binary="BLOB",
-                     char="TEXT",
-                     string="TEXT",
-                     unicode="TEXT",
-                     text="TEXT",
-                     boolean="BOOLEAN")
+    _type_map = {
+        felis.types.Double: "DOUBLE",
+        felis.types.Float: "FLOAT",
+        felis.types.Timestamp: "TIMESTAMP",
+        felis.types.Long: "BIGINT",
+        felis.types.Int: "INT",
+        felis.types.Short: "INT",
+        felis.types.Byte: "TINYINT",
+        felis.types.Binary: "BLOB",
+        felis.types.Char: "TEXT",
+        felis.types.String: "TEXT",
+        felis.types.Unicode: "TEXT",
+        felis.types.Text: "TEXT",
+        felis.types.Boolean: "BOOLEAN",
+    }
     """Map YAML column types to Cassandra"""
 
     _time_partitioned_tables = [
@@ -123,9 +129,7 @@ class ApdbCassandraSchema(ApdbSchema):
                 # going to partition on its primary key (and drop separate
                 # primary key index).
                 columns = ["ssObjectId"]
-                tableDef.indices = [
-                    index for index in tableDef.indices if index.type is not IndexType.PRIMARY
-                ]
+                tableDef.primary_key = []
                 add_columns = False
             else:
                 # TODO: Do not know yet how other tables can be partitioned
@@ -135,34 +139,44 @@ class ApdbCassandraSchema(ApdbSchema):
             if add_columns:
                 # add columns to the column list
                 columnDefs = [
-                    ColumnDef(name=name, type="long", nullable=False) for name in columns
+                    simple.Column(
+                        id=f"#{name}",
+                        name=name,
+                        datatype=felis.types.Long,
+                        nullable=False,
+                    ) for name in columns
                 ]
                 tableDef.columns = columnDefs + tableDef.columns
 
-            # make an index
+            # make a partitioning index
             if columns:
-                index = IndexDef(name=f"Part_{tableDef.name}", type=IndexType.PARTITION, columns=columns)
-                tableDef.indices.append(index)
+                annotations = dict(tableDef.annotations)
+                annotations["cassandra:paritioning_columns"] = columns
+                tableDef.annotations = annotations
 
         self._extra_tables = self._extraTableSchema()
 
-    def _extraTableSchema(self) -> Mapping[ExtraTables, TableDef]:
+    def _extraTableSchema(self) -> Mapping[ExtraTables, simple.Table]:
         """Generate schema for extra tables."""
         return {
-            ExtraTables.DiaSourceToPartition: TableDef(
+            ExtraTables.DiaSourceToPartition: simple.Table(
+                id="#" + ExtraTables.DiaSourceToPartition.value,
                 name=ExtraTables.DiaSourceToPartition.value,
                 columns=[
-                    ColumnDef(name="diaSourceId", type="long", nullable=False),
-                    ColumnDef(name="apdb_part", type="long", nullable=False),
-                    ColumnDef(name="apdb_time_part", type="int", nullable=False),
-                ],
-                indices=[
-                    IndexDef(
-                        name=f"Part_{ExtraTables.DiaSourceToPartition.value}",
-                        type=IndexType.PARTITION,
-                        columns=["diaSourceId"],
+                    simple.Column(
+                        id="#diaSourceId", name="diaSourceId", datatype=felis.types.Long, nullable=False
+                    ),
+                    simple.Column(
+                        id="#apdb_part", name="apdb_part", datatype=felis.types.Long, nullable=False
+                    ),
+                    simple.Column(
+                        id="#apdb_time_part", name="apdb_time_part", datatype=felis.types.Int, nullable=False
                     ),
                 ],
+                primary_key=[],
+                indexes=[],
+                constraints=[],
+                annotations={"cassandra:paritioning_columns": ["diaSourceId"]},
             ),
         }
 
@@ -171,7 +185,7 @@ class ApdbCassandraSchema(ApdbSchema):
         """
         return table_name.table_name(self._prefix)
 
-    def getColumnMap(self, table_name: Union[ApdbTables, ExtraTables]) -> Mapping[str, ColumnDef]:
+    def getColumnMap(self, table_name: Union[ApdbTables, ExtraTables]) -> Mapping[str, simple.Column]:
         """Returns mapping of column names to Column definitions.
 
         Parameters
@@ -208,11 +222,7 @@ class ApdbCassandraSchema(ApdbSchema):
             table_schema = self.tableSchemas[table_name]
         else:
             table_schema = self._extra_tables[table_name]
-        for index in table_schema.indices:
-            if index.type is IndexType.PARTITION:
-                # there could be just one partitoning index (possibly with few columns)
-                return index.columns
-        return []
+        return table_schema.annotations.get("cassandra:paritioning_columns", [])
 
     def clusteringColumns(self, table_name: Union[ApdbTables, ExtraTables]) -> List[str]:
         """Return a list of columns used for clustering.
@@ -231,10 +241,7 @@ class ApdbCassandraSchema(ApdbSchema):
             table_schema = self.tableSchemas[table_name]
         else:
             table_schema = self._extra_tables[table_name]
-        for index in table_schema.indices:
-            if index.type is IndexType.PRIMARY:
-                return index.columns
-        return []
+        return [column.name for column in table_schema.primary_key]
 
     def makeSchema(self, drop: bool = False, part_range: Optional[Tuple[int, int]] = None) -> None:
         """Create or re-create all tables.
@@ -315,15 +322,8 @@ class ApdbCassandraSchema(ApdbSchema):
             table_schema = self._extra_tables[table_name]
 
         # must have partition columns and clustering columns
-        part_columns = []
-        clust_columns = []
-        index_columns = set()
-        for index in table_schema.indices:
-            if index.type is IndexType.PARTITION:
-                part_columns = index.columns
-            elif index.type is IndexType.PRIMARY:
-                clust_columns = index.columns
-            index_columns.update(index.columns)
+        part_columns = table_schema.annotations.get("cassandra:paritioning_columns", [])
+        clust_columns = [column.name for column in table_schema.primary_key]
         _LOG.debug("part_columns: %s", part_columns)
         _LOG.debug("clust_columns: %s", clust_columns)
         if not part_columns:
@@ -332,7 +332,7 @@ class ApdbCassandraSchema(ApdbSchema):
         # all columns
         column_defs = []
         for column in table_schema.columns:
-            ctype = self._type_map[column.type]
+            ctype = self._type_map[column.datatype]
             column_defs.append(f'"{column.name}" {ctype}')
 
         # primary key definition

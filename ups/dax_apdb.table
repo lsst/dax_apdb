@@ -1,3 +1,4 @@
+setupRequired(felis)
 setupRequired(geom)
 setupRequired(daf_base)
 setupRequired(pex_config)

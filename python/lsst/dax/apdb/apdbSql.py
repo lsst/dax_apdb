@@ -26,25 +26,26 @@ from __future__ import annotations
 
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
+import logging
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
-import logging
-import numpy as np
-import pandas
-from typing import cast, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import lsst.daf.base as dafBase
-from lsst.pex.config import Field, ChoiceField, ListField
+import numpy as np
+import pandas
+import sqlalchemy
+from felis.simple import Table
+from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
-import sqlalchemy
-from sqlalchemy import (func, sql)
+from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
+
 from .apdb import Apdb, ApdbConfig
-from .apdbSchema import ApdbTables, TableDef
+from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema
 from .timer import Timer
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -152,7 +153,8 @@ class ApdbSqlConfig(ApdbConfig):
     )
     object_last_replace = Field[bool](
         doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
-        default=True
+        default=True,
+        deprecated="This field is not used and will be removed on 2022-21-31."
     )
     prefix = Field[str](
         doc="Prefix to add to table names and index names",
@@ -200,6 +202,7 @@ class ApdbSql(Apdb):
 
     def __init__(self, config: ApdbSqlConfig):
 
+        config.validate()
         self.config = config
 
         _LOG.debug("APDB Configuration:")
@@ -207,7 +210,6 @@ class ApdbSql(Apdb):
         _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
         _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
         _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
-        _LOG.debug("    object_last_replace: %s", self.config.object_last_replace)
         _LOG.debug("    schema_file: %s", self.config.schema_file)
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
@@ -264,7 +266,7 @@ class ApdbSql(Apdb):
 
         return res
 
-    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+    def tableDef(self, table: ApdbTables) -> Optional[Table]:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
@@ -294,7 +296,7 @@ class ApdbSql(Apdb):
         if self.config.dia_object_index != 'last_object_table':
             query = query.where(table.c.validityEnd == None)  # noqa: E711
 
-        _LOG.debug("query: %s", query)
+        # _LOG.debug("query: %s", query)
 
         if self.config.explain:
             # run the same query with explain
@@ -729,29 +731,30 @@ class ApdbSql(Apdb):
                 # insert and replace all records in LAST table, mysql and postgres have
                 # non-standard features
                 table = self._schema.objects_last
-                do_replace = self.config.object_last_replace
-                # If the input data is of type Pandas, we drop the previous
-                # objects regardless of the do_replace setting due to how
-                # Pandas inserts objects.
-                if not do_replace or isinstance(objs, pandas.DataFrame):
-                    query = table.delete().where(
-                        table.columns["diaObjectId"].in_(ids)
-                    )
 
-                    if self.config.explain:
-                        # run the same query with explain
-                        self._explain(query, conn)
+                # Drop the previous objects (pandas cannot upsert).
+                query = table.delete().where(
+                    table.columns["diaObjectId"].in_(ids)
+                )
 
-                    with Timer(table.name + ' delete', self.config.timer):
-                        res = conn.execute(query)
-                    _LOG.debug("deleted %s objects", res.rowcount)
+                if self.config.explain:
+                    # run the same query with explain
+                    self._explain(query, conn)
+
+                with Timer(table.name + ' delete', self.config.timer):
+                    res = conn.execute(query)
+                _LOG.debug("deleted %s objects", res.rowcount)
+
+                # DiaObjectLast is a subset of DiaObject, strip missing columns
+                last_column_names = [column.name for column in table.columns]
+                last_objs = objs[last_column_names]
 
                 extra_columns: Dict[str, Any] = dict(lastNonForcedSource=dt)
                 with Timer("DiaObjectLast insert", self.config.timer):
-                    objs = _coerce_uint64(objs)
+                    last_objs = _coerce_uint64(last_objs)
                     for col, data in extra_columns.items():
-                        objs[col] = data
-                    objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                        last_objs[col] = data
+                    last_objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
             else:
 
                 # truncate existing validity intervals
@@ -780,8 +783,12 @@ class ApdbSql(Apdb):
                                  validityEnd=None)
             with Timer("DiaObject insert", self.config.timer):
                 objs = _coerce_uint64(objs)
-                for col, data in extra_columns.items():
-                    objs[col] = data
+                if extra_columns:
+                    columns: List[pandas.Series] = []
+                    for col, data in extra_columns.items():
+                        columns.append(pandas.Series([data]*len(objs), name=col))
+                    objs.set_index(columns[0].index, inplace=True)
+                    objs = pandas.concat([objs] + columns, axis="columns")
                 objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
 
     def _storeDiaSources(self, sources: pandas.DataFrame) -> None:

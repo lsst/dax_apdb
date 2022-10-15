@@ -29,12 +29,12 @@ __all__ = ["ApdbSqlSchema"]
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Type
 
+import felis.types
 import sqlalchemy
-from sqlalchemy import (Column, DDL, Index, MetaData, PrimaryKeyConstraint,
-                        UniqueConstraint, Table, event)
+from felis import simple
+from sqlalchemy import DDL, Column, Index, MetaData, PrimaryKeyConstraint, Table, UniqueConstraint, event
 
-from .apdbSchema import ApdbSchema, ApdbTables, ColumnDef, IndexDef, IndexType
-
+from .apdbSchema import ApdbSchema, ApdbTables
 
 _LOG = logging.getLogger(__name__)
 
@@ -91,47 +91,50 @@ class ApdbSqlSchema(ApdbSchema):
         self._metadata = MetaData(self._engine, schema=namespace)
 
         # map YAML column types to SQLAlchemy
-        self._type_map = dict(double=self._getDoubleType(engine),
-                              float=sqlalchemy.types.Float,
-                              timestamp=sqlalchemy.types.TIMESTAMP,
-                              long=sqlalchemy.types.BigInteger,
-                              int=sqlalchemy.types.Integer,
-                              short=sqlalchemy.types.Integer,
-                              byte=sqlalchemy.types.Integer,
-                              binary=sqlalchemy.types.LargeBinary,
-                              text=sqlalchemy.types.CHAR,
-                              string=sqlalchemy.types.CHAR,
-                              char=sqlalchemy.types.CHAR,
-                              unicode=sqlalchemy.types.CHAR,
-                              boolean=sqlalchemy.types.Boolean)
-
-        # Adjust index if needed
-        if self._dia_object_index == 'pix_id_iov':
-            objects = self.tableSchemas[ApdbTables.DiaObject]
-            objects.primary_key.columns.insert(0, htm_index_column)
+        self._type_map = {
+            felis.types.Double: self._getDoubleType(engine),
+            felis.types.Float: sqlalchemy.types.Float,
+            felis.types.Timestamp: sqlalchemy.types.TIMESTAMP,
+            felis.types.Long: sqlalchemy.types.BigInteger,
+            felis.types.Int: sqlalchemy.types.Integer,
+            felis.types.Short: sqlalchemy.types.Integer,
+            felis.types.Byte: sqlalchemy.types.Integer,
+            felis.types.Binary: sqlalchemy.types.LargeBinary,
+            felis.types.Text: sqlalchemy.types.CHAR,
+            felis.types.String: sqlalchemy.types.CHAR,
+            felis.types.Char: sqlalchemy.types.CHAR,
+            felis.types.Unicode: sqlalchemy.types.CHAR,
+            felis.types.Boolean: sqlalchemy.types.Boolean
+        }
 
         # Add pixelId column and index to tables that need it
         for table in (ApdbTables.DiaObject, ApdbTables.DiaObjectLast, ApdbTables.DiaSource):
             tableDef = self.tableSchemas.get(table)
             if not tableDef:
                 continue
-            column = ColumnDef(name=htm_index_column,
-                               type="long",
-                               nullable=False,
-                               default=None,
-                               description="",
-                               unit="",
-                               ucd="")
+            column = simple.Column(
+                id=f"#{htm_index_column}",
+                name=htm_index_column,
+                datatype=felis.types.Long,
+                nullable=False,
+                value=None,
+                description="Pixelization index column.",
+                table=tableDef
+            )
             tableDef.columns.append(column)
+
+            # Adjust index if needed
+            if table == ApdbTables.DiaObject and self._dia_object_index == 'pix_id_iov':
+                tableDef.primary_key.insert(0, column)
 
             if table is ApdbTables.DiaObjectLast:
                 # use it as a leading PK column
-                tableDef.primary_key.columns.insert(0, htm_index_column)
+                tableDef.primary_key.insert(0, column)
             else:
                 # make a regular index
-                index = IndexDef(name=f"IDX_{tableDef.name}_{htm_index_column}",
-                                 type=IndexType.INDEX, columns=[htm_index_column])
-                tableDef.indices.append(index)
+                name = f"IDX_{tableDef.name}_{htm_index_column}"
+                index = simple.Index(id=f"#{name}", name=name, columns=[column])
+                tableDef.indexes.append(index)
 
         # generate schema for all tables, must be called last
         self._tables = self._makeTables()
@@ -222,21 +225,16 @@ class ApdbSqlSchema(ApdbSchema):
         # get the list of columns in primary key, they are treated somewhat
         # specially below
         table_schema = self.tableSchemas[table_name]
-        pkey_columns = set()
-        for index in table_schema.indices:
-            if index.type is IndexType.PRIMARY:
-                pkey_columns = set(index.columns)
-                break
 
         # convert all column dicts into alchemy Columns
         column_defs = []
         for column in table_schema.columns:
             kwargs: Dict[str, Any] = dict(nullable=column.nullable)
-            if column.default is not None:
-                kwargs.update(server_default=str(column.default))
-            if column.name in pkey_columns:
+            if column.value is not None:
+                kwargs.update(server_default=str(column.value))
+            if column in table_schema.primary_key:
                 kwargs.update(autoincrement=False)
-            ctype = self._type_map[column.type]
+            ctype = self._type_map[column.datatype]
             column_defs.append(Column(column.name, ctype, **kwargs))
 
         return column_defs
@@ -261,17 +259,17 @@ class ApdbSqlSchema(ApdbSchema):
 
         # convert all index dicts into alchemy Columns
         index_defs: List[sqlalchemy.schema.Constraint] = []
-        for index in table_schema.indices:
-            if index.type is IndexType.INDEX:
-                index_defs.append(Index(self._prefix + index.name, *index.columns, info=info))
-            else:
-                kwargs = {}
-                if index.name:
-                    kwargs['name'] = self._prefix + index.name
-                if index.type is IndexType.PRIMARY:
-                    index_defs.append(PrimaryKeyConstraint(*index.columns, **kwargs))
-                elif index.type is IndexType.UNIQUE:
-                    index_defs.append(UniqueConstraint(*index.columns, **kwargs))
+        if table_schema.primary_key:
+            index_defs.append(PrimaryKeyConstraint(*[column.name for column in table_schema.primary_key]))
+        for index in table_schema.indexes:
+            name = self._prefix + index.name if index.name else ""
+            index_defs.append(Index(name, *[column.name for column in index.columns], info=info))
+        for constraint in table_schema.constraints:
+            kwargs = {}
+            if constraint.name:
+                kwargs['name'] = self._prefix + constraint.name
+            if isinstance(constraint, simple.UniqueConstraint):
+                index_defs.append(UniqueConstraint(*[column.name for column in constraint.columns], **kwargs))
 
         return index_defs
 

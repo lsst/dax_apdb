@@ -25,7 +25,7 @@
 import gc
 import os
 import unittest
-from typing import Any
+from typing import Any, Dict
 
 from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
 from lsst.dax.apdb.tests import ApdbTest
@@ -87,6 +87,8 @@ class ApdbSQLiteTestCaseLastObject(ApdbSQLiteTestCase):
     """
 
     dia_object_index = "last_object_table"
+
+    extra_object_columns: Dict[str, Any] = {"parallax": 0.}
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""

@@ -24,37 +24,35 @@ from __future__ import annotations
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
 import logging
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union, cast
+
 import numpy as np
 import pandas
-from typing import Any, cast, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union
 
 # If cassandra-driver is not there the module can still be imported
 # but ApdbCassandra cannot be instantiated.
 try:
     import cassandra
-    from cassandra.cluster import Cluster, ExecutionProfile, EXEC_PROFILE_DEFAULT
-    from cassandra.policies import RoundRobinPolicy, WhiteListRoundRobinPolicy, AddressTranslator
     import cassandra.query
+    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
+    from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
     CASSANDRA_IMPORTED = True
 except ImportError:
     CASSANDRA_IMPORTED = False
 
+import felis.types
 import lsst.daf.base as dafBase
+from felis.simple import Table
 from lsst import sphgeom
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.utils.iteration import chunk_iterable
-from .timer import Timer
+
 from .apdb import Apdb, ApdbConfig
-from .apdbSchema import ApdbTables, TableDef
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
-from .cassandra_utils import (
-    literal,
-    pandas_dataframe_factory,
-    quote_id,
-    raw_data_factory,
-    select_concurrent,
-)
+from .apdbSchema import ApdbTables
+from .cassandra_utils import literal, pandas_dataframe_factory, quote_id, raw_data_factory, select_concurrent
 from .pixelization import Pixelization
+from .timer import Timer
 
 _LOG = logging.getLogger(__name__)
 
@@ -136,17 +134,17 @@ class ApdbCassandraConfig(ApdbConfig):
         default=True
     )
     time_partition_days = Field[int](
-        doc="Time partitoning granularity in days, this value must not be changed"
+        doc="Time partitioning granularity in days, this value must not be changed"
             " after database is initialized",
         default=30
     )
     time_partition_start = Field[str](
-        doc="Starting time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
+        doc="Starting time for per-partition tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
             " This is used only when time_partition_tables is True.",
         default="2018-12-01T00:00:00"
     )
     time_partition_end = Field[str](
-        doc="Ending time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
+        doc="Ending time for per-partition tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
             " This is used only when time_partition_tables is True.",
         default="2030-01-01T00:00:00"
     )
@@ -200,6 +198,7 @@ class ApdbCassandra(Apdb):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
+        config.validate()
         self.config = config
 
         _LOG.debug("ApdbCassandra Configuration:")
@@ -238,7 +237,7 @@ class ApdbCassandra(Apdb):
     def __del__(self) -> None:
         self._cluster.shutdown()
 
-    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+    def tableDef(self, table: ApdbTables) -> Optional[Table]:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
@@ -754,7 +753,7 @@ class ApdbCassandra(Apdb):
                     if field not in column_map:
                         continue
                     value = getattr(rec, field)
-                    if column_map[field].type == "timestamp":
+                    if column_map[field].datatype is felis.types.Timestamp:
                         if isinstance(value, pandas.Timestamp):
                             value = literal(value.to_pydatetime())
                         else:
@@ -889,7 +888,10 @@ class ApdbCassandra(Apdb):
         """
         table = self._schema.tableSchemas[table_name]
 
-        data = {columnDef.name: pandas.Series(dtype=columnDef.dtype) for columnDef in table.columns}
+        data = {
+            columnDef.name: pandas.Series(dtype=self._schema.column_dtype(columnDef.datatype))
+            for columnDef in table.columns
+        }
         return pandas.DataFrame(data)
 
     def _prep_statement(self, query: str) -> cassandra.query.PreparedStatement:

@@ -71,7 +71,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
                                htm_index_column="pixelId",
                                schema_file=TEST_SCHEMA)
         schema.makeSchema()
-        self._assertTable(schema.objects, "DiaObject", 8)
+        self._assertTable(schema.objects, "DiaObject", 9)
         self.assertEqual(len(schema.objects.primary_key), 2)
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "DiaSource", 11)
@@ -85,7 +85,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
                                prefix="Pfx")
         # Drop existing tables (but we don't check it here)
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "PfxDiaObject", 8)
+        self._assertTable(schema.objects, "PfxDiaObject", 9)
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "PfxDiaSource", 11)
         self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 4)
@@ -96,7 +96,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
                                htm_index_column="pixelId",
                                schema_file=TEST_SCHEMA)
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 8)
+        self._assertTable(schema.objects, "DiaObject", 9)
         self.assertEqual(len(schema.objects.primary_key), 3)
         self.assertIsNone(schema.objects_last)
         self._assertTable(schema.sources, "DiaSource", 11)
@@ -108,7 +108,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
                                htm_index_column="pixelId",
                                schema_file=TEST_SCHEMA)
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 8)
+        self._assertTable(schema.objects, "DiaObject", 9)
         self.assertEqual(len(schema.objects.primary_key), 2)
         self._assertTable(schema.objects_last, "DiaObjectLast", 6)
         assert schema.objects_last is not None
