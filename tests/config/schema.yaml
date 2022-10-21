@@ -17,12 +17,14 @@ tables:
   - name: validityStart
     "@id": "#DiaObject.validityStart"
     datatype: timestamp
+    length: 6
     nullable: false
     description: Time when validity of this diaObject starts.
     mysql:datatype: DATETIME
   - name: validityEnd
     "@id": "#DiaObject.validityEnd"
     datatype: timestamp
+    length: 6
     nullable: true
     description: Time when validity of this diaObject ends.
     mysql:datatype: DATETIME
@@ -42,9 +44,15 @@ tables:
     mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.dec
+  - name: parallax
+    "@id": "#DiaObject.parallax"
+    datatype: float
+    description: Parallax.
+    mysql:datatype: FLOAT
   - name: lastNonForcedSource
     "@id": "#DiaObject.lastNonForcedSource"
     datatype: timestamp
+    length: 6
     nullable: false
     description: Last time when non-forced DIASource was seen for this object.
     mysql:datatype: DATETIME
@@ -150,6 +158,13 @@ tables:
     mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.dec
+  - name: ssObjectReassocTime
+    "@id": "#DiaSource.ssObjectReassocTime"
+    datatype: timestamp
+    length: 6
+    description: Time when this diaSource was reassociated from diaObject to ssObject
+      (if such reassociation happens, otherwise NULL).
+    mysql:datatype: DATETIME
   - name: midPointTai
     "@id": "#DiaSource.midPointTai"
     datatype: double
@@ -280,13 +295,14 @@ tables:
     ivoa:ucd: pos.eq.dec
     fits:tunit: deg
   - name: lastNonForcedSource
-    "@id": "#DiaObject.lastNonForcedSource"
+    "@id": "#DiaObjectLast.lastNonForcedSource"
     datatype: timestamp
+    length: 6
     nullable: false
     description: Last time when non-forced DIASource was seen for this object.
     mysql:datatype: DATETIME
   - name: nDiaSources
-    "@id": "#DiaObject.nDiaSources"
+    "@id": "#DiaObjectLast.nDiaSources"
     datatype: int
     nullable: false
     description: Total number of DiaSources associated with this DiaObject.

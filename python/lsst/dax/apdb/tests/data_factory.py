@@ -21,14 +21,14 @@
 
 from __future__ import annotations
 
+import random
+from typing import Any, Iterator
+
 import numpy
 import pandas
-import random
-from typing import Iterator
-
 from lsst.daf.base import DateTime
-from lsst.sphgeom import LonLat, Region, UnitVector3d
 from lsst.geom import SpherePoint
+from lsst.sphgeom import LonLat, Region, UnitVector3d
 
 
 def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
@@ -62,7 +62,7 @@ def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
 
 
 def makeObjectCatalog(
-    region: Region, count: int, visit_time: DateTime, *, start_id: int = 1
+    region: Region, count: int, visit_time: DateTime, *, start_id: int = 1, **kwargs: Any
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaObjects inside a region.
 
@@ -76,6 +76,8 @@ def makeObjectCatalog(
         Time of the visit.
     start_id : `int`
         Starting diaObjectId.
+    **kwargs : `Any`
+        Additional columns and their values to add to catalog.
 
     Returns
     -------
@@ -95,15 +97,15 @@ def makeObjectCatalog(
     decls = numpy.array([sp.getDec().asDegrees() for sp in points], dtype=numpy.float64)
     nDiaSources = numpy.ones(len(points), dtype=numpy.int32)
     dt = visit_time.toPython()
-    df = pandas.DataFrame(
-        {
-            "diaObjectId": ids,
-            "ra": ras,
-            "decl": decls,
-            "nDiaSources": nDiaSources,
-            "lastNonForcedSource": dt,
-        }
+    data = dict(
+        kwargs,
+        diaObjectId=ids,
+        ra=ras,
+        decl=decls,
+        nDiaSources=nDiaSources,
+        lastNonForcedSource=dt,
     )
+    df = pandas.DataFrame(data)
     return df
 
 

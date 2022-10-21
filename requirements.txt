@@ -1,0 +1,10 @@
+numpy
+pandas
+pyyaml >= 5.1
+sqlalchemy
+# daf_base cannot be installed
+# git+https://github.com/lsst/daf_base@main#egg=lsst-daf-base
+git+https://github.com/lsst/felis@main#egg=felis
+git+https://github.com/lsst/pex_config@main#egg=lsst-pex-config
+git+https://github.com/lsst/sphgeom@main#egg=lsst-sphgeom
+git+https://github.com/lsst/utils@main#egg=lsst-utils

@@ -26,24 +26,26 @@ from __future__ import annotations
 
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
-from contextlib import contextmanager
 import logging
-import numpy as np
-import pandas
-from typing import cast, Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping
+from contextlib import contextmanager
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import lsst.daf.base as dafBase
-from lsst.pex.config import Field, ChoiceField, ListField
+import numpy as np
+import pandas
+import sqlalchemy
+from felis.simple import Table
+from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
-import sqlalchemy
-from sqlalchemy import (func, sql)
+from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
+
 from .apdb import Apdb, ApdbConfig
-from .apdbSchema import ApdbTables, TableDef
+from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema
 from .timer import Timer
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -89,12 +91,10 @@ def _ansi_session(engine: sqlalchemy.engine.Engine) -> Iterator[sqlalchemy.engin
 class ApdbSqlConfig(ApdbConfig):
     """APDB configuration class for SQL implementation (ApdbSql).
     """
-    db_url = Field(
-        dtype=str,
+    db_url = Field[str](
         doc="SQLAlchemy database connection URI"
     )
-    isolation_level = ChoiceField(
-        dtype=str,
+    isolation_level = ChoiceField[str](
         doc="Transaction isolation level, if unset then backend-default value "
             "is used, except for SQLite backend where we use READ_UNCOMMITTED. "
             "Some backends may not support every allowed value.",
@@ -107,26 +107,22 @@ class ApdbSqlConfig(ApdbConfig):
         default=None,
         optional=True
     )
-    connection_pool = Field(
-        dtype=bool,
+    connection_pool = Field[bool](
         doc="If False then disable SQLAlchemy connection pool. "
             "Do not use connection pool when forking.",
         default=True
     )
-    connection_timeout = Field(
-        dtype=float,
+    connection_timeout = Field[float](
         doc="Maximum time to wait time for database lock to be released before "
-            "exiting. Defaults to sqlachemy defaults if not set.",
+            "exiting. Defaults to sqlalchemy defaults if not set.",
         default=None,
         optional=True
     )
-    sql_echo = Field(
-        dtype=bool,
+    sql_echo = Field[bool](
         doc="If True then pass SQLAlchemy echo option.",
         default=False
     )
-    dia_object_index = ChoiceField(
-        dtype=str,
+    dia_object_index = ChoiceField[str](
         doc="Indexing mode for DiaObject table",
         allowed={
             'baseline': "Index defined in baseline schema",
@@ -135,43 +131,36 @@ class ApdbSqlConfig(ApdbConfig):
         },
         default='baseline'
     )
-    htm_level = Field(
-        dtype=int,
+    htm_level = Field[int](
         doc="HTM indexing level",
         default=20
     )
-    htm_max_ranges = Field(
-        dtype=int,
+    htm_max_ranges = Field[int](
         doc="Max number of ranges in HTM envelope",
         default=64
     )
-    htm_index_column = Field(
-        dtype=str,
+    htm_index_column = Field[str](
         default="pixelId",
         doc="Name of a HTM index column for DiaObject and DiaSource tables"
     )
-    ra_dec_columns = ListField(
-        dtype=str,
+    ra_dec_columns = ListField[str](
         default=["ra", "decl"],
         doc="Names ra/dec columns in DiaObject table"
     )
-    dia_object_columns = ListField(
-        dtype=str,
+    dia_object_columns = ListField[str](
         doc="List of columns to read from DiaObject, by default read all columns",
         default=[]
     )
-    object_last_replace = Field(
-        dtype=bool,
+    object_last_replace = Field[bool](
         doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
-        default=True
+        default=True,
+        deprecated="This field is not used and will be removed on 2022-21-31."
     )
-    prefix = Field(
-        dtype=str,
+    prefix = Field[str](
         doc="Prefix to add to table names and index names",
         default=""
     )
-    namespace = Field(
-        dtype=str,
+    namespace = Field[str](
         doc=(
             "Namespace or schema name for all tables in APDB database. "
             "Presently only makes sense for PostgresQL backend. "
@@ -181,13 +170,11 @@ class ApdbSqlConfig(ApdbConfig):
         default=None,
         optional=True
     )
-    explain = Field(
-        dtype=bool,
+    explain = Field[bool](
         doc="If True then run EXPLAIN SQL command on each executed query",
         default=False
     )
-    timer = Field(
-        dtype=bool,
+    timer = Field[bool](
         doc="If True then print/log timing information",
         default=False
     )
@@ -215,6 +202,7 @@ class ApdbSql(Apdb):
 
     def __init__(self, config: ApdbSqlConfig):
 
+        config.validate()
         self.config = config
 
         _LOG.debug("APDB Configuration:")
@@ -222,20 +210,19 @@ class ApdbSql(Apdb):
         _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
         _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
         _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
-        _LOG.debug("    object_last_replace: %s", self.config.object_last_replace)
         _LOG.debug("    schema_file: %s", self.config.schema_file)
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
 
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
-        kw = dict(echo=self.config.sql_echo)
+        kw: MutableMapping[str, Any] = dict(echo=self.config.sql_echo)
         conn_args: Dict[str, Any] = dict()
         if not self.config.connection_pool:
             kw.update(poolclass=NullPool)
         if self.config.isolation_level is not None:
             kw.update(isolation_level=self.config.isolation_level)
-        elif self.config.db_url.startswith("sqlite"):
+        elif self.config.db_url.startswith("sqlite"):  # type: ignore
             # Use READ_UNCOMMITTED as default value for sqlite.
             kw.update(isolation_level="READ_UNCOMMITTED")
         if self.config.connection_timeout is not None:
@@ -279,7 +266,7 @@ class ApdbSql(Apdb):
 
         return res
 
-    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+    def tableDef(self, table: ApdbTables) -> Optional[Table]:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
@@ -309,7 +296,7 @@ class ApdbSql(Apdb):
         if self.config.dia_object_index != 'last_object_table':
             query = query.where(table.c.validityEnd == None)  # noqa: E711
 
-        _LOG.debug("query: %s", query)
+        # _LOG.debug("query: %s", query)
 
         if self.config.explain:
             # run the same query with explain
@@ -744,29 +731,30 @@ class ApdbSql(Apdb):
                 # insert and replace all records in LAST table, mysql and postgres have
                 # non-standard features
                 table = self._schema.objects_last
-                do_replace = self.config.object_last_replace
-                # If the input data is of type Pandas, we drop the previous
-                # objects regardless of the do_replace setting due to how
-                # Pandas inserts objects.
-                if not do_replace or isinstance(objs, pandas.DataFrame):
-                    query = table.delete().where(
-                        table.columns["diaObjectId"].in_(ids)
-                    )
 
-                    if self.config.explain:
-                        # run the same query with explain
-                        self._explain(query, conn)
+                # Drop the previous objects (pandas cannot upsert).
+                query = table.delete().where(
+                    table.columns["diaObjectId"].in_(ids)
+                )
 
-                    with Timer(table.name + ' delete', self.config.timer):
-                        res = conn.execute(query)
-                    _LOG.debug("deleted %s objects", res.rowcount)
+                if self.config.explain:
+                    # run the same query with explain
+                    self._explain(query, conn)
+
+                with Timer(table.name + ' delete', self.config.timer):
+                    res = conn.execute(query)
+                _LOG.debug("deleted %s objects", res.rowcount)
+
+                # DiaObjectLast is a subset of DiaObject, strip missing columns
+                last_column_names = [column.name for column in table.columns]
+                last_objs = objs[last_column_names]
 
                 extra_columns: Dict[str, Any] = dict(lastNonForcedSource=dt)
                 with Timer("DiaObjectLast insert", self.config.timer):
-                    objs = _coerce_uint64(objs)
+                    last_objs = _coerce_uint64(last_objs)
                     for col, data in extra_columns.items():
-                        objs[col] = data
-                    objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                        last_objs[col] = data
+                    last_objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
             else:
 
                 # truncate existing validity intervals
@@ -795,8 +783,12 @@ class ApdbSql(Apdb):
                                  validityEnd=None)
             with Timer("DiaObject insert", self.config.timer):
                 objs = _coerce_uint64(objs)
-                for col, data in extra_columns.items():
-                    objs[col] = data
+                if extra_columns:
+                    columns: List[pandas.Series] = []
+                    for col, data in extra_columns.items():
+                        columns.append(pandas.Series([data]*len(objs), name=col))
+                    objs.set_index(columns[0].index, inplace=True)
+                    objs = pandas.concat([objs] + columns, axis="columns")
                 objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
 
     def _storeDiaSources(self, sources: pandas.DataFrame) -> None:

@@ -24,37 +24,35 @@ from __future__ import annotations
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
 import logging
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union, cast
+
 import numpy as np
 import pandas
-from typing import Any, cast, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union
 
 # If cassandra-driver is not there the module can still be imported
 # but ApdbCassandra cannot be instantiated.
 try:
     import cassandra
-    from cassandra.cluster import Cluster, ExecutionProfile, EXEC_PROFILE_DEFAULT
-    from cassandra.policies import RoundRobinPolicy, WhiteListRoundRobinPolicy, AddressTranslator
     import cassandra.query
+    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
+    from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
     CASSANDRA_IMPORTED = True
 except ImportError:
     CASSANDRA_IMPORTED = False
 
+import felis.types
 import lsst.daf.base as dafBase
+from felis.simple import Table
 from lsst import sphgeom
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.utils.iteration import chunk_iterable
-from .timer import Timer
+
 from .apdb import Apdb, ApdbConfig
-from .apdbSchema import ApdbTables, TableDef
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
-from .cassandra_utils import (
-    literal,
-    pandas_dataframe_factory,
-    quote_id,
-    raw_data_factory,
-    select_concurrent,
-)
+from .apdbSchema import ApdbTables
+from .cassandra_utils import literal, pandas_dataframe_factory, quote_id, raw_data_factory, select_concurrent
 from .pixelization import Pixelization
+from .timer import Timer
 
 _LOG = logging.getLogger(__name__)
 
@@ -66,123 +64,100 @@ class CassandraMissingError(Exception):
 
 class ApdbCassandraConfig(ApdbConfig):
 
-    contact_points = ListField(
-        dtype=str,
+    contact_points = ListField[str](
         doc="The list of contact points to try connecting for cluster discovery.",
         default=["127.0.0.1"]
     )
-    private_ips = ListField(
-        dtype=str,
+    private_ips = ListField[str](
         doc="List of internal IP addresses for contact_points.",
         default=[]
     )
-    keyspace = Field(
-        dtype=str,
+    keyspace = Field[str](
         doc="Default keyspace for operations.",
         default="apdb"
     )
-    read_consistency = Field(
-        dtype=str,
+    read_consistency = Field[str](
         doc="Name for consistency level of read operations, default: QUORUM, can be ONE.",
         default="QUORUM"
     )
-    write_consistency = Field(
-        dtype=str,
+    write_consistency = Field[str](
         doc="Name for consistency level of write operations, default: QUORUM, can be ONE.",
         default="QUORUM"
     )
-    read_timeout = Field(
-        dtype=float,
+    read_timeout = Field[float](
         doc="Timeout in seconds for read operations.",
         default=120.
     )
-    write_timeout = Field(
-        dtype=float,
+    write_timeout = Field[float](
         doc="Timeout in seconds for write operations.",
         default=10.
     )
-    read_concurrency = Field(
-        dtype=int,
+    read_concurrency = Field[int](
         doc="Concurrency level for read operations.",
         default=500
     )
-    protocol_version = Field(
-        dtype=int,
+    protocol_version = Field[int](
         doc="Cassandra protocol version to use, default is V4",
         default=cassandra.ProtocolVersion.V4 if CASSANDRA_IMPORTED else 0
     )
-    dia_object_columns = ListField(
-        dtype=str,
+    dia_object_columns = ListField[str](
         doc="List of columns to read from DiaObject, by default read all columns",
         default=[]
     )
-    prefix = Field(
-        dtype=str,
+    prefix = Field[str](
         doc="Prefix to add to table names",
         default=""
     )
-    part_pixelization = ChoiceField(
-        dtype=str,
+    part_pixelization = ChoiceField[str](
         allowed=dict(htm="HTM pixelization", q3c="Q3C pixelization", mq3c="MQ3C pixelization"),
         doc="Pixelization used for partitioning index.",
         default="mq3c"
     )
-    part_pix_level = Field(
-        dtype=int,
+    part_pix_level = Field[int](
         doc="Pixelization level used for partitioning index.",
         default=10
     )
-    part_pix_max_ranges = Field(
-        dtype=int,
+    part_pix_max_ranges = Field[int](
         doc="Max number of ranges in pixelization envelope",
         default=64
     )
-    ra_dec_columns = ListField(
-        dtype=str,
+    ra_dec_columns = ListField[str](
         default=["ra", "decl"],
         doc="Names ra/dec columns in DiaObject table"
     )
-    timer = Field(
-        dtype=bool,
+    timer = Field[bool](
         doc="If True then print/log timing information",
         default=False
     )
-    time_partition_tables = Field(
-        dtype=bool,
+    time_partition_tables = Field[bool](
         doc="Use per-partition tables for sources instead of partitioning by time",
         default=True
     )
-    time_partition_days = Field(
-        dtype=int,
-        doc="Time partitoning granularity in days, this value must not be changed"
+    time_partition_days = Field[int](
+        doc="Time partitioning granularity in days, this value must not be changed"
             " after database is initialized",
         default=30
     )
-    time_partition_start = Field(
-        dtype=str,
-        doc="Starting time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
+    time_partition_start = Field[str](
+        doc="Starting time for per-partition tables, in yyyy-mm-ddThh:mm:ss format, in TAI."
             " This is used only when time_partition_tables is True.",
         default="2018-12-01T00:00:00"
     )
-    time_partition_end = Field(
-        dtype=str,
-        doc="Ending time for per-partion tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
+    time_partition_end = Field[str](
+        doc="Ending time for per-partition tables, in yyyy-mm-ddThh:mm:ss format, in TAI"
             " This is used only when time_partition_tables is True.",
         default="2030-01-01T00:00:00"
     )
-    query_per_time_part = Field(
-        dtype=bool,
+    query_per_time_part = Field[bool](
         default=False,
         doc="If True then build separate query for each time partition, otherwise build one single query. "
             "This is only used when time_partition_tables is False in schema config."
     )
-    query_per_spatial_part = Field(
-        dtype=bool,
+    query_per_spatial_part = Field[bool](
         default=False,
         doc="If True then build one query per spacial partition, otherwise build single query. "
     )
-    pandas_delay_conv = Field(
-        dtype=bool,
+    pandas_delay_conv = Field[bool](
         default=True,
         doc="If True then combine result rows before converting to pandas. "
     )
@@ -223,6 +198,7 @@ class ApdbCassandra(Apdb):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
+        config.validate()
         self.config = config
 
         _LOG.debug("ApdbCassandra Configuration:")
@@ -258,7 +234,10 @@ class ApdbCassandra(Apdb):
         # Cache for prepared statements
         self._prepared_statements: Dict[str, cassandra.query.PreparedStatement] = {}
 
-    def tableDef(self, table: ApdbTables) -> Optional[TableDef]:
+    def __del__(self) -> None:
+        self._cluster.shutdown()
+
+    def tableDef(self, table: ApdbTables) -> Optional[Table]:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
@@ -774,7 +753,7 @@ class ApdbCassandra(Apdb):
                     if field not in column_map:
                         continue
                     value = getattr(rec, field)
-                    if column_map[field].type == "DATETIME":
+                    if column_map[field].datatype is felis.types.Timestamp:
                         if isinstance(value, pandas.Timestamp):
                             value = literal(value.to_pydatetime())
                         else:
@@ -909,7 +888,10 @@ class ApdbCassandra(Apdb):
         """
         table = self._schema.tableSchemas[table_name]
 
-        data = {columnDef.name: pandas.Series(dtype=columnDef.dtype) for columnDef in table.columns}
+        data = {
+            columnDef.name: pandas.Series(dtype=self._schema.column_dtype(columnDef.datatype))
+            for columnDef in table.columns
+        }
         return pandas.DataFrame(data)
 
     def _prep_statement(self, query: str) -> cassandra.query.PreparedStatement:

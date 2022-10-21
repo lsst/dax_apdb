@@ -24,6 +24,8 @@ import os
 import pandas
 import unittest.mock
 import lsst.utils.tests
+from collections.abc import Mapping
+from typing import Any
 
 import lsst.geom as geom
 from lsst.daf.base import DateTime
@@ -32,7 +34,9 @@ from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
-def createTestObjects(n_objects, id_column_name, extra_fields):
+def createTestObjects(
+    n_objects: int, id_column_name: str, extra_fields: Mapping[str, Any]
+) -> pandas.DataFrame:
     """Create test objects to store in the ApdbSql.
 
     Parameters
@@ -62,7 +66,7 @@ def createTestObjects(n_objects, id_column_name, extra_fields):
 
 class TestApVerifyQueries(unittest.TestCase):
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.apdbCfg = ApdbSqlConfig()
         # Create DB in memory.
         self.apdbCfg.db_url = 'sqlite://'
@@ -72,14 +76,14 @@ class TestApVerifyQueries(unittest.TestCase):
         self.apdb = ApdbSql(config=self.apdbCfg)
         self.apdb._schema.makeSchema()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         del self.apdb
 
-    def test_count_zero_objects(self):
+    def test_count_zero_objects(self) -> None:
         value = self.apdb.countUnassociatedObjects()
         self.assertEqual(value, 0)
 
-    def test_count_objects(self):
+    def test_count_objects(self) -> None:
         n_created = 5
         objects = createTestObjects(n_created, "diaObjectId", {'nDiaSources': int})
         objects.at[n_created - 1, "nDiaSources"] = 2
@@ -96,7 +100,7 @@ class MemoryTester(lsst.utils.tests.MemoryTestCase):
     pass
 
 
-def setup_module(module):
+def setup_module(module: Any) -> None:
     lsst.utils.tests.init()
 
 
