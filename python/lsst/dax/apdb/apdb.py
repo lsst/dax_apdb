@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbConfig", "Apdb"]
+__all__ = ["ApdbConfig", "Apdb", "ApdbTableData"]
 
 import os
 from abc import ABC, abstractmethod
@@ -69,6 +69,32 @@ class ApdbConfig(Config):
         optional=True,
         deprecated="This field is deprecated, its value is not used."
     )
+
+
+class ApdbTableData(ABC):
+    """Abstract class for representing table data."""
+
+    @abstractmethod
+    def column_names(self) -> list[str]:
+        """Return ordered sequence of column names in the table.
+
+        Returns
+        -------
+        names : `list` [`str`]
+            Column names.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def rows(self) -> Iterable[tuple]:
+        """Return table rows, each row is a tuple of values.
+
+        Returns
+        -------
+        rows : `iterable` [`tuple`]
+            Iterable of tuples.
+        """
+        raise NotImplementedError()
 
 
 class Apdb(ABC):
@@ -208,7 +234,7 @@ class Apdb(ABC):
     def getDiaObjectsHistory(self,
                              start_time: dafBase.DateTime,
                              end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> pandas.DataFrame:
+                             region: Optional[Region] = None) -> ApdbTableData:
         """Returns catalog of DiaObject instances from a given time period
         including the history of each DiaObject.
 
@@ -227,7 +253,7 @@ class Apdb(ABC):
 
         Returns
         -------
-        catalog : `pandas.DataFrame`
+        data : `ApdbTableData`
             Catalog containing DiaObject records.
 
         Notes
@@ -241,7 +267,7 @@ class Apdb(ABC):
     def getDiaSourcesHistory(self,
                              start_time: dafBase.DateTime,
                              end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> pandas.DataFrame:
+                             region: Optional[Region] = None) -> ApdbTableData:
         """Returns catalog of DiaSource instances from a given time period.
 
         Parameters
@@ -259,8 +285,8 @@ class Apdb(ABC):
 
         Returns
         -------
-        catalog : `pandas.DataFrame`
-            Catalog containing DiaObject records.
+        data : `ApdbTableData`
+            Catalog containing DiaSource records.
 
         Notes
         -----
@@ -273,7 +299,7 @@ class Apdb(ABC):
     def getDiaForcedSourcesHistory(self,
                                    start_time: dafBase.DateTime,
                                    end_time: dafBase.DateTime,
-                                   region: Optional[Region] = None) -> pandas.DataFrame:
+                                   region: Optional[Region] = None) -> ApdbTableData:
         """Returns catalog of DiaForcedSource instances from a given time
         period.
 
@@ -292,8 +318,8 @@ class Apdb(ABC):
 
         Returns
         -------
-        catalog : `pandas.DataFrame`
-            Catalog containing DiaObject records.
+        data : `ApdbTableData`
+            Catalog containing DiaForcedSource records.
 
         Notes
         -----

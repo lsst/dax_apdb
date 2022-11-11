@@ -42,7 +42,7 @@ from lsst.utils.iteration import chunk_iterable
 from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
 
-from .apdb import Apdb, ApdbConfig
+from .apdb import Apdb, ApdbConfig, ApdbTableData
 from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema
 from .timer import Timer
@@ -183,6 +183,20 @@ class ApdbSqlConfig(ApdbConfig):
         super().validate()
         if len(self.ra_dec_columns) != 2:
             raise ValueError("ra_dec_columns must have exactly two column names")
+
+
+class ApdbSqlTableData(ApdbTableData):
+    """Implementation of ApdbTableData that wraps sqlalchemy Result."""
+
+    def __init__(self, result: sqlalchemy.engine.Result):
+        self.result = result
+
+    def column_names(self) -> list[str]:
+        return self.result.keys()
+
+    def rows(self) -> Iterable[tuple]:
+        for row in self.result:
+            yield tuple(row)
 
 
 class ApdbSql(Apdb):
@@ -386,7 +400,7 @@ class ApdbSql(Apdb):
     def getDiaObjectsHistory(self,
                              start_time: dafBase.DateTime,
                              end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> pandas.DataFrame:
+                             region: Optional[Region] = None) -> ApdbTableData:
         # docstring is inherited from a base class
 
         table = self._schema.objects
@@ -407,14 +421,13 @@ class ApdbSql(Apdb):
         # execute select
         with Timer('DiaObject history select', self.config.timer):
             with self._engine.begin() as conn:
-                catalog = pandas.read_sql_query(query, conn)
-        _LOG.debug("found %s DiaObjects history records", len(catalog))
-        return catalog
+                result = conn.execute(query)
+        return ApdbSqlTableData(result)
 
     def getDiaSourcesHistory(self,
                              start_time: dafBase.DateTime,
                              end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> pandas.DataFrame:
+                             region: Optional[Region] = None) -> ApdbTableData:
         # docstring is inherited from a base class
 
         table = self._schema.sources
@@ -435,14 +448,13 @@ class ApdbSql(Apdb):
         # execute select
         with Timer('DiaSource history select', self.config.timer):
             with self._engine.begin() as conn:
-                catalog = pandas.read_sql_query(query, conn)
-        _LOG.debug("found %s DiaSource history records", len(catalog))
-        return catalog
+                result = conn.execute(query)
+        return ApdbSqlTableData(result)
 
     def getDiaForcedSourcesHistory(self,
                                    start_time: dafBase.DateTime,
                                    end_time: dafBase.DateTime,
-                                   region: Optional[Region] = None) -> pandas.DataFrame:
+                                   region: Optional[Region] = None) -> ApdbTableData:
         # docstring is inherited from a base class
 
         table = self._schema.forcedSources
@@ -459,9 +471,8 @@ class ApdbSql(Apdb):
         # execute select
         with Timer('DiaForcedSource history select', self.config.timer):
             with self._engine.begin() as conn:
-                catalog = pandas.read_sql_query(query, conn)
-        _LOG.debug("found %s DiaForcedSource history records", len(catalog))
-        return catalog
+                result = conn.execute(query)
+        return ApdbSqlTableData(result)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -675,6 +686,7 @@ class ApdbSql(Apdb):
                 query = table.select().where(False)
                 sources = pandas.read_sql_query(query, conn)
             else:
+                data_frames: list[pandas.DataFrame] = []
                 for ids in chunk_iterable(sorted(object_ids), 1000):
                     query = table.select()
 
@@ -691,11 +703,12 @@ class ApdbSql(Apdb):
                     )
 
                     # execute select
-                    df = pandas.read_sql_query(query, conn)
-                    if sources is None:
-                        sources = df
-                    else:
-                        sources = sources.append(df)
+                    data_frames.append(pandas.read_sql_query(query, conn))
+
+                if len(data_frames) == 1:
+                    sources = data_frames[0]
+                else:
+                    sources = pandas.concat(data_frames)
         assert sources is not None, "Catalog cannot be None"
         return sources
 

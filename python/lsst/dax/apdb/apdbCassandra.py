@@ -47,10 +47,17 @@ from lsst import sphgeom
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.utils.iteration import chunk_iterable
 
-from .apdb import Apdb, ApdbConfig
+from .apdb import Apdb, ApdbConfig, ApdbTableData
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
 from .apdbSchema import ApdbTables
-from .cassandra_utils import literal, pandas_dataframe_factory, quote_id, raw_data_factory, select_concurrent
+from .cassandra_utils import (
+    ApdbCassandraTableData,
+    literal,
+    pandas_dataframe_factory,
+    quote_id,
+    raw_data_factory,
+    select_concurrent,
+)
 from .pixelization import Pixelization
 from .timer import Timer
 
@@ -156,10 +163,6 @@ class ApdbCassandraConfig(ApdbConfig):
     query_per_spatial_part = Field[bool](
         default=False,
         doc="If True then build one query per spacial partition, otherwise build single query. "
-    )
-    pandas_delay_conv = Field[bool](
-        default=True,
-        doc="If True then combine result rows before converting to pandas. "
     )
 
 
@@ -314,7 +317,7 @@ class ApdbCassandra(Apdb):
     def getDiaObjectsHistory(self,
                              start_time: dafBase.DateTime,
                              end_time: dafBase.DateTime,
-                             region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
+                             region: Optional[sphgeom.Region] = None) -> ApdbTableData:
         # docstring is inherited from a base class
 
         sp_where = self._spatial_where(region, use_ranges=True)
@@ -325,39 +328,37 @@ class ApdbCassandra(Apdb):
         for table in tables:
             prefix = f'SELECT * from "{self._keyspace}"."{table}"'
             statements += list(self._combine_where(prefix, sp_where, temporal_where, "ALLOW FILTERING"))
-        _LOG.debug("getDiaObjectsHistory: #queries: %s", len(statements))
 
         # Run all selects in parallel
         with Timer("DiaObject history", self.config.timer):
-            catalog = cast(
-                pandas.DataFrame,
+            table_data = cast(
+                ApdbCassandraTableData,
                 select_concurrent(
-                    self._session, statements, "read_pandas_multi", self.config.read_concurrency
+                    self._session, statements, "read_raw_multi", self.config.read_concurrency
                 )
             )
 
         # precise filtering on validityStart
         validity_start = start_time.toPython()
         validity_end = end_time.toPython()
-        catalog = cast(
-            pandas.DataFrame,
-            catalog[(catalog["validityStart"] >= validity_start) & (catalog["validityStart"] < validity_end)]
-        )
 
-        _LOG.debug("found %d DiaObjects", catalog.shape[0])
-        return catalog
+        idx = table_data.column_names().index("validityStart")
+        rows = [row for row in table_data.rows() if row[idx] >= validity_start and row[idx] < validity_end]
+
+        _LOG.debug("found %d DiaObjects", len(rows))
+        return ApdbCassandraTableData(table_data.column_names(), rows)
 
     def getDiaSourcesHistory(self,
                              start_time: dafBase.DateTime,
                              end_time: dafBase.DateTime,
-                             region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
+                             region: Optional[sphgeom.Region] = None) -> ApdbTableData:
         # docstring is inherited from a base class
         return self._getSourcesHistory(ApdbTables.DiaSource, start_time, end_time, region)
 
     def getDiaForcedSourcesHistory(self,
                                    start_time: dafBase.DateTime,
                                    end_time: dafBase.DateTime,
-                                   region: Optional[sphgeom.Region] = None) -> pandas.DataFrame:
+                                   region: Optional[sphgeom.Region] = None) -> ApdbTableData:
         # docstring is inherited from a base class
         return self._getSourcesHistory(ApdbTables.DiaForcedSource, start_time, end_time, region)
 
@@ -476,12 +477,6 @@ class ApdbCassandra(Apdb):
         else:
             loadBalancePolicy = RoundRobinPolicy()
 
-        pandas_row_factory: Callable
-        if not config.pandas_delay_conv:
-            pandas_row_factory = pandas_dataframe_factory
-        else:
-            pandas_row_factory = raw_data_factory
-
         read_tuples_profile = ExecutionProfile(
             consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
             request_timeout=config.read_timeout,
@@ -494,10 +489,19 @@ class ApdbCassandra(Apdb):
             row_factory=pandas_dataframe_factory,
             load_balancing_policy=loadBalancePolicy,
         )
+        # Profile to use with select_concurrent to return pandas data frame
         read_pandas_multi_profile = ExecutionProfile(
             consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
             request_timeout=config.read_timeout,
-            row_factory=pandas_row_factory,
+            row_factory=pandas_dataframe_factory,
+            load_balancing_policy=loadBalancePolicy,
+        )
+        # Profile to use with select_concurrent to return raw data (columns and
+        # rows)
+        read_raw_multi_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
+            request_timeout=config.read_timeout,
+            row_factory=raw_data_factory,
             load_balancing_policy=loadBalancePolicy,
         )
         write_profile = ExecutionProfile(
@@ -513,6 +517,7 @@ class ApdbCassandra(Apdb):
             "read_tuples": read_tuples_profile,
             "read_pandas": read_pandas_profile,
             "read_pandas_multi": read_pandas_multi_profile,
+            "read_raw_multi": read_raw_multi_profile,
             "write": write_profile,
             EXEC_PROFILE_DEFAULT: default_profile,
         }
@@ -583,7 +588,7 @@ class ApdbCassandra(Apdb):
         start_time: dafBase.DateTime,
         end_time: dafBase.DateTime,
         region: Optional[sphgeom.Region] = None,
-    ) -> pandas.DataFrame:
+    ) -> ApdbTableData:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
@@ -601,8 +606,8 @@ class ApdbCassandra(Apdb):
 
         Returns
         -------
-        catalog : `pandas.DataFrame`
-            Catalog contaning DiaSource records.
+        catalog : `ApdbTableData`
+            Catalog containing DiaSource or DiaForcedSource records.
         """
         sp_where = self._spatial_where(region, use_ranges=False)
         tables, temporal_where = self._temporal_where(table, start_time, end_time, True)
@@ -616,23 +621,21 @@ class ApdbCassandra(Apdb):
 
         # Run all selects in parallel
         with Timer(f"{table.name} history", self.config.timer):
-            catalog = cast(
-                pandas.DataFrame,
+            table_data = cast(
+                ApdbCassandraTableData,
                 select_concurrent(
-                    self._session, statements, "read_pandas_multi", self.config.read_concurrency
+                    self._session, statements, "read_raw_multi", self.config.read_concurrency
                 )
             )
 
         # precise filtering on validityStart
         period_start = start_time.get(system=dafBase.DateTime.MJD)
         period_end = end_time.get(system=dafBase.DateTime.MJD)
-        catalog = cast(
-            pandas.DataFrame,
-            catalog[(catalog["midPointTai"] >= period_start) & (catalog["midPointTai"] < period_end)]
-        )
+        idx = table_data.column_names().index("midPointTai")
+        rows = [row for row in table_data.rows() if row[idx] >= period_start and row[idx] < period_end]
 
-        _LOG.debug("found %d %ss", catalog.shape[0], table.name)
-        return catalog
+        _LOG.debug("found %d %ss", len(rows), table.name)
+        return ApdbCassandraTableData(table_data.column_names(), rows)
 
     def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
         """Store catalog of DiaObjects from current visit.
