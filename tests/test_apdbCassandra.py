@@ -38,11 +38,11 @@ import logging
 import os
 import unittest
 import uuid
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbTables
 from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
-from lsst.dax.apdb.tests import ApdbTest
+from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 import lsst.utils.tests
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
@@ -50,14 +50,8 @@ TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/s
 logging.basicConfig(level=logging.INFO)
 
 
-class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
-    """A test case for ApdbCassandra class
-    """
-
-    time_partition_tables = False
-    time_partition_start: Optional[str] = None
-    time_partition_end: Optional[str] = None
-    fsrc_history_region_filtering = True
+class ApdbCassandraMixin:
+    """Mixin class which defines common methods for unit tests."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -80,8 +74,10 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         # create dedicated keyspace for each test
         key = uuid.uuid4()
         self.keyspace = f"apdb_{key.hex}"
-        query = f"CREATE KEYSPACE {self.keyspace}" \
+        query = (
+            f"CREATE KEYSPACE {self.keyspace}"
             " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+        )
 
         apdb = ApdbCassandra(config)
         apdb._session.execute(query)
@@ -95,6 +91,19 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         apdb._session.execute(query)
         del apdb
 
+    if TYPE_CHECKING:
+        # For mypy.
+        def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
+            ...
+
+
+class ApdbCassandraTestCase(ApdbCassandraMixin, unittest.TestCase, ApdbTest):
+    """A test case for ApdbCassandra class"""
+
+    time_partition_tables = False
+    time_partition_start: Optional[str] = None
+    time_partition_end: Optional[str] = None
+
     def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
         """Make config class instance used in all tests."""
         kw = {
@@ -102,6 +111,7 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
             "time_partition_tables": self.time_partition_tables,
+            "use_insert_id": self.use_insert_id,
         }
         if self.time_partition_start:
             kw["time_partition_start"] = self.time_partition_start
@@ -110,43 +120,38 @@ class ApdbCassandraTestCase(unittest.TestCase, ApdbTest):
         kw.update(kwargs)
         return ApdbCassandraConfig(**kw)
 
-    def n_columns(self, table: ApdbTables) -> int:
-        """Return number of columns for a specified table."""
-
-        # Tables add one or two partitioning columns depending on config
-        n_part_columns = 0
-        if table is ApdbTables.DiaObjectLast:
-            n_part_columns = 1
-        else:
-            if self.time_partition_tables:
-                n_part_columns = 1
-            else:
-                n_part_columns = 2
-
-        if table is ApdbTables.DiaObject:
-            return self.n_obj_columns + n_part_columns
-        elif table is ApdbTables.DiaObjectLast:
-            return self.n_obj_last_columns + n_part_columns
-        elif table is ApdbTables.DiaSource:
-            return self.n_src_columns + n_part_columns
-        elif table is ApdbTables.DiaForcedSource:
-            return self.n_fsrc_columns + n_part_columns
-        elif table is ApdbTables.SSObject:
-            return self.n_ssobj_columns
-        return -1
-
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
         return ApdbTables.DiaObjectLast
 
 
 class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
-    """A test case for ApdbCassandra class with per-month tables.
-    """
+    """A test case for ApdbCassandra class with per-month tables."""
 
     time_partition_tables = True
     time_partition_start = "2019-12-01T00:00:00"
     time_partition_end = "2022-01-01T00:00:00"
+
+
+class ApdbCassandraTestCaseInsertIds(ApdbCassandraTestCase):
+    """A test case  with use_insert_id."""
+
+    use_insert_id = True
+
+
+class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, unittest.TestCase, ApdbSchemaUpdateTest):
+    """A test case for schema updates using Cassandra backend."""
+
+    def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
+        """Make config class instance used in all tests."""
+        kw = {
+            "contact_points": [self.cluster_host],
+            "keyspace": self.keyspace,
+            "schema_file": TEST_SCHEMA,
+            "time_partition_tables": False,
+        }
+        kw.update(kwargs)
+        return ApdbCassandraConfig(**kw)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

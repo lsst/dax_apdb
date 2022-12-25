@@ -21,17 +21,26 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbTest"]
+__all__ = ["ApdbSchemaUpdateTest", "ApdbTest"]
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, ContextManager, Optional
 
 import pandas
 from lsst.daf.base import DateTime
-from lsst.dax.apdb import ApdbConfig, ApdbTableData, ApdbTables, make_apdb
+from lsst.dax.apdb import ApdbConfig, ApdbInsertId, ApdbTableData, ApdbTables, make_apdb
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
+
+
+def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
+    """Make a region to use in tests"""
+    pointing_v = UnitVector3d(*xyz)
+    fov = 0.05  # radians
+    region = Circle(pointing_v, Angle(fov / 2))
+    return region
 
 
 class ApdbTest(ABC):
@@ -48,20 +57,17 @@ class ApdbTest(ABC):
     fsrc_requires_id_list = False
     """Should be set to True if getDiaForcedSources requires object IDs"""
 
-    fsrc_history_region_filtering = False
-    """Should be set to True if forced sources history support region-based
-    filtering.
-    """
-
-    extra_object_columns: Dict[str, Any] = {}
-    """Additional columns with values to add to DiaObject catalog."""
+    use_insert_id: bool = False
+    """Set to true when support for Insert IDs is configured"""
 
     # number of columns as defined in tests/config/schema.yaml
-    n_obj_columns = 8
-    n_obj_last_columns = 5
-    n_src_columns = 10
-    n_fsrc_columns = 4
-    n_ssobj_columns = 3
+    table_column_count = {
+        ApdbTables.DiaObject: 8,
+        ApdbTables.DiaObjectLast: 5,
+        ApdbTables.DiaSource: 10,
+        ApdbTables.DiaForcedSource: 4,
+        ApdbTables.SSObject: 3,
+    }
 
     @abstractmethod
     def make_config(self, **kwargs: Any) -> ApdbConfig:
@@ -69,21 +75,9 @@ class ApdbTest(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def n_columns(self, table: ApdbTables) -> int:
-        """Return number of columns for a specified table."""
-        raise NotImplementedError()
-
-    @abstractmethod
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
         raise NotImplementedError()
-
-    def make_region(self, xyz: Tuple[float, float, float] = (1., 1., -1.)) -> Region:
-        """Make a region to use in tests"""
-        pointing_v = UnitVector3d(*xyz)
-        fov = 0.05  # radians
-        region = Circle(pointing_v, Angle(fov/2))
-        return region
 
     def assert_catalog(self, catalog: Any, rows: int, table: ApdbTables) -> None:
         """Validate catalog type and size
@@ -97,9 +91,9 @@ class ApdbTest(ABC):
         table : `ApdbTables`
             APDB table type.
         """
-        self.assertIsInstance(catalog, pandas.DataFrame)  # type: ignore[attr-defined]
-        self.assertEqual(catalog.shape[0], rows)  # type: ignore[attr-defined]
-        self.assertEqual(catalog.shape[1], self.n_columns(table))  # type: ignore[attr-defined]
+        self.assertIsInstance(catalog, pandas.DataFrame)
+        self.assertEqual(catalog.shape[0], rows)
+        self.assertEqual(catalog.shape[1], self.table_column_count[table])
 
     def assert_table_data(self, catalog: Any, rows: int, table: ApdbTables) -> None:
         """Validate catalog type and size
@@ -112,11 +106,14 @@ class ApdbTest(ABC):
             Expected number of rows in a catalog.
         table : `ApdbTables`
             APDB table type.
+        extra_columns : `int`
+            Count of additional columns expected in ``catalog``.
         """
-        self.assertIsInstance(catalog, ApdbTableData)  # type: ignore[attr-defined]
+        self.assertIsInstance(catalog, ApdbTableData)
         n_rows = sum(1 for row in catalog.rows())
-        self.assertEqual(n_rows, rows)  # type: ignore[attr-defined]
-        self.assertEqual(len(catalog.column_names()), self.n_columns(table))  # type: ignore[attr-defined]
+        self.assertEqual(n_rows, rows)
+        # One extra column for insert_id
+        self.assertEqual(len(catalog.column_names()), self.table_column_count[table] + 1)
 
     def test_makeSchema(self) -> None:
         """Test for makeing APDB schema."""
@@ -124,10 +121,10 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
 
         apdb.makeSchema()
-        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))  # type: ignore[attr-defined]
-        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))  # type: ignore[attr-defined]
-        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))  # type: ignore[attr-defined]
-        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))  # type: ignore[attr-defined]
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
 
     def test_empty_gets(self) -> None:
         """Test for getting data from empty database.
@@ -141,7 +138,7 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         visit_time = self.visit_time
 
         res: Optional[pandas.DataFrame]
@@ -171,7 +168,7 @@ class ApdbTest(ABC):
 
         # get sources by region
         if self.fsrc_requires_id_list:
-            with self.assertRaises(NotImplementedError):  # type: ignore[attr-defined]
+            with self.assertRaises(NotImplementedError):
                 apdb.getDiaForcedSources(region, None, visit_time)
         else:
             apdb.getDiaForcedSources(region, None, visit_time)
@@ -189,7 +186,7 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         visit_time = self.visit_time
 
         res: Optional[pandas.DataFrame]
@@ -200,15 +197,15 @@ class ApdbTest(ABC):
 
         # get sources by region
         res = apdb.getDiaSources(region, None, visit_time)
-        self.assertIs(res, None)  # type: ignore[attr-defined]
+        self.assertIs(res, None)
 
         # get sources by object ID, empty object list
         res = apdb.getDiaSources(region, [], visit_time)
-        self.assertIs(res, None)  # type: ignore[attr-defined]
+        self.assertIs(res, None)
 
         # get forced sources by object ID, empty object list
         res = apdb.getDiaForcedSources(region, [], visit_time)
-        self.assertIs(res, None)  # type: ignore[attr-defined]
+        self.assertIs(res, None)
 
     def test_storeObjects(self) -> None:
         """Store and retrieve DiaObjects."""
@@ -218,11 +215,11 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         visit_time = self.visit_time
 
         # make catalog with Objects
-        catalog = makeObjectCatalog(region, 100, visit_time, **self.extra_object_columns)
+        catalog = makeObjectCatalog(region, 100, visit_time)
 
         # store catalog
         apdb.store(visit_time, catalog)
@@ -231,110 +228,17 @@ class ApdbTest(ABC):
         res = apdb.getDiaObjects(region)
         self.assert_catalog(res, len(catalog), self.getDiaObjects_table())
 
-    def test_objectHistory(self) -> None:
-        """Store and retrieve DiaObject history."""
-
-        # don't care about sources.
-        config = self.make_config()
-        apdb = make_apdb(config)
-        apdb.makeSchema()
-
-        region1 = self.make_region((1., 1., -1.))
-        region2 = self.make_region((-1., -1., -1.))
-        visit_time = [
-            DateTime("2021-01-01T00:01:00", DateTime.TAI),
-            DateTime("2021-01-01T00:02:00", DateTime.TAI),
-            DateTime("2021-01-01T00:03:00", DateTime.TAI),
-            DateTime("2021-01-01T00:04:00", DateTime.TAI),
-            DateTime("2021-01-01T00:05:00", DateTime.TAI),
-            DateTime("2021-01-01T00:06:00", DateTime.TAI),
-            DateTime("2021-03-01T00:01:00", DateTime.TAI),
-            DateTime("2021-03-01T00:02:00", DateTime.TAI),
-        ]
-        end_time = DateTime("2021-03-02T00:00:00", DateTime.TAI)
-
-        nobj = 100
-        catalog1 = makeObjectCatalog(region1, nobj, visit_time[0], **self.extra_object_columns)
-        apdb.store(visit_time[0], catalog1)
-        apdb.store(visit_time[2], catalog1)
-        apdb.store(visit_time[4], catalog1)
-        apdb.store(visit_time[6], catalog1)
-        catalog2 = makeObjectCatalog(
-            region2, nobj, visit_time[1], start_id=nobj*2, **self.extra_object_columns
-        )
-        apdb.store(visit_time[1], catalog2)
-        apdb.store(visit_time[3], catalog2)
-        apdb.store(visit_time[5], catalog2)
-        apdb.store(visit_time[7], catalog2)
-
-        # read it back and check sizes
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 8, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 8, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 7, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 6, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 4, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 2, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(DateTime("2021-03-01T00:02:00.001", DateTime.TAI), end_time)
-        self.assert_table_data(res, 0, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:06:01", DateTime.TAI),
-        )
-        self.assert_table_data(res, nobj * 6, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:06:00", DateTime.TAI),
-        )
-        self.assert_table_data(res, nobj * 5, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:01:00", DateTime.TAI),
-        )
-        self.assert_table_data(res, 0, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time, region=region1
-        )
-        self.assert_table_data(res, nobj * 4, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(
-            DateTime("2021-01-01T00:03:00", DateTime.TAI), end_time, region=region2
-        )
-        self.assert_table_data(res, nobj * 3, ApdbTables.DiaObject)
-
-        res = apdb.getDiaObjectsHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:03:30", DateTime.TAI),
-            region1,
-        )
-        self.assert_table_data(res, nobj * 2, ApdbTables.DiaObject)
-
     def test_storeSources(self) -> None:
         """Store and retrieve DiaSources."""
         config = self.make_config()
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time, **self.extra_object_columns)
+        objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time)
 
@@ -353,96 +257,6 @@ class ApdbTest(ABC):
         res = apdb.getDiaSources(region, [], visit_time)
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
-    def test_sourceHistory(self) -> None:
-        """Store and retrieve DiaSource history."""
-
-        # don't care about sources.
-        config = self.make_config()
-        apdb = make_apdb(config)
-        apdb.makeSchema()
-        visit_time = self.visit_time
-
-        region1 = self.make_region((1., 1., -1.))
-        region2 = self.make_region((-1., -1., -1.))
-        nobj = 100
-        objects1 = makeObjectCatalog(region1, nobj, visit_time, **self.extra_object_columns)
-        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj*2, **self.extra_object_columns)
-
-        visits = [
-            (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:02:00", DateTime.TAI), objects2),
-            (DateTime("2021-01-01T00:03:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:04:00", DateTime.TAI), objects2),
-            (DateTime("2021-01-01T00:05:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:06:00", DateTime.TAI), objects2),
-            (DateTime("2021-03-01T00:01:00", DateTime.TAI), objects1),
-            (DateTime("2021-03-01T00:02:00", DateTime.TAI), objects2),
-        ]
-        end_time = DateTime("2021-03-02T00:00:00", DateTime.TAI)
-
-        start_id = 0
-        for visit_time, objects in visits:
-            sources = makeSourceCatalog(objects, visit_time, start_id=start_id)
-            apdb.store(visit_time, objects, sources)
-            start_id += nobj
-
-        # read it back and check sizes
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 8, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 8, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 7, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 6, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 4, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 2, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(DateTime("2021-03-01T00:02:00.001", DateTime.TAI), end_time)
-        self.assert_table_data(res, 0, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:06:01", DateTime.TAI),
-        )
-        self.assert_table_data(res, nobj * 6, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:06:00", DateTime.TAI),
-        )
-        self.assert_table_data(res, nobj * 5, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:01:00", DateTime.TAI),
-        )
-        self.assert_table_data(res, 0, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time, region=region1
-        )
-        self.assert_table_data(res, nobj * 4, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(
-            DateTime("2021-01-01T00:03:00", DateTime.TAI), end_time, region=region2
-        )
-        self.assert_table_data(res, nobj * 3, ApdbTables.DiaSource)
-
-        res = apdb.getDiaSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:03:30", DateTime.TAI),
-            region1,
-        )
-        self.assert_table_data(res, nobj * 2, ApdbTables.DiaSource)
-
     def test_storeForcedSources(self) -> None:
         """Store and retrieve DiaForcedSources."""
 
@@ -450,11 +264,11 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time, **self.extra_object_columns)
+        objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
         catalog = makeForcedSourceCatalog(objects, visit_time)
 
@@ -468,8 +282,8 @@ class ApdbTest(ABC):
         res = apdb.getDiaForcedSources(region, [], visit_time)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
-    def test_forcedSourceHistory(self) -> None:
-        """Store and retrieve DiaForcedSource history."""
+    def test_getHistory(self) -> None:
+        """Store and retrieve catalog history."""
 
         # don't care about sources.
         config = self.make_config()
@@ -477,11 +291,11 @@ class ApdbTest(ABC):
         apdb.makeSchema()
         visit_time = self.visit_time
 
-        region1 = self.make_region((1., 1., -1.))
-        region2 = self.make_region((-1., -1., -1.))
+        region1 = _make_region((1.0, 1.0, -1.0))
+        region2 = _make_region((-1.0, -1.0, -1.0))
         nobj = 100
-        objects1 = makeObjectCatalog(region1, nobj, visit_time, **self.extra_object_columns)
-        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj*2, **self.extra_object_columns)
+        objects1 = makeObjectCatalog(region1, nobj, visit_time)
+        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
 
         visits = [
             (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
@@ -493,73 +307,48 @@ class ApdbTest(ABC):
             (DateTime("2021-03-01T00:01:00", DateTime.TAI), objects1),
             (DateTime("2021-03-01T00:02:00", DateTime.TAI), objects2),
         ]
-        end_time = DateTime("2021-03-02T00:00:00", DateTime.TAI)
 
         start_id = 0
         for visit_time, objects in visits:
-            sources = makeForcedSourceCatalog(objects, visit_time, ccdVisitId=start_id)
-            apdb.store(visit_time, objects, forced_sources=sources)
-            start_id += 1
+            sources = makeSourceCatalog(objects, visit_time, start_id=start_id)
+            fsources = makeForcedSourceCatalog(objects, visit_time, ccdVisitId=start_id)
+            apdb.store(visit_time, objects, sources, fsources)
+            start_id += nobj
 
-        # read it back and check sizes
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 8, ApdbTables.DiaForcedSource)
+        insert_ids = apdb.getInsertIds()
+        if not self.use_insert_id:
+            self.assertIsNone(insert_ids)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 8, ApdbTables.DiaForcedSource)
+            with self.assertRaisesRegex(ValueError, "APDB is not configured for history retrieval"):
+                apdb.getDiaObjectsHistory([])
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:01:01", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 7, ApdbTables.DiaForcedSource)
+        else:
+            assert insert_ids is not None
+            self.assertEqual(len(insert_ids), 8)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:02:30", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 6, ApdbTables.DiaForcedSource)
+            def _check_history(insert_ids: list[ApdbInsertId]) -> None:
+                n_records = len(insert_ids) * nobj
+                res = apdb.getDiaObjectsHistory(insert_ids)
+                self.assert_table_data(res, n_records, ApdbTables.DiaObject)
+                res = apdb.getDiaSourcesHistory(insert_ids)
+                self.assert_table_data(res, n_records, ApdbTables.DiaSource)
+                res = apdb.getDiaForcedSourcesHistory(insert_ids)
+                self.assert_table_data(res, n_records, ApdbTables.DiaForcedSource)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:05:00", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 4, ApdbTables.DiaForcedSource)
+            # read it back and check sizes
+            _check_history(insert_ids)
+            _check_history(insert_ids[1:])
+            _check_history(insert_ids[1:-1])
+            _check_history(insert_ids[3:4])
+            _check_history([])
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-01-01T00:06:30", DateTime.TAI), end_time)
-        self.assert_table_data(res, nobj * 2, ApdbTables.DiaForcedSource)
+            # try to remove some of those
+            apdb.deleteInsertIds(insert_ids[:2])
+            insert_ids = apdb.getInsertIds()
+            assert insert_ids is not None
+            self.assertEqual(len(insert_ids), 6)
 
-        res = apdb.getDiaForcedSourcesHistory(DateTime("2021-03-01T00:02:00.001", DateTime.TAI), end_time)
-        self.assert_table_data(res, 0, ApdbTables.DiaForcedSource)
-
-        res = apdb.getDiaForcedSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:06:01", DateTime.TAI),
-        )
-        self.assert_table_data(res, nobj * 6, ApdbTables.DiaForcedSource)
-
-        res = apdb.getDiaForcedSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:06:00", DateTime.TAI),
-        )
-        self.assert_table_data(res, nobj * 5, ApdbTables.DiaForcedSource)
-
-        res = apdb.getDiaForcedSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:01:00", DateTime.TAI),
-        )
-        self.assert_table_data(res, 0, ApdbTables.DiaForcedSource)
-
-        res = apdb.getDiaForcedSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI), end_time, region=region1
-        )
-        rows = nobj * 4 if self.fsrc_history_region_filtering else nobj * 8
-        self.assert_table_data(res, rows, ApdbTables.DiaForcedSource)
-
-        res = apdb.getDiaForcedSourcesHistory(
-            DateTime("2021-01-01T00:03:00", DateTime.TAI), end_time, region=region2
-        )
-        rows = nobj * 3 if self.fsrc_history_region_filtering else nobj * 6
-        self.assert_table_data(res, rows, ApdbTables.DiaForcedSource)
-
-        res = apdb.getDiaForcedSourcesHistory(
-            DateTime("2021-01-01T00:00:00", DateTime.TAI),
-            DateTime("2021-01-01T00:03:30", DateTime.TAI),
-            region1,
-        )
-        rows = nobj * 2 if self.fsrc_history_region_filtering else nobj * 3
-        self.assert_table_data(res, rows, ApdbTables.DiaForcedSource)
+            _check_history(insert_ids)
 
     def test_storeSSObjects(self) -> None:
         """Store and retrieve SSObjects."""
@@ -584,8 +373,8 @@ class ApdbTest(ABC):
         apdb.storeSSObjects(catalog)
         res = apdb.getSSObjects()
         self.assert_catalog(res, 150, ApdbTables.SSObject)
-        self.assertEqual(len(res[res["flags"] == 1]), 50)  # type: ignore[attr-defined]
-        self.assertEqual(len(res[res["flags"] == 2]), 100)  # type: ignore[attr-defined]
+        self.assertEqual(len(res[res["flags"] == 1]), 50)
+        self.assertEqual(len(res[res["flags"] == 2]), 100)
 
     def test_reassignObjects(self) -> None:
         """Reassign DiaObjects."""
@@ -595,9 +384,9 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         visit_time = self.visit_time
-        objects = makeObjectCatalog(region, 100, visit_time, **self.extra_object_columns)
+        objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time)
         apdb.store(visit_time, objects, sources)
@@ -613,7 +402,7 @@ class ApdbTest(ABC):
         res = apdb.getDiaSources(region, oids, visit_time)
         self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
 
-        with self.assertRaisesRegex(ValueError, r"do not exist.*\D1000"):  # type: ignore[attr-defined]
+        with self.assertRaisesRegex(ValueError, r"do not exist.*\D1000"):
             apdb.reassignDiaSources({1000: 1, 7: 3, })
         self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
 
@@ -624,7 +413,7 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         # 2021-01-01 plus 360 days is 2021-12-27
         src_time1 = DateTime("2021-01-01T00:00:00", DateTime.TAI)
         src_time2 = DateTime("2021-01-01T00:00:02", DateTime.TAI)
@@ -632,7 +421,7 @@ class ApdbTest(ABC):
         visit_time1 = DateTime("2021-12-27T00:00:01", DateTime.TAI)
         visit_time2 = DateTime("2021-12-27T00:00:03", DateTime.TAI)
 
-        objects = makeObjectCatalog(region, 100, visit_time0, **self.extra_object_columns)
+        objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, src_time1, 0)
         apdb.store(src_time1, objects, sources)
@@ -663,14 +452,14 @@ class ApdbTest(ABC):
         apdb = make_apdb(config)
         apdb.makeSchema()
 
-        region = self.make_region()
+        region = _make_region()
         src_time1 = DateTime("2021-01-01T00:00:00", DateTime.TAI)
         src_time2 = DateTime("2021-01-01T00:00:02", DateTime.TAI)
         visit_time0 = DateTime("2021-12-26T23:59:59", DateTime.TAI)
         visit_time1 = DateTime("2021-12-27T00:00:01", DateTime.TAI)
         visit_time2 = DateTime("2021-12-27T00:00:03", DateTime.TAI)
 
-        objects = makeObjectCatalog(region, 100, visit_time0, **self.extra_object_columns)
+        objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
         sources = makeForcedSourceCatalog(objects, src_time1, 1)
         apdb.store(src_time1, objects, forced_sources=sources)
@@ -693,3 +482,63 @@ class ApdbTest(ABC):
         # reading at later time of last save should only read a subset
         res = apdb.getDiaForcedSources(region, oids, visit_time2)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
+
+    if TYPE_CHECKING:
+        # This is a mixin class, some methods from unittest.TestCase declared
+        # here to silence mypy.
+        assertEqual: Callable[[Any, Any], None]
+        assertIs: Callable[[Any, Any], None]
+        assertIsInstance: Callable[[Any, Any], None]
+        assertIsNone: Callable[[Any], None]
+        assertIsNotNone: Callable[[Any], None]
+        assertRaises: Callable[[Any], ContextManager]
+        assertRaisesRegex: Callable[[Any, Any], ContextManager]
+
+
+class ApdbSchemaUpdateTest(ABC):
+    """Base class for unit tests that verify how schema changes work."""
+
+    visit_time = DateTime("2021-01-01T00:00:00", DateTime.TAI)
+
+    @abstractmethod
+    def make_config(self, **kwargs: Any) -> ApdbConfig:
+        """Make config class instance used in all tests.
+
+        This method should return configuration that point to the identical
+        database instance on each call (i.e. ``db_url`` must be the same,
+        which also means for sqlite it has to use on-disk storage).
+        """
+        raise NotImplementedError()
+
+    def test_schema_add_history(self) -> None:
+        """Check that new code can work with old schema without history
+        tables.
+        """
+
+        # Make schema without history tables.
+        config = self.make_config(use_insert_id=False)
+        apdb = make_apdb(config)
+        apdb.makeSchema()
+
+        # Make APDB instance configured for history tables.
+        config = self.make_config(use_insert_id=True)
+        apdb = make_apdb(config)
+
+        # Try to insert something, should work OK.
+        region = _make_region()
+        visit_time = self.visit_time
+
+        # have to store Objects first
+        objects = makeObjectCatalog(region, 100, visit_time)
+        sources = makeSourceCatalog(objects, visit_time)
+        fsources = makeForcedSourceCatalog(objects, visit_time)
+        apdb.store(visit_time, objects, sources, fsources)
+
+        # There should be no history.
+        insert_ids = apdb.getInsertIds()
+        self.assertIsNone(insert_ids)
+
+    if TYPE_CHECKING:
+        # This is a mixin class, some methods from unittest.TestCase declared
+        # here to silence mypy.
+        assertIsNone: Callable[[Any], None]

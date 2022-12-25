@@ -26,7 +26,7 @@ __all__ = ["ApdbCassandraSchema"]
 import enum
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import felis.types
 from felis import simple
@@ -40,16 +40,44 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 
+class _FelisUUID(felis.types.FelisType, felis_name="uuid", votable_name="uuid"):
+    """Special internal type for UUID columns. Felis does not support UUID,
+    but we need it here, to simplify logic it's easier to add a special class.
+    """
+
+
 @enum.unique
 class ExtraTables(enum.Enum):
     """Names of the extra tables used by Cassandra implementation."""
 
+    DiaInsertId = "DiaInsertId"
+    """Name of the table for insert ID records."""
+
+    DiaObjectInsertId = "DiaObjectInsertId"
+    """Name of the table for DIAObject insert ID records."""
+
+    DiaSourceInsertId = "DiaSourceInsertId"
+    """Name of the table for DIASource insert ID records."""
+
+    DiaForcedSourceInsertId = "DiaFSourceInsertId"
+    """Name of the table for DIAForcedSource insert ID records."""
+
     DiaSourceToPartition = "DiaSourceToPartition"
-    "Maps diaSourceId ro its partition values (pixel and time)."
+    "Maps diaSourceId to its partition values (pixel and time)."
 
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
         return prefix + self.value
+
+    @classmethod
+    def insert_id_tables(cls) -> Mapping[ExtraTables, ApdbTables]:
+        """Return mapping of tables used for insert ID tracking to their
+        corresponding regular tables."""
+        return {
+            cls.DiaObjectInsertId: ApdbTables.DiaObject,
+            cls.DiaSourceInsertId: ApdbTables.DiaSource,
+            cls.DiaForcedSourceInsertId: ApdbTables.DiaForcedSource,
+        }
 
 
 class ApdbCassandraSchema(ApdbSchema):
@@ -83,6 +111,7 @@ class ApdbCassandraSchema(ApdbSchema):
         felis.types.Unicode: "TEXT",
         felis.types.Text: "TEXT",
         felis.types.Boolean: "BOOLEAN",
+        _FelisUUID: "UUID",
     }
     """Map YAML column types to Cassandra"""
 
@@ -100,7 +129,8 @@ class ApdbCassandraSchema(ApdbSchema):
         schema_file: str,
         schema_name: str = "ApdbSchema",
         prefix: str = "",
-        time_partition_tables: bool = False
+        time_partition_tables: bool = False,
+        use_insert_id: bool = False,
     ):
 
         super().__init__(schema_file, schema_name)
@@ -109,83 +139,155 @@ class ApdbCassandraSchema(ApdbSchema):
         self._keyspace = keyspace
         self._prefix = prefix
         self._time_partition_tables = time_partition_tables
+        self._use_insert_id = use_insert_id
+        self._has_insert_id: bool | None = None
+
+        self._apdb_tables = self._apdb_tables_schema(time_partition_tables)
+        self._extra_tables = self._extra_tables_schema()
+
+    def _apdb_tables_schema(self, time_partition_tables: bool) -> Mapping[ApdbTables, simple.Table]:
+        """Generate schema for regular APDB tables."""
+        apdb_tables: dict[ApdbTables, simple.Table] = {}
 
         # add columns and index for partitioning.
-        self._ignore_tables = []
-        for table, tableDef in self.tableSchemas.items():
-            columns = []
-            add_columns = True
+        for table, apdb_table_def in self.tableSchemas.items():
+            part_columns = []
+            add_columns = []
+            primary_key = apdb_table_def.primary_key[:]
             if table in self._spatially_partitioned_tables:
                 # DiaObjectLast does not need temporal partitioning
-                columns = ["apdb_part"]
+                part_columns = ["apdb_part"]
+                add_columns = part_columns
             elif table in self._time_partitioned_tables:
                 if time_partition_tables:
-                    columns = ["apdb_part"]
+                    part_columns = ["apdb_part"]
                 else:
-                    columns = ["apdb_part", "apdb_time_part"]
+                    part_columns = ["apdb_part", "apdb_time_part"]
+                add_columns = part_columns
             elif table is ApdbTables.SSObject:
                 # For SSObject there is no natural partition key but we have
                 # to partition it because there are too many of them. I'm
                 # going to partition on its primary key (and drop separate
                 # primary key index).
-                columns = ["ssObjectId"]
-                tableDef.primary_key = []
-                add_columns = False
+                part_columns = ["ssObjectId"]
+                primary_key = []
             else:
-                # TODO: Do not know yet how other tables can be partitioned
-                self._ignore_tables.append(table)
-                add_columns = False
+                # TODO: Do not know what to do with the other tables
+                continue
 
+            column_defs = []
             if add_columns:
-                # add columns to the column list
-                columnDefs = [
-                    simple.Column(
-                        id=f"#{name}",
-                        name=name,
-                        datatype=felis.types.Long,
-                        nullable=False,
-                    ) for name in columns
+                column_defs = [
+                    simple.Column(id=f"#{name}", name=name, datatype=felis.types.Long, nullable=False)
+                    for name in add_columns
                 ]
-                tableDef.columns = columnDefs + tableDef.columns
 
-            # make a partitioning index
-            if columns:
-                annotations = dict(tableDef.annotations)
-                annotations["cassandra:paritioning_columns"] = columns
-                tableDef.annotations = annotations
+            annotations = dict(apdb_table_def.annotations)
+            annotations["cassandra:apdb_column_names"] = [column.name for column in apdb_table_def.columns]
+            if part_columns:
+                annotations["cassandra:partitioning_columns"] = part_columns
 
-        self._extra_tables = self._extraTableSchema()
-
-    def _extraTableSchema(self) -> Mapping[ExtraTables, simple.Table]:
-        """Generate schema for extra tables."""
-        return {
-            ExtraTables.DiaSourceToPartition: simple.Table(
-                id="#" + ExtraTables.DiaSourceToPartition.value,
-                name=ExtraTables.DiaSourceToPartition.value,
-                columns=[
-                    simple.Column(
-                        id="#diaSourceId", name="diaSourceId", datatype=felis.types.Long, nullable=False
-                    ),
-                    simple.Column(
-                        id="#apdb_part", name="apdb_part", datatype=felis.types.Long, nullable=False
-                    ),
-                    simple.Column(
-                        id="#apdb_time_part", name="apdb_time_part", datatype=felis.types.Int, nullable=False
-                    ),
-                ],
-                primary_key=[],
+            apdb_tables[table] = simple.Table(
+                id=apdb_table_def.id,
+                name=apdb_table_def.name,
+                columns=column_defs + apdb_table_def.columns,
+                primary_key=primary_key,
                 indexes=[],
                 constraints=[],
-                annotations={"cassandra:paritioning_columns": ["diaSourceId"]},
-            ),
-        }
+                annotations=annotations,
+            )
 
-    def tableName(self, table_name: Union[ApdbTables, ExtraTables]) -> str:
-        """Return Cassandra table name for APDB table.
-        """
+        return apdb_tables
+
+    def _extra_tables_schema(self) -> Mapping[ExtraTables, simple.Table]:
+        """Generate schema for extra tables."""
+        extra_tables: dict[ExtraTables, simple.Table] = {}
+
+        # This table maps DiaSource ID to its partitions in DiaSource table and
+        # DiaSourceInsertId tables.
+        extra_tables[ExtraTables.DiaSourceToPartition] = simple.Table(
+            id="#" + ExtraTables.DiaSourceToPartition.value,
+            name=ExtraTables.DiaSourceToPartition.table_name(self._prefix),
+            columns=[
+                simple.Column(
+                    id="#diaSourceId", name="diaSourceId", datatype=felis.types.Long, nullable=False
+                ),
+                simple.Column(id="#apdb_part", name="apdb_part", datatype=felis.types.Long, nullable=False),
+                simple.Column(
+                    id="#apdb_time_part", name="apdb_time_part", datatype=felis.types.Int, nullable=False
+                ),
+                simple.Column(id="#insert_id", name="insert_id", datatype=_FelisUUID, nullable=True),
+            ],
+            primary_key=[],
+            indexes=[],
+            constraints=[],
+            annotations={"cassandra:partitioning_columns": ["diaSourceId"]},
+        )
+
+        insert_id_column = simple.Column(
+            id="#insert_id", name="insert_id", datatype=_FelisUUID, nullable=False
+        )
+
+        if not self._use_insert_id:
+            return extra_tables
+
+        # Table containing insert IDs, this one is not partitioned, but
+        # partition key must be defined.
+        extra_tables[ExtraTables.DiaInsertId] = simple.Table(
+            id="#" + ExtraTables.DiaInsertId.value,
+            name=ExtraTables.DiaInsertId.table_name(self._prefix),
+            columns=[
+                simple.Column(id="#partition", name="partition", datatype=felis.types.Int, nullable=False),
+                insert_id_column,
+                simple.Column(
+                    id="#insert_time", name="insert_time", datatype=felis.types.Timestamp, nullable=False
+                ),
+            ],
+            primary_key=[insert_id_column],
+            indexes=[],
+            constraints=[],
+            annotations={"cassandra:partitioning_columns": ["partition"]},
+        )
+
+        for insert_id_table_enum, apdb_table_enum in ExtraTables.insert_id_tables().items():
+
+            apdb_table_def = self.tableSchemas[apdb_table_enum]
+
+            extra_tables[insert_id_table_enum] = simple.Table(
+                id="#" + insert_id_table_enum.value,
+                name=insert_id_table_enum.table_name(self._prefix),
+                columns=[insert_id_column] + apdb_table_def.columns,
+                primary_key=apdb_table_def.primary_key[:],
+                indexes=[],
+                constraints=[],
+                annotations={
+                    "cassandra:partitioning_columns": ["insert_id"],
+                    "cassandra:apdb_column_names": [column.name for column in apdb_table_def.columns]
+                },
+            )
+
+        return extra_tables
+
+    @property
+    def has_insert_id(self) -> bool:
+        """Whether insert ID tables are to be used (`bool`)."""
+        if self._has_insert_id is None:
+            self._has_insert_id = self._use_insert_id and self._check_insert_id()
+        return self._has_insert_id
+
+    def _check_insert_id(self) -> bool:
+        """Check whether database has tables for tracking insert IDs."""
+        table_name = ExtraTables.DiaInsertId.table_name(self._prefix)
+        query = "SELECT count(*) FROM system_schema.tables WHERE keyspace_name = %s and table_name = %s"
+        result = self._session.execute(query, (self._keyspace, table_name))
+        row = result.one()
+        return bool(row[0])
+
+    def tableName(self, table_name: ApdbTables | ExtraTables) -> str:
+        """Return Cassandra table name for APDB table."""
         return table_name.table_name(self._prefix)
 
-    def getColumnMap(self, table_name: Union[ApdbTables, ExtraTables]) -> Mapping[str, simple.Column]:
+    def getColumnMap(self, table_name: ApdbTables | ExtraTables) -> Mapping[str, simple.Column]:
         """Returns mapping of column names to Column definitions.
 
         Parameters
@@ -198,14 +300,27 @@ class ApdbCassandraSchema(ApdbSchema):
         column_map : `dict`
             Mapping of column names to `ColumnDef` instances.
         """
-        if isinstance(table_name, ApdbTables):
-            table_schema = self.tableSchemas[table_name]
-        else:
-            table_schema = self._extra_tables[table_name]
+        table_schema = self._table_schema(table_name)
         cmap = {column.name: column for column in table_schema.columns}
         return cmap
 
-    def partitionColumns(self, table_name: Union[ApdbTables, ExtraTables]) -> List[str]:
+    def apdbColumnNames(self, table_name: ApdbTables | ExtraTables) -> List[str]:
+        """Return a list of columns names for a table as defined in APDB schema.
+
+        Parameters
+        ----------
+        table_name : `ApdbTables` or `ExtraTables`
+            Enum for a table in APDB schema.
+
+        Returns
+        -------
+        columns : `list` of `str`
+            Names of regular columns in the table.
+        """
+        table_schema = self._table_schema(table_name)
+        return table_schema.annotations["cassandra:apdb_column_names"]
+
+    def partitionColumns(self, table_name: ApdbTables | ExtraTables) -> List[str]:
         """Return a list of columns used for table partitioning.
 
         Parameters
@@ -216,15 +331,12 @@ class ApdbCassandraSchema(ApdbSchema):
         Returns
         -------
         columns : `list` of `str`
-            Names of columns for used for partitioning.
+            Names of columns used for partitioning.
         """
-        if isinstance(table_name, ApdbTables):
-            table_schema = self.tableSchemas[table_name]
-        else:
-            table_schema = self._extra_tables[table_name]
-        return table_schema.annotations.get("cassandra:paritioning_columns", [])
+        table_schema = self._table_schema(table_name)
+        return table_schema.annotations.get("cassandra:partitioning_columns", [])
 
-    def clusteringColumns(self, table_name: Union[ApdbTables, ExtraTables]) -> List[str]:
+    def clusteringColumns(self, table_name: ApdbTables | ExtraTables) -> List[str]:
         """Return a list of columns used for clustering.
 
         Parameters
@@ -237,10 +349,7 @@ class ApdbCassandraSchema(ApdbSchema):
         columns : `list` of `str`
             Names of columns for used for clustering.
         """
-        if isinstance(table_name, ApdbTables):
-            table_schema = self.tableSchemas[table_name]
-        else:
-            table_schema = self._extra_tables[table_name]
+        table_schema = self._table_schema(table_name)
         return [column.name for column in table_schema.primary_key]
 
     def makeSchema(self, drop: bool = False, part_range: Optional[Tuple[int, int]] = None) -> None:
@@ -256,20 +365,19 @@ class ApdbCassandraSchema(ApdbSchema):
             DiaForcedSource tables. If `None` then per-partition tables are
             not created.
         """
-        for table in self.tableSchemas:
+        for table in self._apdb_tables:
             self._makeTableSchema(table, drop, part_range)
         for extra_table in self._extra_tables:
             self._makeTableSchema(extra_table, drop, part_range)
+        # Reset cached information.
+        self._has_insert_id = None
 
     def _makeTableSchema(
         self,
-        table: Union[ApdbTables, ExtraTables],
+        table: ApdbTables | ExtraTables,
         drop: bool = False,
-        part_range: Optional[Tuple[int, int]] = None
+        part_range: Optional[Tuple[int, int]] = None,
     ) -> None:
-        if table in self._ignore_tables:
-            _LOG.debug("Skipping schema for table %s", table)
-            return
         _LOG.debug("Making table %s", table)
 
         fullTable = table.table_name(self._prefix)
@@ -281,9 +389,7 @@ class ApdbCassandraSchema(ApdbSchema):
                 table_list = [f"{fullTable}_{part}" for part in partitions]
 
         if drop:
-            queries = [
-                f'DROP TABLE IF EXISTS "{self._keyspace}"."{table_name}"' for table_name in table_list
-            ]
+            queries = [f'DROP TABLE IF EXISTS "{self._keyspace}"."{table_name}"' for table_name in table_list]
             futures = [self._session.execute_async(query, timeout=None) for query in queries]
             for future in futures:
                 _LOG.debug("wait for query: %s", future.query)
@@ -303,7 +409,7 @@ class ApdbCassandraSchema(ApdbSchema):
             future.result()
             _LOG.debug("query finished: %s", future.query)
 
-    def _tableColumns(self, table_name: Union[ApdbTables, ExtraTables]) -> List[str]:
+    def _tableColumns(self, table_name: ApdbTables | ExtraTables) -> List[str]:
         """Return set of columns in a table
 
         Parameters
@@ -316,13 +422,10 @@ class ApdbCassandraSchema(ApdbSchema):
         column_defs : `list`
             List of strings in the format "column_name type".
         """
-        if isinstance(table_name, ApdbTables):
-            table_schema = self.tableSchemas[table_name]
-        else:
-            table_schema = self._extra_tables[table_name]
+        table_schema = self._table_schema(table_name)
 
         # must have partition columns and clustering columns
-        part_columns = table_schema.annotations.get("cassandra:paritioning_columns", [])
+        part_columns = table_schema.annotations.get("cassandra:partitioning_columns", [])
         clust_columns = [column.name for column in table_schema.primary_key]
         _LOG.debug("part_columns: %s", part_columns)
         _LOG.debug("clust_columns: %s", clust_columns)
@@ -346,3 +449,11 @@ class ApdbCassandraSchema(ApdbSchema):
         column_defs.append(f"PRIMARY KEY ({pkey})")
 
         return column_defs
+
+    def _table_schema(self, table: ApdbTables | ExtraTables) -> simple.Table:
+        """Return schema definition for a table."""
+        if isinstance(table, ApdbTables):
+            table_schema = self._apdb_tables[table]
+        else:
+            table_schema = self._extra_tables[table]
+        return table_schema

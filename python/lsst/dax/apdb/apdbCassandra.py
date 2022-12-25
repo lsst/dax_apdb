@@ -24,7 +24,8 @@ from __future__ import annotations
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
 import logging
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union, cast
+import uuid
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union, cast
 
 import numpy as np
 import pandas
@@ -47,7 +48,7 @@ from lsst import sphgeom
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.utils.iteration import chunk_iterable
 
-from .apdb import Apdb, ApdbConfig, ApdbTableData
+from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
 from .apdbSchema import ApdbTables
 from .cassandra_utils import (
@@ -173,11 +174,20 @@ if CASSANDRA_IMPORTED:
 
         Only used for docker-based setup, not viable long-term solution.
         """
+
         def __init__(self, public_ips: List[str], private_ips: List[str]):
             self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
 
         def translate(self, private_ip: str) -> str:
             return self._map.get(private_ip, private_ip)
+
+
+def _quote_column(name: str) -> str:
+    """Quote column name"""
+    if name.islower():
+        return name
+    else:
+        return f'"{name}"'
 
 
 class ApdbCassandra(Apdb):
@@ -231,7 +241,8 @@ class ApdbCassandra(Apdb):
                                            schema_file=self.config.schema_file,
                                            schema_name=self.config.schema_name,
                                            prefix=self.config.prefix,
-                                           time_partition_tables=self.config.time_partition_tables)
+                                           time_partition_tables=self.config.time_partition_tables,
+                                           use_insert_id=self.config.use_insert_id)
         self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
         # Cache for prepared statements
@@ -264,8 +275,12 @@ class ApdbCassandra(Apdb):
         sp_where = self._spatial_where(region)
         _LOG.debug("getDiaObjects: #partitions: %s", len(sp_where))
 
+        # We need to exclude extra partitioning columns from result.
+        column_names = self._schema.apdbColumnNames(ApdbTables.DiaObjectLast)
+        what = ",".join(_quote_column(column) for column in column_names)
+
         table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
-        query = f'SELECT * from "{self._keyspace}"."{table_name}"'
+        query = f'SELECT {what} from "{self._keyspace}"."{table_name}"'
         statements: List[Tuple] = []
         for where, params in sp_where:
             full_query = f"{query} WHERE {where}"
@@ -314,53 +329,60 @@ class ApdbCassandra(Apdb):
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
-    def getDiaObjectsHistory(self,
-                             start_time: dafBase.DateTime,
-                             end_time: dafBase.DateTime,
-                             region: Optional[sphgeom.Region] = None) -> ApdbTableData:
+    def getInsertIds(self) -> list[ApdbInsertId] | None:
         # docstring is inherited from a base class
+        if not self._schema.has_insert_id:
+            return None
 
-        sp_where = self._spatial_where(region, use_ranges=True)
-        tables, temporal_where = self._temporal_where(ApdbTables.DiaObject, start_time, end_time, True)
+        # everything goes into a single partition
+        partition = 0
 
-        # Build all queries
-        statements: List[Tuple] = []
-        for table in tables:
-            prefix = f'SELECT * from "{self._keyspace}"."{table}"'
-            statements += list(self._combine_where(prefix, sp_where, temporal_where, "ALLOW FILTERING"))
+        table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+        query = f'SELECT insert_time, insert_id FROM "{self._keyspace}"."{table_name}" WHERE partition = ?'
 
-        # Run all selects in parallel
-        with Timer("DiaObject history", self.config.timer):
-            table_data = cast(
-                ApdbCassandraTableData,
-                select_concurrent(
-                    self._session, statements, "read_raw_multi", self.config.read_concurrency
-                )
-            )
+        result = self._session.execute(
+            self._prep_statement(query),
+            (partition,),
+            timeout=self.config.read_timeout,
+            execution_profile="read_tuples",
+        )
+        # order by insert_time
+        rows = sorted(result)
+        return [ApdbInsertId(row[1]) for row in rows]
 
-        # precise filtering on validityStart
-        validity_start = start_time.toPython()
-        validity_end = end_time.toPython()
-
-        idx = table_data.column_names().index("validityStart")
-        rows = [row for row in table_data.rows() if row[idx] >= validity_start and row[idx] < validity_end]
-
-        _LOG.debug("found %d DiaObjects", len(rows))
-        return ApdbCassandraTableData(table_data.column_names(), rows)
-
-    def getDiaSourcesHistory(self,
-                             start_time: dafBase.DateTime,
-                             end_time: dafBase.DateTime,
-                             region: Optional[sphgeom.Region] = None) -> ApdbTableData:
+    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
         # docstring is inherited from a base class
-        return self._getSourcesHistory(ApdbTables.DiaSource, start_time, end_time, region)
+        if not self._schema.has_insert_id:
+            raise ValueError("APDB is not configured for history storage")
 
-    def getDiaForcedSourcesHistory(self,
-                                   start_time: dafBase.DateTime,
-                                   end_time: dafBase.DateTime,
-                                   region: Optional[sphgeom.Region] = None) -> ApdbTableData:
+        insert_ids = [id.id for id in ids]
+        params = ",".join("?" * len(insert_ids))
+
+        # everything goes into a single partition
+        partition = 0
+
+        table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+        query = (
+            f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE partition = ? and insert_id IN ({params})'
+        )
+
+        self._session.execute(
+            self._prep_statement(query),
+            [partition] + insert_ids,
+            timeout=self.config.write_timeout,
+        )
+
+    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._getSourcesHistory(ApdbTables.DiaForcedSource, start_time, end_time, region)
+        return self._get_history(ExtraTables.DiaObjectInsertId, ids)
+
+    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        return self._get_history(ExtraTables.DiaSourceInsertId, ids)
+
+    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        return self._get_history(ExtraTables.DiaForcedSourceInsertId, ids)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -382,19 +404,24 @@ class ApdbCassandra(Apdb):
               forced_sources: Optional[pandas.DataFrame] = None) -> None:
         # docstring is inherited from a base class
 
+        insert_id: ApdbInsertId | None = None
+        if self._schema.has_insert_id:
+            insert_id = ApdbInsertId.new_insert_id()
+            self._storeInsertId(insert_id, visit_time)
+
         # fill region partition column for DiaObjects
         objects = self._add_obj_part(objects)
-        self._storeDiaObjects(objects, visit_time)
+        self._storeDiaObjects(objects, visit_time, insert_id)
 
         if sources is not None:
             # copy apdb_part column from DiaObjects to DiaSources
             sources = self._add_src_part(sources, objects)
-            self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time)
-            self._storeDiaSourcesPartitions(sources, visit_time)
+            self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time, insert_id)
+            self._storeDiaSourcesPartitions(sources, visit_time, insert_id)
 
         if forced_sources is not None:
             forced_sources = self._add_fsrc_part(forced_sources, objects)
-            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, visit_time)
+            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, visit_time, insert_id)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
@@ -413,27 +440,31 @@ class ApdbCassandra(Apdb):
         for ids in chunk_iterable(idMap.keys(), 1_000):
             ids_str = ",".join(str(item) for item in ids)
             selects.append((
-                (f'SELECT "diaSourceId", "apdb_part", "apdb_time_part" FROM "{self._keyspace}"."{table_name}"'
-                 f' WHERE "diaSourceId" IN ({ids_str})'),
+                ('SELECT "diaSourceId", "apdb_part", "apdb_time_part", "insert_id" '
+                 f'FROM "{self._keyspace}"."{table_name}" WHERE "diaSourceId" IN ({ids_str})'),
                 {}
             ))
 
         # No need for DataFrame here, read data as tuples.
         result = cast(
-            List[Tuple[int, int, int]],
+            List[Tuple[int, int, int, uuid.UUID | None]],
             select_concurrent(self._session, selects, "read_tuples", self.config.read_concurrency)
         )
 
         # Make mapping from source ID to its partition.
         id2partitions: Dict[int, Tuple[int, int]] = {}
+        id2insert_id: Dict[int, ApdbInsertId] = {}
         for row in result:
-            id2partitions[row[0]] = row[1:]
+            id2partitions[row[0]] = row[1:3]
+            if row[3] is not None:
+                id2insert_id[row[0]] = ApdbInsertId(row[3])
 
         # make sure we know partitions for each ID
         if set(id2partitions) != set(idMap):
             missing = ",".join(str(item) for item in set(idMap) - set(id2partitions))
             raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
 
+        # Reassign in standard tables
         queries = cassandra.query.BatchStatement()
         table_name = self._schema.tableName(ApdbTables.DiaSource)
         for diaSourceId, ssObjectId in idMap.items():
@@ -454,6 +485,27 @@ class ApdbCassandra(Apdb):
                 )
                 values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
             queries.add(self._prep_statement(query), values)
+
+        # Reassign in history tables, only if history is enabled
+        if id2insert_id:
+            # Filter out insert ids that have been deleted already. There is a
+            # potential race with concurrent removal of insert IDs, but it
+            # should be handled by WHERE in UPDATE.
+            known_ids = set()
+            if insert_ids := self.getInsertIds():
+                known_ids = set(insert_ids)
+            id2insert_id = {key: value for key, value in id2insert_id.items() if value in known_ids}
+            if id2insert_id:
+                table_name = self._schema.tableName(ExtraTables.DiaSourceInsertId)
+                for diaSourceId, ssObjectId in idMap.items():
+                    if insert_id := id2insert_id.get(diaSourceId):
+                        query = (
+                            f'UPDATE "{self._keyspace}"."{table_name}" '
+                            ' SET "ssObjectId" = ?, "diaObjectId" = NULL '
+                            'WHERE "insert_id" = ? AND "diaSourceId" = ?'
+                        )
+                        values = (ssObjectId, insert_id.id, diaSourceId)
+                        queries.add(self._prep_statement(query), values)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
         with Timer(table_name + ' update', self.config.timer):
@@ -489,6 +541,12 @@ class ApdbCassandra(Apdb):
             row_factory=pandas_dataframe_factory,
             load_balancing_policy=loadBalancePolicy,
         )
+        read_raw_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
+            request_timeout=config.read_timeout,
+            row_factory=raw_data_factory,
+            load_balancing_policy=loadBalancePolicy,
+        )
         # Profile to use with select_concurrent to return pandas data frame
         read_pandas_multi_profile = ExecutionProfile(
             consistency_level=getattr(cassandra.ConsistencyLevel, config.read_consistency),
@@ -516,6 +574,7 @@ class ApdbCassandra(Apdb):
         return {
             "read_tuples": read_tuples_profile,
             "read_pandas": read_pandas_profile,
+            "read_raw": read_raw_profile,
             "read_pandas_multi": read_pandas_multi_profile,
             "read_raw_multi": read_raw_multi_profile,
             "write": write_profile,
@@ -557,10 +616,14 @@ class ApdbCassandra(Apdb):
         sp_where = self._spatial_where(region)
         tables, temporal_where = self._temporal_where(table_name, mjd_start, mjd_end)
 
+        # We need to exclude extra partitioning columns from result.
+        column_names = self._schema.apdbColumnNames(table_name)
+        what = ",".join(_quote_column(column) for column in column_names)
+
         # Build all queries
         statements: List[Tuple] = []
         for table in tables:
-            prefix = f'SELECT * from "{self._keyspace}"."{table}"'
+            prefix = f'SELECT {what} from "{self._keyspace}"."{table}"'
             statements += list(self._combine_where(prefix, sp_where, temporal_where))
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
@@ -582,62 +645,50 @@ class ApdbCassandra(Apdb):
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
 
-    def _getSourcesHistory(
-        self,
-        table: ApdbTables,
-        start_time: dafBase.DateTime,
-        end_time: dafBase.DateTime,
-        region: Optional[sphgeom.Region] = None,
-    ) -> ApdbTableData:
-        """Returns catalog of DiaSource instances given set of DiaObject IDs.
+    def _get_history(self, table: ExtraTables, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+        """Return records from a particular table given set of insert IDs."""
+        if not self._schema.has_insert_id:
+            raise ValueError("APDB is not configured for history retrieval")
 
-        Parameters
-        ----------
-        table : `ApdbTables`
-            Name of the table.
-        start_time : `dafBase.DateTime`
-            Starting time for DiaSource history search. DiaSource record is
-            selected when its ``midPointTai`` falls into an interval between
-            ``start_time`` (inclusive) and ``end_time`` (exclusive).
-        end_time : `dafBase.DateTime`
-            Upper limit on time for DiaSource history search.
-        region : `lsst.sphgeom.Region`
-            Spherical region.
+        insert_ids = [id.id for id in ids]
+        params = ",".join("?" * len(insert_ids))
 
-        Returns
-        -------
-        catalog : `ApdbTableData`
-            Catalog containing DiaSource or DiaForcedSource records.
-        """
-        sp_where = self._spatial_where(region, use_ranges=False)
-        tables, temporal_where = self._temporal_where(table, start_time, end_time, True)
+        table_name = self._schema.tableName(table)
+        # I know that history table schema has only regular APDB columns plus
+        # an insert_id column, and this is exactly what we need to return from
+        # this method, so selecting a star is fine here.
+        query = f'SELECT * FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
+        statement = self._prep_statement(query)
 
-        # Build all queries
-        statements: List[Tuple] = []
-        for table_name in tables:
-            prefix = f'SELECT * from "{self._keyspace}"."{table_name}"'
-            statements += list(self._combine_where(prefix, sp_where, temporal_where, "ALLOW FILTERING"))
-        _LOG.debug("getDiaObjectsHistory: #queries: %s", len(statements))
+        with Timer("DiaObject history", self.config.timer):
+            result = self._session.execute(statement, insert_ids, execution_profile="read_raw")
+            table_data = cast(ApdbCassandraTableData, result._current_rows)
+        return table_data
 
-        # Run all selects in parallel
-        with Timer(f"{table.name} history", self.config.timer):
-            table_data = cast(
-                ApdbCassandraTableData,
-                select_concurrent(
-                    self._session, statements, "read_raw_multi", self.config.read_concurrency
-                )
-            )
+    def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime) -> None:
 
-        # precise filtering on validityStart
-        period_start = start_time.get(system=dafBase.DateTime.MJD)
-        period_end = end_time.get(system=dafBase.DateTime.MJD)
-        idx = table_data.column_names().index("midPointTai")
-        rows = [row for row in table_data.rows() if row[idx] >= period_start and row[idx] < period_end]
+        # Cassandra timestamp uses milliseconds since epoch
+        timestamp = visit_time.nsecs() // 1_000_000
 
-        _LOG.debug("found %d %ss", len(rows), table.name)
-        return ApdbCassandraTableData(table_data.column_names(), rows)
+        # everything goes into a single partition
+        partition = 0
 
-    def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
+        table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+        query = (
+            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time) '
+            "VALUES (?, ?, ?)"
+        )
+
+        self._session.execute(
+            self._prep_statement(query),
+            (partition, insert_id.id, timestamp),
+            timeout=self.config.write_timeout,
+            execution_profile="write",
+        )
+
+    def _storeDiaObjects(
+        self, objs: pandas.DataFrame, visit_time: dafBase.DateTime, insert_id: ApdbInsertId | None
+    ) -> None:
         """Store catalog of DiaObjects from current visit.
 
         Parameters
@@ -659,8 +710,17 @@ class ApdbCassandra(Apdb):
 
         self._storeObjectsPandas(objs, ApdbTables.DiaObject, extra_columns=extra_columns, time_part=time_part)
 
-    def _storeDiaSources(self, table_name: ApdbTables, sources: pandas.DataFrame,
-                         visit_time: dafBase.DateTime) -> None:
+        if insert_id is not None:
+            extra_columns = dict(insert_id=insert_id.id, validityStart=visit_time_dt)
+            self._storeObjectsPandas(objs, ExtraTables.DiaObjectInsertId, extra_columns=extra_columns)
+
+    def _storeDiaSources(
+        self,
+        table_name: ApdbTables,
+        sources: pandas.DataFrame,
+        visit_time: dafBase.DateTime,
+        insert_id: ApdbInsertId | None,
+    ) -> None:
         """Store catalog of DIASources or DIAForcedSources from current visit.
 
         Parameters
@@ -671,14 +731,24 @@ class ApdbCassandra(Apdb):
             Time of the current visit.
         """
         time_part: Optional[int] = self._time_partition(visit_time)
-        extra_columns = {}
+        extra_columns: dict[str, Any] = {}
         if not self.config.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
         self._storeObjectsPandas(sources, table_name, extra_columns=extra_columns, time_part=time_part)
 
-    def _storeDiaSourcesPartitions(self, sources: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
+        if insert_id is not None:
+            extra_columns = dict(insert_id=insert_id.id)
+            if table_name is ApdbTables.DiaSource:
+                extra_table = ExtraTables.DiaSourceInsertId
+            else:
+                extra_table = ExtraTables.DiaForcedSourceInsertId
+            self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns)
+
+    def _storeDiaSourcesPartitions(
+        self, sources: pandas.DataFrame, visit_time: dafBase.DateTime, insert_id: ApdbInsertId | None
+    ) -> None:
         """Store mapping of diaSourceId to its partitioning values.
 
         Parameters
@@ -691,42 +761,52 @@ class ApdbCassandra(Apdb):
         id_map = cast(pandas.DataFrame, sources[["diaSourceId", "apdb_part"]])
         extra_columns = {
             "apdb_time_part": self._time_partition(visit_time),
+            "insert_id": insert_id.id if insert_id is not None else None,
         }
 
         self._storeObjectsPandas(
             id_map, ExtraTables.DiaSourceToPartition, extra_columns=extra_columns, time_part=None
         )
 
-    def _storeObjectsPandas(self, objects: pandas.DataFrame, table_name: Union[ApdbTables, ExtraTables],
+    def _storeObjectsPandas(self, records: pandas.DataFrame, table_name: Union[ApdbTables, ExtraTables],
                             extra_columns: Optional[Mapping] = None,
                             time_part: Optional[int] = None) -> None:
         """Generic store method.
 
-        Takes catalog of records and stores a bunch of objects in a table.
+        Takes Pandas catalog and stores a bunch of records in a table.
 
         Parameters
         ----------
-        objects : `pandas.DataFrame`
+        records : `pandas.DataFrame`
             Catalog containing object records
         table_name : `ApdbTables`
             Name of the table as defined in APDB schema.
         extra_columns : `dict`, optional
-            Mapping (column_name, column_value) which gives column values to add
-            to every row, only if column is missing in catalog records.
+            Mapping (column_name, column_value) which gives fixed values for
+            columns in each row, overrides values in ``records`` if matching
+            columns exist there.
         time_part : `int`, optional
             If not `None` then insert into a per-partition table.
+
+        Notes
+        -----
+        If Pandas catalog contains additional columns not defined in table
+        schema they are ignored. Catalog does not have to contain all columns
+        defined in a table, but partition and clustering keys must be present
+        in a catalog or ``extra_columns``.
         """
         # use extra columns if specified
         if extra_columns is None:
             extra_columns = {}
         extra_fields = list(extra_columns.keys())
 
+        # Fields that will come from dataframe.
         df_fields = [
-            column for column in objects.columns if column not in extra_fields
+            column for column in records.columns if column not in extra_fields
         ]
 
         column_map = self._schema.getColumnMap(table_name)
-        # list of columns (as in cat schema)
+        # list of columns (as in felis schema)
         fields = [column_map[field].name for field in df_fields if field in column_map]
         fields += extra_fields
 
@@ -750,7 +830,7 @@ class ApdbCassandra(Apdb):
             query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
             statement = self._prep_statement(query)
             queries = cassandra.query.BatchStatement()
-            for rec in objects.itertuples(index=False):
+            for rec in records.itertuples(index=False):
                 values = []
                 for field in df_fields:
                     if field not in column_map:
@@ -769,7 +849,7 @@ class ApdbCassandra(Apdb):
                     values.append(literal(value))
                 queries.add(statement, values)
 
-        _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), objects.shape[0])
+        _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
         with Timer(table_name.name + ' insert', self.config.timer):
             self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
 

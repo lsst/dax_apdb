@@ -27,8 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping
-from contextlib import contextmanager
+from collections.abc import Iterable, Mapping, MutableMapping
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 import lsst.daf.base as dafBase
@@ -42,9 +41,9 @@ from lsst.utils.iteration import chunk_iterable
 from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
 
-from .apdb import Apdb, ApdbConfig, ApdbTableData
+from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
 from .apdbSchema import ApdbTables
-from .apdbSqlSchema import ApdbSqlSchema
+from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from .timer import Timer
 
 _LOG = logging.getLogger(__name__)
@@ -75,17 +74,6 @@ def _make_midPointTai_start(visit_time: dafBase.DateTime, months: int) -> float:
     # TODO: `system` must be consistent with the code in ap_association
     # (see DM-31996)
     return visit_time.get(system=dafBase.DateTime.MJD) - months * 30
-
-
-@contextmanager
-def _ansi_session(engine: sqlalchemy.engine.Engine) -> Iterator[sqlalchemy.engine.Connection]:
-    """Returns a connection, makes sure that ANSI mode is set for MySQL
-    """
-    with engine.begin() as conn:
-        if engine.name == 'mysql':
-            conn.execute(sql.text("SET SESSION SQL_MODE = 'ANSI'"))
-        yield conn
-    return
 
 
 class ApdbSqlConfig(ApdbConfig):
@@ -154,7 +142,7 @@ class ApdbSqlConfig(ApdbConfig):
     object_last_replace = Field[bool](
         doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
         default=True,
-        deprecated="This field is not used and will be removed on 2022-21-31."
+        deprecated="This field is not used and will be removed on 2022-12-31."
     )
     prefix = Field[str](
         doc="Prefix to add to table names and index names",
@@ -253,9 +241,11 @@ class ApdbSql(Apdb):
                                      schema_name=self.config.schema_name,
                                      prefix=self.config.prefix,
                                      namespace=self.config.namespace,
-                                     htm_index_column=self.config.htm_index_column)
+                                     htm_index_column=self.config.htm_index_column,
+                                     use_insert_id=config.use_insert_id)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
+        self.use_insert_id = self._schema.has_insert_id
 
     def tableRowCount(self) -> Dict[str, int]:
         """Returns dictionary with the table names and row counts.
@@ -269,12 +259,12 @@ class ApdbSql(Apdb):
             Dict where key is a table name and value is a row count.
         """
         res = {}
-        tables: List[sqlalchemy.schema.Table] = [
-            self._schema.objects, self._schema.sources, self._schema.forcedSources]
+        tables = [ApdbTables.DiaObject, ApdbTables.DiaSource, ApdbTables.DiaForcedSource]
         if self.config.dia_object_index == 'last_object_table':
-            tables.append(self._schema.objects_last)
+            tables.append(ApdbTables.DiaObjectLast)
         for table in tables:
-            stmt = sql.select([func.count()]).select_from(table)
+            sa_table = self._schema.get_table(table)
+            stmt = sql.select([func.count()]).select_from(sa_table)
             count = self._engine.scalar(stmt)
             res[table.name] = count
 
@@ -292,16 +282,16 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
 
         # decide what columns we need
-        table: sqlalchemy.schema.Table
         if self.config.dia_object_index == 'last_object_table':
-            table = self._schema.objects_last
+            table_enum = ApdbTables.DiaObjectLast
         else:
-            table = self._schema.objects
+            table_enum = ApdbTables.DiaObject
+        table = self._schema.get_table(table_enum)
         if not self.config.dia_object_columns:
-            query = table.select()
+            columns = self._schema.get_apdb_columns(table_enum)
         else:
             columns = [table.c[col] for col in self.config.dia_object_columns]
-            query = sql.select(columns)
+        query = sql.select(*columns)
 
         # build selection
         query = query.where(self._filterRegion(table, region))
@@ -311,10 +301,6 @@ class ApdbSql(Apdb):
             query = query.where(table.c.validityEnd == None)  # noqa: E711
 
         # _LOG.debug("query: %s", query)
-
-        if self.config.explain:
-            # run the same query with explain
-            self._explain(query, self._engine)
 
         # execute select
         with Timer('DiaObject select', self.config.timer):
@@ -390,99 +376,78 @@ class ApdbSql(Apdb):
         midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_forced_sources_months)
         _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
 
-        table: sqlalchemy.schema.Table = self._schema.forcedSources
         with Timer('DiaForcedSource select', self.config.timer):
-            sources = self._getSourcesByIDs(table, list(object_ids), midPointTai_start)
+            sources = self._getSourcesByIDs(ApdbTables.DiaForcedSource, list(object_ids), midPointTai_start)
 
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
-    def getDiaObjectsHistory(self,
-                             start_time: dafBase.DateTime,
-                             end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> ApdbTableData:
+    def getInsertIds(self) -> list[ApdbInsertId] | None:
         # docstring is inherited from a base class
+        if not self._schema.has_insert_id:
+            return None
 
-        table = self._schema.objects
-        query = table.select()
+        table = self._schema.get_table(ExtraTables.DiaInsertId)
+        assert table is not None, "has_insert_id=True means it must be defined"
+        query = sql.select(table.columns["insert_id"]).order_by(table.columns["insert_time"])
+        with Timer('DiaObject insert id select', self.config.timer):
+            with self._engine.connect() as conn:
+                result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
+                return [ApdbInsertId(row) for row in result.scalars()]
 
-        # build selection
-        time_filter = sql.expression.and_(
-            table.columns["validityStart"] >= start_time.toPython(),
-            table.columns["validityStart"] < end_time.toPython()
-        )
+    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
+        # docstring is inherited from a base class
+        if not self._schema.has_insert_id:
+            raise ValueError("APDB is not configured for history storage")
 
-        if region:
-            where = sql.expression.and_(self._filterRegion(table, region), time_filter)
-            query = query.where(where)
-        else:
-            query = query.where(time_filter)
+        table = self._schema.get_table(ExtraTables.DiaInsertId)
+
+        insert_ids = [id.id for id in ids]
+        where_clause = table.columns["insert_id"].in_(insert_ids)
+        stmt = table.delete().where(where_clause)
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        return self._get_history(ids, ApdbTables.DiaObject, ExtraTables.DiaObjectInsertId)
+
+    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        return self._get_history(ids, ApdbTables.DiaSource, ExtraTables.DiaSourceInsertId)
+
+    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        return self._get_history(ids, ApdbTables.DiaForcedSource, ExtraTables.DiaForcedSourceInsertId)
+
+    def _get_history(
+        self, ids: Iterable[ApdbInsertId], table_enum: ApdbTables, history_table_enum: ExtraTables,
+    ) -> ApdbTableData:
+        """Common implementation of the history methods."""
+        if not self._schema.has_insert_id:
+            raise ValueError("APDB is not configured for history retrieval")
+
+        table = self._schema.get_table(table_enum)
+        history_table = self._schema.get_table(history_table_enum)
+
+        join = table.join(history_table)
+        insert_ids = [id.id for id in ids]
+        history_id_column = history_table.columns["insert_id"]
+        apdb_columns = self._schema.get_apdb_columns(table_enum)
+        where_clause = history_id_column.in_(insert_ids)
+        query = sql.select(history_id_column, *apdb_columns).select_from(join).where(where_clause)
 
         # execute select
-        with Timer('DiaObject history select', self.config.timer):
-            with self._engine.begin() as conn:
-                result = conn.execute(query)
-        return ApdbSqlTableData(result)
-
-    def getDiaSourcesHistory(self,
-                             start_time: dafBase.DateTime,
-                             end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> ApdbTableData:
-        # docstring is inherited from a base class
-
-        table = self._schema.sources
-        query = table.select()
-
-        # build selection
-        time_filter = sql.expression.and_(
-            table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD),
-            table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
-        )
-
-        if region:
-            where = sql.expression.and_(self._filterRegion(table, region), time_filter)
-            query = query.where(where)
-        else:
-            query = query.where(time_filter)
-
-        # execute select
-        with Timer('DiaSource history select', self.config.timer):
-            with self._engine.begin() as conn:
-                result = conn.execute(query)
-        return ApdbSqlTableData(result)
-
-    def getDiaForcedSourcesHistory(self,
-                                   start_time: dafBase.DateTime,
-                                   end_time: dafBase.DateTime,
-                                   region: Optional[Region] = None) -> ApdbTableData:
-        # docstring is inherited from a base class
-
-        table = self._schema.forcedSources
-        query = table.select()
-
-        # build selection
-        time_filter = sql.expression.and_(
-            table.columns["midPointTai"] >= start_time.get(system=dafBase.DateTime.MJD),
-            table.columns["midPointTai"] < end_time.get(system=dafBase.DateTime.MJD)
-        )
-        # Forced sources have no pixel index, so no region filtering
-        query = query.where(time_filter)
-
-        # execute select
-        with Timer('DiaForcedSource history select', self.config.timer):
-            with self._engine.begin() as conn:
-                result = conn.execute(query)
+        with Timer(f"{table.name} history select", self.config.timer):
+            connection = self._engine.connect(close_with_result=True)
+            result = connection.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
         return ApdbSqlTableData(result)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
-        table = self._schema.ssObjects
-        query = table.select()
-
-        if self.config.explain:
-            # run the same query with explain
-            self._explain(query, self._engine)
+        columns = self._schema.get_apdb_columns(ApdbTables.SSObject)
+        query = sql.select(*columns)
 
         # execute select
         with Timer('DiaObject select', self.config.timer):
@@ -498,23 +463,28 @@ class ApdbSql(Apdb):
               forced_sources: Optional[pandas.DataFrame] = None) -> None:
         # docstring is inherited from a base class
 
+        insert_id: ApdbInsertId | None = None
+        if self._schema.has_insert_id:
+            insert_id = ApdbInsertId.new_insert_id()
+            self._storeInsertId(insert_id, visit_time)
+
         # fill pixelId column for DiaObjects
         objects = self._add_obj_htm_index(objects)
-        self._storeDiaObjects(objects, visit_time)
+        self._storeDiaObjects(objects, visit_time, insert_id)
 
         if sources is not None:
             # copy pixelId column from DiaObjects to DiaSources
             sources = self._add_src_htm_index(sources, objects)
-            self._storeDiaSources(sources)
+            self._storeDiaSources(sources, insert_id)
 
         if forced_sources is not None:
-            self._storeDiaForcedSources(forced_sources)
+            self._storeDiaForcedSources(forced_sources, insert_id)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
 
         idColumn = "ssObjectId"
-        table = self._schema.ssObjects
+        table = self._schema.get_table(ApdbTables.SSObject)
 
         # everything to be done in single transaction
         with self._engine.begin() as conn:
@@ -546,7 +516,7 @@ class ApdbSql(Apdb):
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
 
-        table = self._schema.sources
+        table = self._schema.get_table(ApdbTables.DiaSource)
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
 
         with self._engine.begin() as conn:
@@ -580,7 +550,7 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
 
         # Retrieve the DiaObject table.
-        table: sqlalchemy.schema.Table = self._schema.objects
+        table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaObject)
 
         # Construct the sql statement.
         stmt = sql.select([func.count()]).select_from(table).where(table.c.nDiaSources == 1)
@@ -592,8 +562,7 @@ class ApdbSql(Apdb):
 
         return count
 
-    def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime
-                               ) -> pandas.DataFrame:
+    def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime) -> pandas.DataFrame:
         """Returns catalog of DiaSource instances from given region.
 
         Parameters
@@ -613,8 +582,9 @@ class ApdbSql(Apdb):
         midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_sources_months)
         _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
 
-        table: sqlalchemy.schema.Table = self._schema.sources
-        query = table.select()
+        table = self._schema.get_table(ApdbTables.DiaSource)
+        columns = self._schema.get_apdb_columns(ApdbTables.DiaSource)
+        query = sql.select(*columns)
 
         # build selection
         time_filter = table.columns["midPointTai"] > midPointTai_start
@@ -623,13 +593,12 @@ class ApdbSql(Apdb):
 
         # execute select
         with Timer('DiaSource select', self.config.timer):
-            with _ansi_session(self._engine) as conn:
+            with self._engine.begin() as conn:
                 sources = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def _getDiaSourcesByIDs(self, object_ids: List[int], visit_time: dafBase.DateTime
-                            ) -> pandas.DataFrame:
+    def _getDiaSourcesByIDs(self, object_ids: List[int], visit_time: dafBase.DateTime) -> pandas.DataFrame:
         """Returns catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
@@ -649,17 +618,15 @@ class ApdbSql(Apdb):
         midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_sources_months)
         _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
 
-        table: sqlalchemy.schema.Table = self._schema.sources
         with Timer('DiaSource select', self.config.timer):
-            sources = self._getSourcesByIDs(table, object_ids, midPointTai_start)
+            sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, midPointTai_start)
 
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def _getSourcesByIDs(self, table: sqlalchemy.schema.Table,
-                         object_ids: List[int],
-                         midPointTai_start: float
-                         ) -> pandas.DataFrame:
+    def _getSourcesByIDs(
+        self, table_enum: ApdbTables, object_ids: List[int], midPointTai_start: float
+    ) -> pandas.DataFrame:
         """Returns catalog of DiaSource or DiaForcedSource instances given set
         of DiaObject IDs.
 
@@ -679,40 +646,56 @@ class ApdbSql(Apdb):
             ``read_sources_months`` configuration parameter is set to 0 or
             when ``object_ids`` is empty.
         """
+        table = self._schema.get_table(table_enum)
+        columns = self._schema.get_apdb_columns(table_enum)
+
         sources: Optional[pandas.DataFrame] = None
-        with _ansi_session(self._engine) as conn:
-            if len(object_ids) <= 0:
-                _LOG.debug("ID list is empty, just fetch empty result")
-                query = table.select().where(False)
+        if len(object_ids) <= 0:
+            _LOG.debug("ID list is empty, just fetch empty result")
+            query = sql.select(*columns).where(False)
+            with self._engine.begin() as conn:
                 sources = pandas.read_sql_query(query, conn)
-            else:
-                data_frames: list[pandas.DataFrame] = []
-                for ids in chunk_iterable(sorted(object_ids), 1000):
-                    query = table.select()
+        else:
+            data_frames: list[pandas.DataFrame] = []
+            for ids in chunk_iterable(sorted(object_ids), 1000):
+                query = sql.select(*columns)
 
-                    # Some types like np.int64 can cause issues with
-                    # sqlalchemy, convert them to int.
-                    int_ids = [int(oid) for oid in ids]
+                # Some types like np.int64 can cause issues with
+                # sqlalchemy, convert them to int.
+                int_ids = [int(oid) for oid in ids]
 
-                    # select by object id
-                    query = query.where(
-                        sql.expression.and_(
-                            table.columns["diaObjectId"].in_(int_ids),
-                            table.columns["midPointTai"] > midPointTai_start,
-                        )
+                # select by object id
+                query = query.where(
+                    sql.expression.and_(
+                        table.columns["diaObjectId"].in_(int_ids),
+                        table.columns["midPointTai"] > midPointTai_start,
                     )
+                )
 
-                    # execute select
+                # execute select
+                with self._engine.begin() as conn:
                     data_frames.append(pandas.read_sql_query(query, conn))
 
-                if len(data_frames) == 1:
-                    sources = data_frames[0]
-                else:
-                    sources = pandas.concat(data_frames)
+            if len(data_frames) == 1:
+                sources = data_frames[0]
+            else:
+                sources = pandas.concat(data_frames)
         assert sources is not None, "Catalog cannot be None"
         return sources
 
-    def _storeDiaObjects(self, objs: pandas.DataFrame, visit_time: dafBase.DateTime) -> None:
+    def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime) -> None:
+
+        dt = visit_time.toPython()
+
+        table = self._schema.get_table(ExtraTables.DiaInsertId)
+
+        stmt = table.insert().values(insert_id=insert_id.id, insert_time=dt)
+        with self._engine.begin() as conn:
+            conn.execute(stmt)
+
+    def _storeDiaObjects(
+        self, objs: pandas.DataFrame, visit_time: dafBase.DateTime, insert_id: ApdbInsertId | None
+    ) -> None:
         """Store catalog of DiaObjects from current visit.
 
         Parameters
@@ -721,6 +704,8 @@ class ApdbSql(Apdb):
             Catalog with DiaObject records.
         visit_time : `lsst.daf.base.DateTime`
             Time of the visit.
+        insert_id : `ApdbInsertId`
+            Insert identifier.
         """
 
         # Some types like np.int64 can cause issues with sqlalchemy, convert
@@ -728,83 +713,105 @@ class ApdbSql(Apdb):
         ids = sorted(int(oid) for oid in objs['diaObjectId'])
         _LOG.debug("first object ID: %d", ids[0])
 
-        # NOTE: workaround for sqlite, need this here to avoid
-        # "database is locked" error.
-        table: sqlalchemy.schema.Table = self._schema.objects
-
         # TODO: Need to verify that we are using correct scale here for
         # DATETIME representation (see DM-31996).
         dt = visit_time.toPython()
 
         # everything to be done in single transaction
-        with _ansi_session(self._engine) as conn:
+        if self.config.dia_object_index == 'last_object_table':
 
-            if self.config.dia_object_index == 'last_object_table':
+            # insert and replace all records in LAST table, mysql and postgres have
+            # non-standard features
+            table = self._schema.get_table(ApdbTables.DiaObjectLast)
 
-                # insert and replace all records in LAST table, mysql and postgres have
-                # non-standard features
-                table = self._schema.objects_last
+            # Drop the previous objects (pandas cannot upsert).
+            query = table.delete().where(
+                table.columns["diaObjectId"].in_(ids)
+            )
 
-                # Drop the previous objects (pandas cannot upsert).
-                query = table.delete().where(
-                    table.columns["diaObjectId"].in_(ids)
-                )
-
-                if self.config.explain:
-                    # run the same query with explain
-                    self._explain(query, conn)
-
-                with Timer(table.name + ' delete', self.config.timer):
+            with Timer(table.name + ' delete', self.config.timer):
+                with self._engine.begin() as conn:
                     res = conn.execute(query)
-                _LOG.debug("deleted %s objects", res.rowcount)
+            _LOG.debug("deleted %s objects", res.rowcount)
 
-                # DiaObjectLast is a subset of DiaObject, strip missing columns
-                last_column_names = [column.name for column in table.columns]
-                last_objs = objs[last_column_names]
+            # DiaObjectLast is a subset of DiaObject, strip missing columns
+            last_column_names = [column.name for column in table.columns]
+            last_objs = objs[last_column_names]
+            last_objs = _coerce_uint64(last_objs)
 
-                extra_columns: Dict[str, Any] = dict(lastNonForcedSource=dt)
-                with Timer("DiaObjectLast insert", self.config.timer):
-                    last_objs = _coerce_uint64(last_objs)
-                    for col, data in extra_columns.items():
-                        last_objs[col] = data
-                    last_objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+            if "lastNonForcedSource" in last_objs.columns:
+                # lastNonForcedSource is defined NOT NULL, fill it with visit time
+                # just in case.
+                last_objs["lastNonForcedSource"].fillna(dt, inplace=True)
             else:
+                extra_column = pandas.Series([dt] * len(objs), name="lastNonForcedSource")
+                last_objs.set_index(extra_column.index, inplace=True)
+                last_objs = pandas.concat([last_objs, extra_column], axis="columns")
 
-                # truncate existing validity intervals
-                table = self._schema.objects
+            with Timer("DiaObjectLast insert", self.config.timer):
+                with self._engine.begin() as conn:
+                    last_objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+        else:
 
-                query = table.update().values(validityEnd=dt).where(
-                    sql.expression.and_(
-                        table.columns["diaObjectId"].in_(ids),
-                        table.columns["validityEnd"].is_(None),
-                    )
+            # truncate existing validity intervals
+            table = self._schema.get_table(ApdbTables.DiaObject)
+
+            query = table.update().values(validityEnd=dt).where(
+                sql.expression.and_(
+                    table.columns["diaObjectId"].in_(ids),
+                    table.columns["validityEnd"].is_(None),
                 )
+            )
 
-                # _LOG.debug("query: %s", query)
+            # _LOG.debug("query: %s", query)
 
-                if self.config.explain:
-                    # run the same query with explain
-                    self._explain(query, conn)
-
-                with Timer(table.name + ' truncate', self.config.timer):
+            with Timer(table.name + ' truncate', self.config.timer):
+                with self._engine.begin() as conn:
                     res = conn.execute(query)
-                _LOG.debug("truncated %s intervals", res.rowcount)
+            _LOG.debug("truncated %s intervals", res.rowcount)
 
-            # insert new versions
-            table = self._schema.objects
-            extra_columns = dict(lastNonForcedSource=dt, validityStart=dt,
-                                 validityEnd=None)
-            with Timer("DiaObject insert", self.config.timer):
-                objs = _coerce_uint64(objs)
-                if extra_columns:
-                    columns: List[pandas.Series] = []
-                    for col, data in extra_columns.items():
-                        columns.append(pandas.Series([data]*len(objs), name=col))
-                    objs.set_index(columns[0].index, inplace=True)
-                    objs = pandas.concat([objs] + columns, axis="columns")
+        objs = _coerce_uint64(objs)
+
+        # Fill additional columns
+        extra_columns: List[pandas.Series] = []
+        if "validityStart" in objs.columns:
+            objs["validityStart"] = dt
+        else:
+            extra_columns.append(pandas.Series([dt] * len(objs), name="validityStart"))
+        if "validityEnd" in objs.columns:
+            objs["validityEnd"] = None
+        else:
+            extra_columns.append(pandas.Series([None] * len(objs), name="validityEnd"))
+        if "lastNonForcedSource" in objs.columns:
+            # lastNonForcedSource is defined NOT NULL, fill it with visit time
+            # just in case.
+            objs["lastNonForcedSource"].fillna(dt, inplace=True)
+        else:
+            extra_columns.append(pandas.Series([dt] * len(objs), name="lastNonForcedSource"))
+        if extra_columns:
+            objs.set_index(extra_columns[0].index, inplace=True)
+            objs = pandas.concat([objs] + extra_columns, axis="columns")
+
+        # Insert history data
+        table = self._schema.get_table(ApdbTables.DiaObject)
+        history_data: list[dict] = []
+        history_stmt: Any = None
+        if insert_id is not None:
+            pk_names = [column.name for column in table.primary_key]
+            history_data = objs[pk_names].to_dict("records")
+            for row in history_data:
+                row["insert_id"] = insert_id.id
+            history_table = self._schema.get_table(ExtraTables.DiaObjectInsertId)
+            history_stmt = history_table.insert()
+
+        # insert new versions
+        with Timer("DiaObject insert", self.config.timer):
+            with self._engine.begin() as conn:
                 objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                if history_stmt is not None:
+                    conn.execute(history_stmt, *history_data)
 
-    def _storeDiaSources(self, sources: pandas.DataFrame) -> None:
+    def _storeDiaSources(self, sources: pandas.DataFrame, insert_id: ApdbInsertId | None) -> None:
         """Store catalog of DiaSources from current visit.
 
         Parameters
@@ -812,15 +819,28 @@ class ApdbSql(Apdb):
         sources : `pandas.DataFrame`
             Catalog containing DiaSource records
         """
+        table = self._schema.get_table(ApdbTables.DiaSource)
+
+        # Insert history data
+        history: list[dict] = []
+        history_stmt: Any = None
+        if insert_id is not None:
+            pk_names = [column.name for column in table.primary_key]
+            history = sources[pk_names].to_dict("records")
+            for row in history:
+                row["insert_id"] = insert_id.id
+            history_table = self._schema.get_table(ExtraTables.DiaSourceInsertId)
+            history_stmt = history_table.insert()
+
         # everything to be done in single transaction
-        with _ansi_session(self._engine) as conn:
-
-            with Timer("DiaSource insert", self.config.timer):
-                sources = _coerce_uint64(sources)
-                table = self._schema.sources
+        with Timer("DiaSource insert", self.config.timer):
+            sources = _coerce_uint64(sources)
+            with self._engine.begin() as conn:
                 sources.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                if history_stmt is not None:
+                    conn.execute(history_stmt, *history)
 
-    def _storeDiaForcedSources(self, sources: pandas.DataFrame) -> None:
+    def _storeDiaForcedSources(self, sources: pandas.DataFrame, insert_id: ApdbInsertId | None) -> None:
         """Store a set of DiaForcedSources from current visit.
 
         Parameters
@@ -828,33 +848,26 @@ class ApdbSql(Apdb):
         sources : `pandas.DataFrame`
             Catalog containing DiaForcedSource records
         """
+        table = self._schema.get_table(ApdbTables.DiaForcedSource)
+
+        # Insert history data
+        history: list[dict] = []
+        history_stmt: Any = None
+        if insert_id is not None:
+            pk_names = [column.name for column in table.primary_key]
+            history = sources[pk_names].to_dict("records")
+            for row in history:
+                row["insert_id"] = insert_id.id
+            history_table = self._schema.get_table(ExtraTables.DiaForcedSourceInsertId)
+            history_stmt = history_table.insert()
 
         # everything to be done in single transaction
-        with _ansi_session(self._engine) as conn:
-
-            with Timer("DiaForcedSource insert", self.config.timer):
-                sources = _coerce_uint64(sources)
-                table = self._schema.forcedSources
+        with Timer("DiaForcedSource insert", self.config.timer):
+            sources = _coerce_uint64(sources)
+            with self._engine.begin() as conn:
                 sources.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
-
-    def _explain(self, query: str, conn: sqlalchemy.engine.Connection) -> None:
-        """Run the query with explain
-        """
-
-        _LOG.info("explain for query: %s...", query[:64])
-
-        if conn.engine.name == 'mysql':
-            query = "EXPLAIN EXTENDED " + query
-        else:
-            query = "EXPLAIN " + query
-
-        res = conn.execute(sql.text(query))
-        if res.returns_rows:
-            _LOG.info("explain: %s", res.keys())
-            for row in res:
-                _LOG.info("explain: %s", row)
-        else:
-            _LOG.info("EXPLAIN returned nothing")
+                if history_stmt is not None:
+                    conn.execute(history_stmt, *history)
 
     def _htm_indices(self, region: Region) -> List[Tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.

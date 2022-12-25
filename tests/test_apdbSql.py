@@ -24,11 +24,13 @@
 
 import gc
 import os
+import shutil
+import tempfile
 import unittest
-from typing import Any, Dict
+from typing import Any
 
 from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
-from lsst.dax.apdb.tests import ApdbTest
+from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 import lsst.utils.tests
 
 try:
@@ -36,31 +38,10 @@ try:
 except ImportError:
     testing = None
 
-
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
-class ApdbSqlTest(ApdbTest):
-    """Base class for unit tests for SQL backends."""
-
-    def n_columns(self, table: ApdbTables) -> int:
-        """Return number of columns for a specified table."""
-
-        # Some tables add pixelId column to standard schema
-        if table is ApdbTables.DiaObject:
-            return self.n_obj_columns + 1
-        elif table is ApdbTables.DiaObjectLast:
-            return self.n_obj_last_columns + 1
-        elif table is ApdbTables.DiaSource:
-            return self.n_src_columns + 1
-        elif table is ApdbTables.DiaForcedSource:
-            return self.n_fsrc_columns
-        elif table is ApdbTables.SSObject:
-            return self.n_ssobj_columns
-        return -1
-
-
-class ApdbSQLiteTestCase(unittest.TestCase, ApdbSqlTest):
+class ApdbSQLiteTestCase(unittest.TestCase, ApdbTest):
     """A test case for ApdbSql class using SQLite backend."""
 
     fsrc_requires_id_list = True
@@ -71,7 +52,8 @@ class ApdbSQLiteTestCase(unittest.TestCase, ApdbSqlTest):
         kw = {
             "db_url": "sqlite://",
             "schema_file": TEST_SCHEMA,
-            "dia_object_index": self.dia_object_index
+            "dia_object_index": self.dia_object_index,
+            "use_insert_id": self.use_insert_id,
         }
         kw.update(kwargs)
         return ApdbSqlConfig(**kw)
@@ -88,8 +70,6 @@ class ApdbSQLiteTestCaseLastObject(ApdbSQLiteTestCase):
 
     dia_object_index = "last_object_table"
 
-    extra_object_columns: Dict[str, Any] = {"parallax": 0.}
-
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
         return ApdbTables.DiaObjectLast
@@ -103,13 +83,21 @@ class ApdbSQLiteTestCasePixIdIovIndex(ApdbSQLiteTestCase):
     dia_object_index = "pix_id_iov"
 
 
+class ApdbSQLiteTestCaseInsertIds(ApdbSQLiteTestCase):
+    """A test case for ApdbSql class using SQLite backend with use_insert_id.
+    """
+
+    use_insert_id = True
+
+
 @unittest.skipUnless(testing is not None, "testing.postgresql module not found")
-class ApdbPostgresTestCase(unittest.TestCase, ApdbSqlTest):
+class ApdbPostgresTestCase(unittest.TestCase, ApdbTest):
     """A test case for ApdbSql class using Postgres backend."""
 
     fsrc_requires_id_list = True
     dia_object_index = "last_object_table"
     postgresql: Any
+    use_insert_id = True
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -156,6 +144,26 @@ class ApdbPostgresNamespaceTestCase(ApdbPostgresTestCase):
     def make_config(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         return super().make_config(namespace=self.namespace, **kwargs)
+
+
+class ApdbSchemaUpdateSQLiteTestCase(unittest.TestCase, ApdbSchemaUpdateTest):
+    """A test case for schema updates using SQLite backend."""
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.mkdtemp()
+        self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tempdir, ignore_errors=True)
+
+    def make_config(self, **kwargs: Any) -> ApdbConfig:
+        """Make config class instance used in all tests."""
+        kw = {
+            "db_url": self.db_url,
+            "schema_file": TEST_SCHEMA,
+        }
+        kw.update(kwargs)
+        return ApdbSqlConfig(**kw)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
