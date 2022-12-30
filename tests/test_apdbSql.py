@@ -29,9 +29,9 @@ import tempfile
 import unittest
 from typing import Any
 
+import lsst.utils.tests
 from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
-import lsst.utils.tests
 
 try:
     import testing.postgresql
@@ -84,8 +84,7 @@ class ApdbSQLiteTestCasePixIdIovIndex(ApdbSQLiteTestCase):
 
 
 class ApdbSQLiteTestCaseInsertIds(ApdbSQLiteTestCase):
-    """A test case for ApdbSql class using SQLite backend with use_insert_id.
-    """
+    """A test case for ApdbSql class using SQLite backend with use_insert_id."""
 
     use_insert_id = True
 
@@ -124,7 +123,7 @@ class ApdbPostgresTestCase(unittest.TestCase, ApdbTest):
         kw = {
             "db_url": self.server.url(),
             "schema_file": TEST_SCHEMA,
-            "dia_object_index": self.dia_object_index
+            "dia_object_index": self.dia_object_index,
         }
         kw.update(kwargs)
         return ApdbSqlConfig(**kw)

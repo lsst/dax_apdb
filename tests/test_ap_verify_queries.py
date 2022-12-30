@@ -19,15 +19,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import numpy
 import os
-import pandas
 import unittest.mock
-import lsst.utils.tests
 from collections.abc import Mapping
 from typing import Any
 
 import lsst.geom as geom
+import lsst.utils.tests
+import numpy
+import pandas
 from lsst.daf.base import DateTime
 from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
 
@@ -65,11 +65,10 @@ def createTestObjects(
 
 
 class TestApVerifyQueries(unittest.TestCase):
-
     def setUp(self) -> None:
         self.apdbCfg = ApdbSqlConfig()
         # Create DB in memory.
-        self.apdbCfg.db_url = 'sqlite://'
+        self.apdbCfg.db_url = "sqlite://"
         self.apdbCfg.schema_file = TEST_SCHEMA
         self.apdbCfg.dia_object_index = "baseline"
         self.apdbCfg.dia_object_columns = []
@@ -85,7 +84,7 @@ class TestApVerifyQueries(unittest.TestCase):
 
     def test_count_objects(self) -> None:
         n_created = 5
-        objects = createTestObjects(n_created, "diaObjectId", {'nDiaSources': int})
+        objects = createTestObjects(n_created, "diaObjectId", {"nDiaSources": int})
         objects.at[n_created - 1, "nDiaSources"] = 2
 
         # nsecs must be an integer, not 1.4e18

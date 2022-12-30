@@ -40,10 +40,10 @@ import unittest
 import uuid
 from typing import TYPE_CHECKING, Any, Optional
 
+import lsst.utils.tests
 from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbTables
 from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
-import lsst.utils.tests
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
@@ -55,8 +55,7 @@ class ApdbCassandraMixin:
 
     @classmethod
     def setUpClass(cls) -> None:
-        """Prepare config for server connection.
-        """
+        """Prepare config for server connection."""
         cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
         if not cluster_host:
             raise unittest.SkipTest("DAX_APDB_TEST_CASSANDRA_CLUSTER is not set")
@@ -64,8 +63,7 @@ class ApdbCassandraMixin:
             raise unittest.SkipTest("cassandra_driver cannot be imported")
 
     def setUp(self) -> None:
-        """Prepare config for server connection.
-        """
+        """Prepare config for server connection."""
         self.cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
         self.keyspace = ""
 

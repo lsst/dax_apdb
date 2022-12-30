@@ -28,8 +28,8 @@ from typing import Any
 
 import lsst.utils.tests
 import sqlalchemy
-from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from lsst.dax.apdb.apdbSchema import ApdbTables
+from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from sqlalchemy import create_engine
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")

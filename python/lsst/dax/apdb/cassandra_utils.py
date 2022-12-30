@@ -30,12 +30,13 @@ __all__ = [
 ]
 
 import logging
-import numpy as np
-import pandas
 from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
+
+import numpy as np
+import pandas
 
 # If cassandra-driver is not there the module can still be imported
 # but things will not work.
@@ -48,7 +49,6 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 from .apdb import ApdbTableData
-
 
 _LOG = logging.getLogger(__name__)
 
@@ -66,9 +66,7 @@ if CASSANDRA_IMPORTED:
         wrapper can be dropped.
         """
 
-        def __init__(
-            self, session: Session, execution_profile: Any = EXEC_PROFILE_DEFAULT
-        ):
+        def __init__(self, session: Session, execution_profile: Any = EXEC_PROFILE_DEFAULT):
             self._session = session
             self._execution_profile = execution_profile
 
@@ -81,9 +79,7 @@ if CASSANDRA_IMPORTED:
             # explicit parameter can override our settings
             if execution_profile is EXEC_PROFILE_DEFAULT:
                 execution_profile = self._execution_profile
-            return self._session.execute_async(
-                *args, execution_profile=execution_profile, **kwargs
-            )
+            return self._session.execute_async(*args, execution_profile=execution_profile, **kwargs)
 
         def submit(self, *args: Any, **kwargs: Any) -> Any:
             # internal method
@@ -108,9 +104,7 @@ class ApdbCassandraTableData(ApdbTableData):
     def append(self, other: ApdbCassandraTableData) -> None:
         """Extend rows in this table with rows in other table"""
         if self._columns != other._columns:
-            raise ValueError(
-                f"Different columns returned by queries: {self._columns} and {other._columns}"
-            )
+            raise ValueError(f"Different columns returned by queries: {self._columns} and {other._columns}")
         self._rows.extend(other._rows)
 
     def __iter__(self) -> Iterator[tuple]:

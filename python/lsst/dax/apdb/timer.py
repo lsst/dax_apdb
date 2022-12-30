@@ -32,7 +32,6 @@ import resource
 import time
 from typing import Any, Optional, Type
 
-
 _LOG = logging.getLogger(__name__)
 
 
@@ -50,6 +49,7 @@ class Timer:
             engine.execute('SELECT ...')
 
     """
+
     def __init__(self, name: str = "", doPrint: bool = True):
         """
         Parameters
@@ -62,12 +62,12 @@ class Timer:
         self._name = name
         self._print = doPrint
 
-        self._startReal = -1.
-        self._startUser = -1.
-        self._startSys = -1.
-        self._sumReal = 0.
-        self._sumUser = 0.
-        self._sumSys = 0.
+        self._startReal = -1.0
+        self._startUser = -1.0
+        self._startSys = -1.0
+        self._sumReal = 0.0
+        self._sumUser = 0.0
+        self._sumSys = 0.0
 
     def start(self) -> Timer:
         """
@@ -88,9 +88,9 @@ class Timer:
             ru = resource.getrusage(resource.RUSAGE_SELF)
             self._sumUser += ru.ru_utime - self._startUser
             self._sumSys += ru.ru_stime - self._startSys
-            self._startReal = -1.
-            self._startUser = -1.
-            self._startSys = -1.
+            self._startReal = -1.0
+            self._startUser = -1.0
+            self._startSys = -1.0
         return self
 
     def dump(self) -> Timer:

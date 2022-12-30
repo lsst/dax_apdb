@@ -262,7 +262,7 @@ class ApdbCassandraSchema(ApdbSchema):
                 constraints=[],
                 annotations={
                     "cassandra:partitioning_columns": ["insert_id"],
-                    "cassandra:apdb_column_names": [column.name for column in apdb_table_def.columns]
+                    "cassandra:apdb_column_names": [column.name for column in apdb_table_def.columns],
                 },
             )
 

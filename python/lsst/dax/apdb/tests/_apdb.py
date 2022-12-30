@@ -181,8 +181,7 @@ class ApdbTest(ABC):
         """
 
         # set read_sources_months to 0 so that Forced/Sources are None
-        config = self.make_config(read_sources_months=0,
-                                  read_forced_sources_months=0)
+        config = self.make_config(read_sources_months=0, read_forced_sources_months=0)
         apdb = make_apdb(config)
         apdb.makeSchema()
 
@@ -403,12 +402,16 @@ class ApdbTest(ABC):
         self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
 
         with self.assertRaisesRegex(ValueError, r"do not exist.*\D1000"):
-            apdb.reassignDiaSources({1000: 1, 7: 3, })
+            apdb.reassignDiaSources(
+                {
+                    1000: 1,
+                    7: 3,
+                }
+            )
         self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
 
     def test_midPointTai_src(self) -> None:
-        """Test for time filtering of DiaSources.
-        """
+        """Test for time filtering of DiaSources."""
         config = self.make_config()
         apdb = make_apdb(config)
         apdb.makeSchema()
@@ -446,8 +449,7 @@ class ApdbTest(ABC):
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
     def test_midPointTai_fsrc(self) -> None:
-        """Test for time filtering of DiaForcedSources.
-        """
+        """Test for time filtering of DiaForcedSources."""
         config = self.make_config()
         apdb = make_apdb(config)
         apdb.makeSchema()

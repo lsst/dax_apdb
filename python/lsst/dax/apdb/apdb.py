@@ -40,37 +40,28 @@ from .apdbSchema import ApdbTables
 
 
 def _data_file_name(basename: str) -> str:
-    """Return path name of a data file in sdm_schemas package.
-    """
+    """Return path name of a data file in sdm_schemas package."""
     return os.path.join("${SDM_SCHEMAS_DIR}", "yml", basename)
 
 
 class ApdbConfig(Config):
-    """Part of Apdb configuration common to all implementations.
-    """
-    read_sources_months = Field[int](
-        doc="Number of months of history to read from DiaSource",
-        default=12
-    )
+    """Part of Apdb configuration common to all implementations."""
+
+    read_sources_months = Field[int](doc="Number of months of history to read from DiaSource", default=12)
     read_forced_sources_months = Field[int](
-        doc="Number of months of history to read from DiaForcedSource",
-        default=12
+        doc="Number of months of history to read from DiaForcedSource", default=12
     )
     schema_file = Field[str](
-        doc="Location of (YAML) configuration file with standard schema",
-        default=_data_file_name("apdb.yaml")
+        doc="Location of (YAML) configuration file with standard schema", default=_data_file_name("apdb.yaml")
     )
-    schema_name = Field[str](
-        doc="Name of the schema in YAML configuration file.",
-        default="ApdbSchema"
-    )
+    schema_name = Field[str](doc="Name of the schema in YAML configuration file.", default="ApdbSchema")
     extra_schema_file = Field[str](
         doc="Location of (YAML) configuration file with extra schema, "
-            "definitions in this file are merged with the definitions in "
-            "'schema_file', extending or replacing parts of the schema.",
+        "definitions in this file are merged with the definitions in "
+        "'schema_file', extending or replacing parts of the schema.",
         default=None,
         optional=True,
-        deprecated="This field is deprecated, its value is not used."
+        deprecated="This field is deprecated, its value is not used.",
     )
     use_insert_id = Field[bool](
         doc=(
@@ -126,8 +117,7 @@ class ApdbInsertId:
 
 
 class Apdb(ABC):
-    """Abstract interface for APDB.
-    """
+    """Abstract interface for APDB."""
 
     ConfigClass = ApdbConfig
 
@@ -182,9 +172,9 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaSources(self, region: Region,
-                      object_ids: Optional[Iterable[int]],
-                      visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+    def getDiaSources(
+        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
+    ) -> Optional[pandas.DataFrame]:
         """Return catalog of DiaSource instances from a given region.
 
         Parameters
@@ -218,9 +208,9 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaForcedSources(self, region: Region,
-                            object_ids: Optional[Iterable[int]],
-                            visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+    def getDiaForcedSources(
+        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
+    ) -> Optional[pandas.DataFrame]:
         """Return catalog of DiaForcedSource instances from a given region.
 
         Parameters
@@ -371,11 +361,13 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def store(self,
-              visit_time: dafBase.DateTime,
-              objects: pandas.DataFrame,
-              sources: Optional[pandas.DataFrame] = None,
-              forced_sources: Optional[pandas.DataFrame] = None) -> None:
+    def store(
+        self,
+        visit_time: dafBase.DateTime,
+        objects: pandas.DataFrame,
+        sources: Optional[pandas.DataFrame] = None,
+        forced_sources: Optional[pandas.DataFrame] = None,
+    ) -> None:
         """Store all three types of catalogs in the database.
 
         Parameters

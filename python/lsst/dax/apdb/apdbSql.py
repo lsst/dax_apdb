@@ -50,8 +50,7 @@ _LOG = logging.getLogger(__name__)
 
 
 def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
-    """Change type of the uint64 columns to int64, return copy of data frame.
-    """
+    """Change type of the uint64 columns to int64, return copy of data frame."""
     names = [c[0] for c in df.dtypes.items() if c[1] == np.uint64]
     return df.astype({name: np.int64 for name in names})
 
@@ -77,77 +76,61 @@ def _make_midPointTai_start(visit_time: dafBase.DateTime, months: int) -> float:
 
 
 class ApdbSqlConfig(ApdbConfig):
-    """APDB configuration class for SQL implementation (ApdbSql).
-    """
-    db_url = Field[str](
-        doc="SQLAlchemy database connection URI"
-    )
+    """APDB configuration class for SQL implementation (ApdbSql)."""
+
+    db_url = Field[str](doc="SQLAlchemy database connection URI")
     isolation_level = ChoiceField[str](
-        doc="Transaction isolation level, if unset then backend-default value "
+        doc=(
+            "Transaction isolation level, if unset then backend-default value "
             "is used, except for SQLite backend where we use READ_UNCOMMITTED. "
-            "Some backends may not support every allowed value.",
+            "Some backends may not support every allowed value."
+        ),
         allowed={
             "READ_COMMITTED": "Read committed",
             "READ_UNCOMMITTED": "Read uncommitted",
             "REPEATABLE_READ": "Repeatable read",
-            "SERIALIZABLE": "Serializable"
+            "SERIALIZABLE": "Serializable",
         },
         default=None,
-        optional=True
+        optional=True,
     )
     connection_pool = Field[bool](
-        doc="If False then disable SQLAlchemy connection pool. "
-            "Do not use connection pool when forking.",
-        default=True
+        doc="If False then disable SQLAlchemy connection pool. Do not use connection pool when forking.",
+        default=True,
     )
     connection_timeout = Field[float](
-        doc="Maximum time to wait time for database lock to be released before "
-            "exiting. Defaults to sqlalchemy defaults if not set.",
+        doc=(
+            "Maximum time to wait time for database lock to be released before exiting. "
+            "Defaults to sqlalchemy defaults if not set."
+        ),
         default=None,
-        optional=True
+        optional=True,
     )
-    sql_echo = Field[bool](
-        doc="If True then pass SQLAlchemy echo option.",
-        default=False
-    )
+    sql_echo = Field[bool](doc="If True then pass SQLAlchemy echo option.", default=False)
     dia_object_index = ChoiceField[str](
         doc="Indexing mode for DiaObject table",
         allowed={
-            'baseline': "Index defined in baseline schema",
-            'pix_id_iov': "(pixelId, objectId, iovStart) PK",
-            'last_object_table': "Separate DiaObjectLast table"
+            "baseline": "Index defined in baseline schema",
+            "pix_id_iov": "(pixelId, objectId, iovStart) PK",
+            "last_object_table": "Separate DiaObjectLast table",
         },
-        default='baseline'
+        default="baseline",
     )
-    htm_level = Field[int](
-        doc="HTM indexing level",
-        default=20
-    )
-    htm_max_ranges = Field[int](
-        doc="Max number of ranges in HTM envelope",
-        default=64
-    )
+    htm_level = Field[int](doc="HTM indexing level", default=20)
+    htm_max_ranges = Field[int](doc="Max number of ranges in HTM envelope", default=64)
     htm_index_column = Field[str](
-        default="pixelId",
-        doc="Name of a HTM index column for DiaObject and DiaSource tables"
+        default="pixelId", doc="Name of a HTM index column for DiaObject and DiaSource tables"
     )
-    ra_dec_columns = ListField[str](
-        default=["ra", "decl"],
-        doc="Names ra/dec columns in DiaObject table"
-    )
+    ra_dec_columns = ListField[str](default=["ra", "decl"], doc="Names ra/dec columns in DiaObject table")
     dia_object_columns = ListField[str](
-        doc="List of columns to read from DiaObject, by default read all columns",
-        default=[]
+        doc="List of columns to read from DiaObject, by default read all columns", default=[]
     )
     object_last_replace = Field[bool](
-        doc="If True (default) then use \"upsert\" for DiaObjectsLast table",
+        doc='If True (default) then use "upsert" for DiaObjectsLast table',
         default=True,
-        deprecated="This field is not used and will be removed on 2022-12-31."
+        deprecated="This field is not used and will be removed on 2022-12-31.",
     )
-    prefix = Field[str](
-        doc="Prefix to add to table names and index names",
-        default=""
-    )
+    prefix = Field[str](doc="Prefix to add to table names and index names", default="")
     namespace = Field[str](
         doc=(
             "Namespace or schema name for all tables in APDB database. "
@@ -156,16 +139,10 @@ class ApdbSqlConfig(ApdbConfig):
             "APDB tables are created."
         ),
         default=None,
-        optional=True
+        optional=True,
     )
-    explain = Field[bool](
-        doc="If True then run EXPLAIN SQL command on each executed query",
-        default=False
-    )
-    timer = Field[bool](
-        doc="If True then print/log timing information",
-        default=False
-    )
+    explain = Field[bool](doc="If True then run EXPLAIN SQL command on each executed query", default=False)
+    timer = Field[bool](doc="If True then print/log timing information", default=False)
 
     def validate(self) -> None:
         super().validate()
@@ -235,14 +212,16 @@ class ApdbSql(Apdb):
         kw.update(connect_args=conn_args)
         self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
 
-        self._schema = ApdbSqlSchema(engine=self._engine,
-                                     dia_object_index=self.config.dia_object_index,
-                                     schema_file=self.config.schema_file,
-                                     schema_name=self.config.schema_name,
-                                     prefix=self.config.prefix,
-                                     namespace=self.config.namespace,
-                                     htm_index_column=self.config.htm_index_column,
-                                     use_insert_id=config.use_insert_id)
+        self._schema = ApdbSqlSchema(
+            engine=self._engine,
+            dia_object_index=self.config.dia_object_index,
+            schema_file=self.config.schema_file,
+            schema_name=self.config.schema_name,
+            prefix=self.config.prefix,
+            namespace=self.config.namespace,
+            htm_index_column=self.config.htm_index_column,
+            use_insert_id=config.use_insert_id,
+        )
 
         self.pixelator = HtmPixelization(self.config.htm_level)
         self.use_insert_id = self._schema.has_insert_id
@@ -260,7 +239,7 @@ class ApdbSql(Apdb):
         """
         res = {}
         tables = [ApdbTables.DiaObject, ApdbTables.DiaSource, ApdbTables.DiaForcedSource]
-        if self.config.dia_object_index == 'last_object_table':
+        if self.config.dia_object_index == "last_object_table":
             tables.append(ApdbTables.DiaObjectLast)
         for table in tables:
             sa_table = self._schema.get_table(table)
@@ -282,7 +261,7 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
 
         # decide what columns we need
-        if self.config.dia_object_index == 'last_object_table':
+        if self.config.dia_object_index == "last_object_table":
             table_enum = ApdbTables.DiaObjectLast
         else:
             table_enum = ApdbTables.DiaObject
@@ -297,21 +276,21 @@ class ApdbSql(Apdb):
         query = query.where(self._filterRegion(table, region))
 
         # select latest version of objects
-        if self.config.dia_object_index != 'last_object_table':
+        if self.config.dia_object_index != "last_object_table":
             query = query.where(table.c.validityEnd == None)  # noqa: E711
 
         # _LOG.debug("query: %s", query)
 
         # execute select
-        with Timer('DiaObject select', self.config.timer):
+        with Timer("DiaObject select", self.config.timer):
             with self._engine.begin() as conn:
                 objects = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
-    def getDiaSources(self, region: Region,
-                      object_ids: Optional[Iterable[int]],
-                      visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+    def getDiaSources(
+        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
+    ) -> Optional[pandas.DataFrame]:
         # docstring is inherited from a base class
         if self.config.read_sources_months == 0:
             _LOG.debug("Skip DiaSources fetching")
@@ -323,9 +302,9 @@ class ApdbSql(Apdb):
         else:
             return self._getDiaSourcesByIDs(list(object_ids), visit_time)
 
-    def getDiaForcedSources(self, region: Region,
-                            object_ids: Optional[Iterable[int]],
-                            visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+    def getDiaForcedSources(
+        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
+    ) -> Optional[pandas.DataFrame]:
         """Return catalog of DiaForcedSource instances from a given region.
 
         Parameters
@@ -376,7 +355,7 @@ class ApdbSql(Apdb):
         midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_forced_sources_months)
         _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
 
-        with Timer('DiaForcedSource select', self.config.timer):
+        with Timer("DiaForcedSource select", self.config.timer):
             sources = self._getSourcesByIDs(ApdbTables.DiaForcedSource, list(object_ids), midPointTai_start)
 
         _LOG.debug("found %s DiaForcedSources", len(sources))
@@ -390,7 +369,7 @@ class ApdbSql(Apdb):
         table = self._schema.get_table(ExtraTables.DiaInsertId)
         assert table is not None, "has_insert_id=True means it must be defined"
         query = sql.select(table.columns["insert_id"]).order_by(table.columns["insert_time"])
-        with Timer('DiaObject insert id select', self.config.timer):
+        with Timer("DiaObject insert id select", self.config.timer):
             with self._engine.connect() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 return [ApdbInsertId(row) for row in result.scalars()]
@@ -421,7 +400,10 @@ class ApdbSql(Apdb):
         return self._get_history(ids, ApdbTables.DiaForcedSource, ExtraTables.DiaForcedSourceInsertId)
 
     def _get_history(
-        self, ids: Iterable[ApdbInsertId], table_enum: ApdbTables, history_table_enum: ExtraTables,
+        self,
+        ids: Iterable[ApdbInsertId],
+        table_enum: ApdbTables,
+        history_table_enum: ExtraTables,
     ) -> ApdbTableData:
         """Common implementation of the history methods."""
         if not self._schema.has_insert_id:
@@ -450,17 +432,19 @@ class ApdbSql(Apdb):
         query = sql.select(*columns)
 
         # execute select
-        with Timer('DiaObject select', self.config.timer):
+        with Timer("DiaObject select", self.config.timer):
             with self._engine.begin() as conn:
                 objects = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s SSObjects", len(objects))
         return objects
 
-    def store(self,
-              visit_time: dafBase.DateTime,
-              objects: pandas.DataFrame,
-              sources: Optional[pandas.DataFrame] = None,
-              forced_sources: Optional[pandas.DataFrame] = None) -> None:
+    def store(
+        self,
+        visit_time: dafBase.DateTime,
+        objects: pandas.DataFrame,
+        sources: Optional[pandas.DataFrame] = None,
+        forced_sources: Optional[pandas.DataFrame] = None,
+    ) -> None:
         # docstring is inherited from a base class
 
         insert_id: ApdbInsertId | None = None
@@ -503,7 +487,7 @@ class ApdbSql(Apdb):
 
             # insert new records
             if len(toInsert) > 0:
-                toInsert.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                toInsert.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
 
             # update existing records
             if len(toUpdate) > 0:
@@ -530,13 +514,13 @@ class ApdbSql(Apdb):
                 if result.rowcount == 0:
                     missing_ids.append(key)
             if missing_ids:
-                missing = ",".join(str(item)for item in missing_ids)
+                missing = ",".join(str(item) for item in missing_ids)
                 raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
 
-        if self._engine.name == 'postgresql':
+        if self._engine.name == "postgresql":
 
             # do VACUUM on all tables
             _LOG.info("Running VACUUM on all tables")
@@ -592,7 +576,7 @@ class ApdbSql(Apdb):
         query = query.where(where)
 
         # execute select
-        with Timer('DiaSource select', self.config.timer):
+        with Timer("DiaSource select", self.config.timer):
             with self._engine.begin() as conn:
                 sources = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaSources", len(sources))
@@ -618,7 +602,7 @@ class ApdbSql(Apdb):
         midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_sources_months)
         _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
 
-        with Timer('DiaSource select', self.config.timer):
+        with Timer("DiaSource select", self.config.timer):
             sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, midPointTai_start)
 
         _LOG.debug("found %s DiaSources", len(sources))
@@ -710,7 +694,7 @@ class ApdbSql(Apdb):
 
         # Some types like np.int64 can cause issues with sqlalchemy, convert
         # them to int.
-        ids = sorted(int(oid) for oid in objs['diaObjectId'])
+        ids = sorted(int(oid) for oid in objs["diaObjectId"])
         _LOG.debug("first object ID: %d", ids[0])
 
         # TODO: Need to verify that we are using correct scale here for
@@ -718,18 +702,16 @@ class ApdbSql(Apdb):
         dt = visit_time.toPython()
 
         # everything to be done in single transaction
-        if self.config.dia_object_index == 'last_object_table':
+        if self.config.dia_object_index == "last_object_table":
 
             # insert and replace all records in LAST table, mysql and postgres have
             # non-standard features
             table = self._schema.get_table(ApdbTables.DiaObjectLast)
 
             # Drop the previous objects (pandas cannot upsert).
-            query = table.delete().where(
-                table.columns["diaObjectId"].in_(ids)
-            )
+            query = table.delete().where(table.columns["diaObjectId"].in_(ids))
 
-            with Timer(table.name + ' delete', self.config.timer):
+            with Timer(table.name + " delete", self.config.timer):
                 with self._engine.begin() as conn:
                     res = conn.execute(query)
             _LOG.debug("deleted %s objects", res.rowcount)
@@ -750,22 +732,26 @@ class ApdbSql(Apdb):
 
             with Timer("DiaObjectLast insert", self.config.timer):
                 with self._engine.begin() as conn:
-                    last_objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                    last_objs.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
         else:
 
             # truncate existing validity intervals
             table = self._schema.get_table(ApdbTables.DiaObject)
 
-            query = table.update().values(validityEnd=dt).where(
-                sql.expression.and_(
-                    table.columns["diaObjectId"].in_(ids),
-                    table.columns["validityEnd"].is_(None),
+            query = (
+                table.update()
+                .values(validityEnd=dt)
+                .where(
+                    sql.expression.and_(
+                        table.columns["diaObjectId"].in_(ids),
+                        table.columns["validityEnd"].is_(None),
+                    )
                 )
             )
 
             # _LOG.debug("query: %s", query)
 
-            with Timer(table.name + ' truncate', self.config.timer):
+            with Timer(table.name + " truncate", self.config.timer):
                 with self._engine.begin() as conn:
                     res = conn.execute(query)
             _LOG.debug("truncated %s intervals", res.rowcount)
@@ -807,7 +793,7 @@ class ApdbSql(Apdb):
         # insert new versions
         with Timer("DiaObject insert", self.config.timer):
             with self._engine.begin() as conn:
-                objs.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                objs.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
                 if history_stmt is not None:
                     conn.execute(history_stmt, *history_data)
 
@@ -836,7 +822,7 @@ class ApdbSql(Apdb):
         with Timer("DiaSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
             with self._engine.begin() as conn:
-                sources.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                sources.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
                 if history_stmt is not None:
                     conn.execute(history_stmt, *history)
 
@@ -865,7 +851,7 @@ class ApdbSql(Apdb):
         with Timer("DiaForcedSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
             with self._engine.begin() as conn:
-                sources.to_sql(table.name, conn, if_exists='append', index=False, schema=table.schema)
+                sources.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
                 if history_stmt is not None:
                     conn.execute(history_stmt, *history)
 
@@ -881,14 +867,13 @@ class ApdbSql(Apdb):
         -------
         Sequence of ranges, range is a tuple (minHtmID, maxHtmID).
         """
-        _LOG.debug('region: %s', region)
+        _LOG.debug("region: %s", region)
         indices = self.pixelator.envelope(region, self.config.htm_max_ranges)
 
         return indices.ranges()
 
     def _filterRegion(self, table: sqlalchemy.schema.Table, region: Region) -> sql.ClauseElement:
-        """Make SQLAlchemy expression for selecting records in a region.
-        """
+        """Make SQLAlchemy expression for selecting records in a region."""
         htm_index_column = table.columns[self.config.htm_index_column]
         exprlist = []
         pixel_ranges = self._htm_indices(region)
@@ -936,8 +921,8 @@ class ApdbSql(Apdb):
         returned.
         """
         pixel_id_map: Dict[int, int] = {
-            diaObjectId: pixelId for diaObjectId, pixelId
-            in zip(objs["diaObjectId"], objs[self.config.htm_index_column])
+            diaObjectId: pixelId
+            for diaObjectId, pixelId in zip(objs["diaObjectId"], objs[self.config.htm_index_column])
         }
         # DiaSources associated with SolarSystemObjects do not have an
         # associated DiaObject hence we skip them and set their htmIndex
