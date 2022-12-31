@@ -125,11 +125,6 @@ class ApdbSqlConfig(ApdbConfig):
     dia_object_columns = ListField[str](
         doc="List of columns to read from DiaObject, by default read all columns", default=[]
     )
-    object_last_replace = Field[bool](
-        doc='If True (default) then use "upsert" for DiaObjectsLast table',
-        default=True,
-        deprecated="This field is not used and will be removed on 2022-12-31.",
-    )
     prefix = Field[str](doc="Prefix to add to table names and index names", default="")
     namespace = Field[str](
         doc=(
@@ -141,7 +136,6 @@ class ApdbSqlConfig(ApdbConfig):
         default=None,
         optional=True,
     )
-    explain = Field[bool](doc="If True then run EXPLAIN SQL command on each executed query", default=False)
     timer = Field[bool](doc="If True then print/log timing information", default=False)
 
     def validate(self) -> None:

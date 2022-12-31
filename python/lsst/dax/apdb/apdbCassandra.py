@@ -92,7 +92,7 @@ class ApdbCassandraConfig(ApdbConfig):
         default=cassandra.ProtocolVersion.V4 if CASSANDRA_IMPORTED else 0,
     )
     dia_object_columns = ListField[str](
-        doc="List of columns to read from DiaObject, by default read all columns", default=[]
+        doc="List of columns to read from DiaObject[Last], by default read all columns", default=[]
     )
     prefix = Field[str](doc="Prefix to add to table names", default="")
     part_pixelization = ChoiceField[str](
