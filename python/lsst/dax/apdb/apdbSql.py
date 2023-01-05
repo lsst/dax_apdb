@@ -441,22 +441,25 @@ class ApdbSql(Apdb):
     ) -> None:
         # docstring is inherited from a base class
 
-        insert_id: ApdbInsertId | None = None
-        if self._schema.has_insert_id:
-            insert_id = ApdbInsertId.new_insert_id()
-            self._storeInsertId(insert_id, visit_time)
+        # We want to run all inserts in one transaction.
+        with self._engine.begin() as connection:
 
-        # fill pixelId column for DiaObjects
-        objects = self._add_obj_htm_index(objects)
-        self._storeDiaObjects(objects, visit_time, insert_id)
+            insert_id: ApdbInsertId | None = None
+            if self._schema.has_insert_id:
+                insert_id = ApdbInsertId.new_insert_id()
+                self._storeInsertId(insert_id, visit_time, connection)
 
-        if sources is not None:
-            # copy pixelId column from DiaObjects to DiaSources
-            sources = self._add_src_htm_index(sources, objects)
-            self._storeDiaSources(sources, insert_id)
+            # fill pixelId column for DiaObjects
+            objects = self._add_obj_htm_index(objects)
+            self._storeDiaObjects(objects, visit_time, insert_id, connection)
 
-        if forced_sources is not None:
-            self._storeDiaForcedSources(forced_sources, insert_id)
+            if sources is not None:
+                # copy pixelId column from DiaObjects to DiaSources
+                sources = self._add_src_htm_index(sources, objects)
+                self._storeDiaSources(sources, insert_id, connection)
+
+            if forced_sources is not None:
+                self._storeDiaForcedSources(forced_sources, insert_id, connection)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
@@ -661,18 +664,23 @@ class ApdbSql(Apdb):
         assert sources is not None, "Catalog cannot be None"
         return sources
 
-    def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime) -> None:
+    def _storeInsertId(
+        self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime, connection: sqlalchemy.engine.Connection
+    ) -> None:
 
         dt = visit_time.toPython()
 
         table = self._schema.get_table(ExtraTables.DiaInsertId)
 
         stmt = table.insert().values(insert_id=insert_id.id, insert_time=dt)
-        with self._engine.begin() as conn:
-            conn.execute(stmt)
+        connection.execute(stmt)
 
     def _storeDiaObjects(
-        self, objs: pandas.DataFrame, visit_time: dafBase.DateTime, insert_id: ApdbInsertId | None
+        self,
+        objs: pandas.DataFrame,
+        visit_time: dafBase.DateTime,
+        insert_id: ApdbInsertId | None,
+        connection: sqlalchemy.engine.Connection,
     ) -> None:
         """Store catalog of DiaObjects from current visit.
 
@@ -706,8 +714,7 @@ class ApdbSql(Apdb):
             query = table.delete().where(table.columns["diaObjectId"].in_(ids))
 
             with Timer(table.name + " delete", self.config.timer):
-                with self._engine.begin() as conn:
-                    res = conn.execute(query)
+                res = connection.execute(query)
             _LOG.debug("deleted %s objects", res.rowcount)
 
             # DiaObjectLast is a subset of DiaObject, strip missing columns
@@ -725,8 +732,7 @@ class ApdbSql(Apdb):
                 last_objs = pandas.concat([last_objs, extra_column], axis="columns")
 
             with Timer("DiaObjectLast insert", self.config.timer):
-                with self._engine.begin() as conn:
-                    last_objs.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
+                last_objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
         else:
 
             # truncate existing validity intervals
@@ -746,8 +752,7 @@ class ApdbSql(Apdb):
             # _LOG.debug("query: %s", query)
 
             with Timer(table.name + " truncate", self.config.timer):
-                with self._engine.begin() as conn:
-                    res = conn.execute(query)
+                res = connection.execute(query)
             _LOG.debug("truncated %s intervals", res.rowcount)
 
         objs = _coerce_uint64(objs)
@@ -786,12 +791,16 @@ class ApdbSql(Apdb):
 
         # insert new versions
         with Timer("DiaObject insert", self.config.timer):
-            with self._engine.begin() as conn:
-                objs.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
-                if history_stmt is not None:
-                    conn.execute(history_stmt, *history_data)
+            objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            if history_stmt is not None:
+                connection.execute(history_stmt, *history_data)
 
-    def _storeDiaSources(self, sources: pandas.DataFrame, insert_id: ApdbInsertId | None) -> None:
+    def _storeDiaSources(
+        self,
+        sources: pandas.DataFrame,
+        insert_id: ApdbInsertId | None,
+        connection: sqlalchemy.engine.Connection,
+    ) -> None:
         """Store catalog of DiaSources from current visit.
 
         Parameters
@@ -815,12 +824,16 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            with self._engine.begin() as conn:
-                sources.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
-                if history_stmt is not None:
-                    conn.execute(history_stmt, *history)
+            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            if history_stmt is not None:
+                connection.execute(history_stmt, *history)
 
-    def _storeDiaForcedSources(self, sources: pandas.DataFrame, insert_id: ApdbInsertId | None) -> None:
+    def _storeDiaForcedSources(
+        self,
+        sources: pandas.DataFrame,
+        insert_id: ApdbInsertId | None,
+        connection: sqlalchemy.engine.Connection,
+    ) -> None:
         """Store a set of DiaForcedSources from current visit.
 
         Parameters
@@ -844,10 +857,9 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaForcedSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            with self._engine.begin() as conn:
-                sources.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
-                if history_stmt is not None:
-                    conn.execute(history_stmt, *history)
+            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            if history_stmt is not None:
+                connection.execute(history_stmt, *history)
 
     def _htm_indices(self, region: Region) -> List[Tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.
