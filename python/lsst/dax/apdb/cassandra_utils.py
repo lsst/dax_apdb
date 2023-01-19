@@ -30,10 +30,13 @@ __all__ = [
 ]
 
 import logging
+from collections.abc import Iterable, Iterator
+from datetime import datetime, timedelta
+from typing import Any
+from uuid import UUID
+
 import numpy as np
 import pandas
-from datetime import datetime, timedelta
-from typing import Any, List, Tuple, Union
 
 # If cassandra-driver is not there the module can still be imported
 # but things will not work.
@@ -45,6 +48,7 @@ try:
 except ImportError:
     CASSANDRA_IMPORTED = False
 
+from .apdb import ApdbTableData
 
 _LOG = logging.getLogger(__name__)
 
@@ -62,9 +66,7 @@ if CASSANDRA_IMPORTED:
         wrapper can be dropped.
         """
 
-        def __init__(
-            self, session: Session, execution_profile: Any = EXEC_PROFILE_DEFAULT
-        ):
+        def __init__(self, session: Session, execution_profile: Any = EXEC_PROFILE_DEFAULT):
             self._session = session
             self._execution_profile = execution_profile
 
@@ -77,18 +79,40 @@ if CASSANDRA_IMPORTED:
             # explicit parameter can override our settings
             if execution_profile is EXEC_PROFILE_DEFAULT:
                 execution_profile = self._execution_profile
-            return self._session.execute_async(
-                *args, execution_profile=execution_profile, **kwargs
-            )
+            return self._session.execute_async(*args, execution_profile=execution_profile, **kwargs)
 
         def submit(self, *args: Any, **kwargs: Any) -> Any:
             # internal method
             return self._session.submit(*args, **kwargs)
 
 
-def pandas_dataframe_factory(
-    colnames: List[str], rows: List[Tuple]
-) -> pandas.DataFrame:
+class ApdbCassandraTableData(ApdbTableData):
+    """Implementation of ApdbTableData that wraps Cassandra raw data."""
+
+    def __init__(self, columns: list[str], rows: list[tuple]):
+        self._columns = columns
+        self._rows = rows
+
+    def column_names(self) -> list[str]:
+        # docstring inherited
+        return self._columns
+
+    def rows(self) -> Iterable[tuple]:
+        # docstring inherited
+        return self._rows
+
+    def append(self, other: ApdbCassandraTableData) -> None:
+        """Extend rows in this table with rows in other table"""
+        if self._columns != other._columns:
+            raise ValueError(f"Different columns returned by queries: {self._columns} and {other._columns}")
+        self._rows.extend(other._rows)
+
+    def __iter__(self) -> Iterator[tuple]:
+        """Make it look like a row iterator, needed for some odd logic."""
+        return iter(self._rows)
+
+
+def pandas_dataframe_factory(colnames: list[str], rows: list[tuple]) -> pandas.DataFrame:
     """Special non-standard row factory that creates pandas DataFrame from
     Cassandra result set.
 
@@ -113,9 +137,7 @@ def pandas_dataframe_factory(
     return pandas.DataFrame.from_records(rows, columns=colnames)
 
 
-def raw_data_factory(
-    colnames: List[str], rows: List[Tuple]
-) -> Tuple[List[str], List[Tuple]]:
+def raw_data_factory(colnames: list[str], rows: list[tuple]) -> ApdbCassandraTableData:
     """Special non-standard row factory that makes 2-element tuple containing
     unmodified data: list of column names and list of rows.
 
@@ -128,24 +150,21 @@ def raw_data_factory(
 
     Returns
     -------
-    colnames : `list` [ `str` ]
-        Names of the columns.
-    rows : `list` of `tuple`
-        Result rows
+    data : `ApdbCassandraTableData`
+        Input data wrapped into ApdbCassandraTableData.
 
     Notes
     -----
     When using this method as row factory for Cassandra, the resulting
-    2-element tuple should be accessed in a non-standard way using
-    `ResultSet._current_rows` attribute. This factory is used to build
-    pandas DataFrames in `select_concurrent` method.
+    object should be accessed in a non-standard way using
+    `ResultSet._current_rows` attribute.
     """
-    return (colnames, rows)
+    return ApdbCassandraTableData(colnames, rows)
 
 
 def select_concurrent(
-    session: Session, statements: List[Tuple], execution_profile: str, concurrency: int
-) -> Union[pandas.DataFrame, List]:
+    session: Session, statements: list[tuple], execution_profile: str, concurrency: int
+) -> pandas.DataFrame | ApdbCassandraTableData | list:
     """Execute bunch of queries concurrently and merge their results into
     a single result.
 
@@ -162,8 +181,9 @@ def select_concurrent(
     result
         Combined result of multiple statements, type of the result depends on
         specific row factory defined in execution profile. If row factory is
-        one of `pandas_dataframe_factory` or `raw_data_factory` then pandas
-        DataFrame is created from a combined result. Otherwise a list of
+        `pandas_dataframe_factory` then pandas DataFrame is created from a
+        combined result. If row factory is `raw_data_factory` then
+        `ApdbCassandraTableData` is built from all records. Otherwise a list of
         rows is returned, type of each row is determined by the row factory.
 
     Notes
@@ -185,29 +205,21 @@ def select_concurrent(
 
         # Collect rows into a single list and build Dataframe out of that
         _LOG.debug("making pandas data frame out of rows/columns")
-        columns: Any = None
-        rows = []
+        table_data: ApdbCassandraTableData | None = None
         for success, result in results:
             if success:
-                result = result._current_rows
-                if columns is None:
-                    columns = result[0]
-                elif columns != result[0]:
-                    _LOG.error(
-                        "different columns returned by queries: %s and %s",
-                        columns,
-                        result[0],
-                    )
-                    raise ValueError(
-                        f"different columns returned by queries: {columns} and {result[0]}"
-                    )
-                rows += result[1]
+                data = result._current_rows
+                assert isinstance(data, ApdbCassandraTableData)
+                if table_data is None:
+                    table_data = data
+                else:
+                    table_data.append(data)
             else:
                 _LOG.error("error returned by query: %s", result)
                 raise result
-        catalog = pandas_dataframe_factory(columns, rows)
-        _LOG.debug("pandas catalog shape: %s", catalog.shape)
-        return catalog
+        if table_data is None:
+            table_data = ApdbCassandraTableData([], [])
+        return table_data
 
     elif ep.row_factory is pandas_dataframe_factory:
 
@@ -248,7 +260,7 @@ def literal(v: Any) -> Any:
         pass
     elif isinstance(v, datetime):
         v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1)) * 1000
-    elif isinstance(v, (bytes, str)):
+    elif isinstance(v, (bytes, str, UUID, int)):
         pass
     else:
         try:

@@ -28,7 +28,6 @@ from typing import List, Tuple
 
 from lsst import sphgeom
 
-
 _LOG = logging.getLogger(__name__)
 
 

@@ -24,19 +24,112 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbSqlSchema"]
+__all__ = ["ApdbSqlSchema", "ExtraTables"]
 
+import enum
 import logging
+import uuid
 from typing import Any, Dict, List, Mapping, Optional, Type
 
 import felis.types
 import sqlalchemy
 from felis import simple
-from sqlalchemy import DDL, Column, Index, MetaData, PrimaryKeyConstraint, Table, UniqueConstraint, event
+from sqlalchemy import (
+    DDL,
+    Column,
+    ForeignKeyConstraint,
+    Index,
+    MetaData,
+    PrimaryKeyConstraint,
+    Table,
+    UniqueConstraint,
+    event,
+    inspect,
+)
+from sqlalchemy.dialects.postgresql import UUID
 
 from .apdbSchema import ApdbSchema, ApdbTables
 
 _LOG = logging.getLogger(__name__)
+
+
+#
+# Copied from daf_butler.
+#
+class GUID(sqlalchemy.TypeDecorator):
+    """Platform-independent GUID type.
+
+    Uses PostgreSQL's UUID type, otherwise uses CHAR(32), storing as
+    stringified hex values.
+    """
+
+    impl = sqlalchemy.CHAR
+
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: sqlalchemy.Dialect) -> sqlalchemy.TypeEngine:
+        if dialect.name == "postgresql":
+            return dialect.type_descriptor(UUID())
+        else:
+            return dialect.type_descriptor(sqlalchemy.CHAR(32))
+
+    def process_bind_param(self, value: Any, dialect: sqlalchemy.Dialect) -> Optional[str]:
+        if value is None:
+            return value
+
+        # Coerce input to UUID type, in general having UUID on input is the
+        # only thing that we want but there is code right now that uses ints.
+        if isinstance(value, int):
+            value = uuid.UUID(int=value)
+        elif isinstance(value, bytes):
+            value = uuid.UUID(bytes=value)
+        elif isinstance(value, str):
+            # hexstring
+            value = uuid.UUID(hex=value)
+        elif not isinstance(value, uuid.UUID):
+            raise TypeError(f"Unexpected type of a bind value: {type(value)}")
+
+        if dialect.name == "postgresql":
+            return str(value)
+        else:
+            return "%.32x" % value.int
+
+    def process_result_value(self, value: Optional[str], dialect: sqlalchemy.Dialect) -> Optional[uuid.UUID]:
+        if value is None:
+            return value
+        else:
+            return uuid.UUID(hex=value)
+
+
+@enum.unique
+class ExtraTables(enum.Enum):
+    """Names of the tables used for tracking insert IDs."""
+
+    DiaInsertId = "DiaInsertId"
+    """Name of the table for insert ID records."""
+
+    DiaObjectInsertId = "DiaObjectInsertId"
+    """Name of the table for DIAObject insert ID records."""
+
+    DiaSourceInsertId = "DiaSourceInsertId"
+    """Name of the table for DIASource insert ID records."""
+
+    DiaForcedSourceInsertId = "DiaFSourceInsertId"
+    """Name of the table for DIAForcedSource insert ID records."""
+
+    def table_name(self, prefix: str = "") -> str:
+        """Return full table name."""
+        return prefix + self.value
+
+    @classmethod
+    def insert_id_tables(cls) -> Mapping[ExtraTables, ApdbTables]:
+        """Return mapping of tables used for insert ID tracking to their
+        corresponding regular tables."""
+        return {
+            cls.DiaObjectInsertId: ApdbTables.DiaObject,
+            cls.DiaSourceInsertId: ApdbTables.DiaSource,
+            cls.DiaForcedSourceInsertId: ApdbTables.DiaForcedSource,
+        }
 
 
 class ApdbSqlSchema(ApdbSchema):
@@ -52,6 +145,8 @@ class ApdbSqlSchema(ApdbSchema):
         DiaSource table instance
     forcedSources : `sqlalchemy.Table`
         DiaForcedSource table instance
+    has_insert_id : `bool`
+        If true then schema has tables for insert ID tracking.
 
     Parameters
     ----------
@@ -67,10 +162,16 @@ class ApdbSqlSchema(ApdbSchema):
     schema_name : `str`, optional
         Name of the schema in YAML files.
     prefix : `str`, optional
-        Prefix to add to all scheam elements.
+        Prefix to add to all schema elements.
     namespace : `str`, optional
         Namespace (or schema name) to use for all APDB tables.
+    use_insert_id : `bool`, optional
+
     """
+
+    pixel_id_tables = (ApdbTables.DiaObject, ApdbTables.DiaObjectLast, ApdbTables.DiaSource)
+    """Tables that need pixelId column for spatial indexing."""
+
     def __init__(
         self,
         engine: sqlalchemy.engine.Engine,
@@ -80,15 +181,18 @@ class ApdbSqlSchema(ApdbSchema):
         schema_name: str = "ApdbSchema",
         prefix: str = "",
         namespace: Optional[str] = None,
+        use_insert_id: bool = False,
     ):
 
         super().__init__(schema_file, schema_name)
 
         self._engine = engine
         self._dia_object_index = dia_object_index
+        self._htm_index_column = htm_index_column
         self._prefix = prefix
+        self._use_insert_id = use_insert_id
 
-        self._metadata = MetaData(self._engine, schema=namespace)
+        self._metadata = MetaData(schema=namespace)
 
         # map YAML column types to SQLAlchemy
         self._type_map = {
@@ -104,11 +208,11 @@ class ApdbSqlSchema(ApdbSchema):
             felis.types.String: sqlalchemy.types.CHAR,
             felis.types.Char: sqlalchemy.types.CHAR,
             felis.types.Unicode: sqlalchemy.types.CHAR,
-            felis.types.Boolean: sqlalchemy.types.Boolean
+            felis.types.Boolean: sqlalchemy.types.Boolean,
         }
 
         # Add pixelId column and index to tables that need it
-        for table in (ApdbTables.DiaObject, ApdbTables.DiaObjectLast, ApdbTables.DiaSource):
+        for table in self.pixel_id_tables:
             tableDef = self.tableSchemas.get(table)
             if not tableDef:
                 continue
@@ -119,12 +223,12 @@ class ApdbSqlSchema(ApdbSchema):
                 nullable=False,
                 value=None,
                 description="Pixelization index column.",
-                table=tableDef
+                table=tableDef,
             )
             tableDef.columns.append(column)
 
             # Adjust index if needed
-            if table == ApdbTables.DiaObject and self._dia_object_index == 'pix_id_iov':
+            if table == ApdbTables.DiaObject and self._dia_object_index == "pix_id_iov":
                 tableDef.primary_key.insert(0, column)
 
             if table is ApdbTables.DiaObjectLast:
@@ -137,60 +241,19 @@ class ApdbSqlSchema(ApdbSchema):
                 tableDef.indexes.append(index)
 
         # generate schema for all tables, must be called last
-        self._tables = self._makeTables()
+        self._apdb_tables = self._make_apdb_tables()
+        self._extra_tables = self._make_extra_tables(self._apdb_tables)
 
-        self.objects = self._tables[ApdbTables.DiaObject]
-        self.objects_last = self._tables.get(ApdbTables.DiaObjectLast)
-        self.sources = self._tables[ApdbTables.DiaSource]
-        self.forcedSources = self._tables[ApdbTables.DiaForcedSource]
-        self.ssObjects = self._tables[ApdbTables.SSObject]
+        self._has_insert_id: bool | None = None
 
-    def _makeTables(self, mysql_engine: str = 'InnoDB') -> Mapping[ApdbTables, Table]:
-        """Generate schema for all tables.
-
-        Parameters
-        ----------
-        mysql_engine : `str`, optional
-            MySQL engine type to use for new tables.
-        """
-
-        info: Dict[str, Any] = {}
-
-        tables = {}
-        for table_enum in ApdbTables:
-
-            if table_enum is ApdbTables.DiaObjectLast and self._dia_object_index != "last_object_table":
-                continue
-
-            columns = self._tableColumns(table_enum)
-            constraints = self._tableIndices(table_enum, info)
-            table = Table(table_enum.table_name(self._prefix),
-                          self._metadata,
-                          *columns,
-                          *constraints,
-                          mysql_engine=mysql_engine,
-                          info=info)
-            tables[table_enum] = table
-
-        return tables
-
-    def makeSchema(self, drop: bool = False, mysql_engine: str = 'InnoDB') -> None:
+    def makeSchema(self, drop: bool = False) -> None:
         """Create or re-create all tables.
 
         Parameters
         ----------
         drop : `bool`, optional
             If True then drop tables before creating new ones.
-        mysql_engine : `str`, optional
-            MySQL engine type to use for new tables.
         """
-
-        # re-make table schema for all needed tables with possibly different options
-        _LOG.debug("clear metadata")
-        self._metadata.clear()
-        _LOG.debug("re-do schema mysql_engine=%r", mysql_engine)
-        self._makeTables(mysql_engine=mysql_engine)
-
         # Create namespace if it does not exist yet, for now this only makes
         # sense for postgres.
         if self._metadata.schema:
@@ -198,15 +261,147 @@ class ApdbSqlSchema(ApdbSchema):
             quoted_schema = dialect.preparer(dialect).quote_schema(self._metadata.schema)
             create_schema = DDL(
                 "CREATE SCHEMA IF NOT EXISTS %(schema)s", context={"schema": quoted_schema}
-            ).execute_if(dialect='postgresql')
+            ).execute_if(dialect="postgresql")
             event.listen(self._metadata, "before_create", create_schema)
 
         # create all tables (optionally drop first)
         if drop:
-            _LOG.info('dropping all tables')
-            self._metadata.drop_all()
-        _LOG.info('creating all tables')
-        self._metadata.create_all()
+            _LOG.info("dropping all tables")
+            self._metadata.drop_all(self._engine)
+        _LOG.info("creating all tables")
+        self._metadata.create_all(self._engine)
+
+        # Reset possibly cached value.
+        self._has_insert_id = None
+
+    def get_table(self, table_enum: ApdbTables | ExtraTables) -> Table:
+        """Return SQLAlchemy table instance for a specified table type/enum.
+
+        Parameters
+        ----------
+        table_enum : `ApdbTables` or `ExtraTables`
+            Type of table to return.
+
+        Returns
+        -------
+        table : `sqlalchemy.schema.Table`
+            Table instance.
+
+        Raises
+        ------
+        ValueError
+            Raised if ``table_enum`` is not valid for this database.
+        """
+        try:
+            if isinstance(table_enum, ApdbTables):
+                return self._apdb_tables[table_enum]
+            else:
+                return self._extra_tables[table_enum]
+        except LookupError:
+            raise ValueError(f"Table type {table_enum} does not exist in the schema") from None
+
+    def get_apdb_columns(self, table_enum: ApdbTables | ExtraTables) -> list[Column]:
+        """Return list of columns defined for a table in APDB schema.
+
+        Returned list excludes columns that are implementation-specific, e.g.
+        ``pixelId`` column is not include in the returned list.
+
+        Parameters
+        ----------
+        table_enum : `ApdbTables` or `ExtraTables`
+            Type of table.
+
+        Returns
+        -------
+        table : `list` [`sqlalchemy.schema.Column`]
+            Table instance.
+
+        Raises
+        ------
+        ValueError
+            Raised if ``table_enum`` is not valid for this database.
+        """
+        table = self.get_table(table_enum)
+        exclude_columns = set()
+        if table_enum in self.pixel_id_tables:
+            exclude_columns.add(self._htm_index_column)
+        return [column for column in table.columns if column.name not in exclude_columns]
+
+    @property
+    def has_insert_id(self) -> bool:
+        """Whether insert ID tables are to be used (`bool`)."""
+        if self._has_insert_id is None:
+            self._has_insert_id = self._use_insert_id and self._check_insert_id()
+        return self._has_insert_id
+
+    def _check_insert_id(self) -> bool:
+        """Check whether database has tables for tracking insert IDs."""
+        inspector = inspect(self._engine)
+        db_tables = set(inspector.get_table_names(schema=self._metadata.schema))
+        return ExtraTables.DiaInsertId.table_name(self._prefix) in db_tables
+
+    def _make_apdb_tables(self, mysql_engine: str = "InnoDB") -> Mapping[ApdbTables, Table]:
+        """Generate schema for regular tables.
+
+        Parameters
+        ----------
+        mysql_engine : `str`, optional
+            MySQL engine type to use for new tables.
+        """
+        tables = {}
+        for table_enum in ApdbTables:
+
+            if table_enum is ApdbTables.DiaObjectLast and self._dia_object_index != "last_object_table":
+                continue
+
+            columns = self._tableColumns(table_enum)
+            constraints = self._tableIndices(table_enum)
+            table = Table(
+                table_enum.table_name(self._prefix),
+                self._metadata,
+                *columns,
+                *constraints,
+                mysql_engine=mysql_engine,
+            )
+            tables[table_enum] = table
+
+        return tables
+
+    def _make_extra_tables(
+        self, apdb_tables: Mapping[ApdbTables, Table], mysql_engine: str = "InnoDB"
+    ) -> Mapping[ExtraTables, Table]:
+        """Generate schema for insert ID tables."""
+        tables: dict[ExtraTables, Table] = {}
+        if not self._use_insert_id:
+            return tables
+
+        # Parent table needs to be defined first
+        column_defs = [
+            Column("insert_id", GUID, primary_key=True),
+            Column("insert_time", sqlalchemy.types.TIMESTAMP, nullable=False),
+        ]
+        parent_table = Table(
+            ExtraTables.DiaInsertId.table_name(self._prefix),
+            self._metadata,
+            *column_defs,
+            mysql_engine=mysql_engine,
+        )
+        tables[ExtraTables.DiaInsertId] = parent_table
+
+        for table_enum, apdb_enum in ExtraTables.insert_id_tables().items():
+            apdb_table = apdb_tables[apdb_enum]
+            columns = self._insertIdColumns(table_enum)
+            constraints = self._insertIdIndices(table_enum, apdb_table, parent_table)
+            table = Table(
+                table_enum.table_name(self._prefix),
+                self._metadata,
+                *columns,
+                *constraints,
+                mysql_engine=mysql_engine,
+            )
+            tables[table_enum] = table
+
+        return tables
 
     def _tableColumns(self, table_name: ApdbTables) -> List[Column]:
         """Return set of columns in a table
@@ -221,7 +416,6 @@ class ApdbSqlSchema(ApdbSchema):
         column_defs : `list`
             List of `Column` objects.
         """
-
         # get the list of columns in primary key, they are treated somewhat
         # specially below
         table_schema = self.tableSchemas[table_name]
@@ -239,7 +433,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         return column_defs
 
-    def _tableIndices(self, table_name: ApdbTables, info: Dict) -> List[sqlalchemy.schema.Constraint]:
+    def _tableIndices(self, table_name: ApdbTables) -> List[sqlalchemy.schema.Constraint]:
         """Return set of constraints/indices in a table
 
         Parameters
@@ -263,14 +457,66 @@ class ApdbSqlSchema(ApdbSchema):
             index_defs.append(PrimaryKeyConstraint(*[column.name for column in table_schema.primary_key]))
         for index in table_schema.indexes:
             name = self._prefix + index.name if index.name else ""
-            index_defs.append(Index(name, *[column.name for column in index.columns], info=info))
+            index_defs.append(Index(name, *[column.name for column in index.columns]))
         for constraint in table_schema.constraints:
             kwargs = {}
             if constraint.name:
-                kwargs['name'] = self._prefix + constraint.name
+                kwargs["name"] = self._prefix + constraint.name
             if isinstance(constraint, simple.UniqueConstraint):
                 index_defs.append(UniqueConstraint(*[column.name for column in constraint.columns], **kwargs))
 
+        return index_defs
+
+    def _insertIdColumns(self, table_enum: ExtraTables) -> List[Column]:
+        """Return list of columns for insert ID tables."""
+        column_defs: list[Column] = [Column("insert_id", GUID, nullable=False)]
+        insert_id_tables = ExtraTables.insert_id_tables()
+        if table_enum in insert_id_tables:
+            column_defs += self._tablePkColumns(insert_id_tables[table_enum])
+        else:
+            assert False, "Above branches have to cover all enum values"
+        return column_defs
+
+    def _tablePkColumns(self, table_enum: ApdbTables) -> list[Column]:
+        """Return a list of columns for table PK."""
+        table_schema = self.tableSchemas[table_enum]
+        column_defs = []
+        for column in table_schema.primary_key:
+            ctype = self._type_map[column.datatype]
+            column_defs.append(Column(column.name, ctype, nullable=False, autoincrement=False))
+        return column_defs
+
+    def _insertIdIndices(
+        self,
+        table_enum: ExtraTables,
+        apdb_table: sqlalchemy.schema.Table,
+        parent_table: sqlalchemy.schema.Table,
+    ) -> List[sqlalchemy.schema.Constraint]:
+        """Return set of constraints/indices for insert ID tables."""
+        index_defs: List[sqlalchemy.schema.Constraint] = []
+
+        # Special case for insert ID tables that are not in felis schema.
+        insert_id_tables = ExtraTables.insert_id_tables()
+        if table_enum in insert_id_tables:
+            # PK is the same as for original table
+            pk_names = [column.name for column in self._tablePkColumns(insert_id_tables[table_enum])]
+            index_defs.append(PrimaryKeyConstraint(*pk_names))
+            # Non-unique index on insert_id column.
+            name = self._prefix + table_enum.name + "_idx"
+            index_defs.append(Index(name, "insert_id"))
+            # Foreign key to original table
+            pk_columns = [apdb_table.columns[column] for column in pk_names]
+            index_defs.append(
+                ForeignKeyConstraint(pk_names, pk_columns, onupdate="CASCADE", ondelete="CASCADE")
+            )
+            # Foreign key to parent table
+            index_defs.append(
+                ForeignKeyConstraint(
+                    ["insert_id"], [parent_table.columns["insert_id"]], onupdate="CASCADE", ondelete="CASCADE"
+                )
+            )
+        else:
+            assert False, "Above branches have to cover all enum values"
         return index_defs
 
     @classmethod
@@ -287,18 +533,22 @@ class ApdbSqlSchema(ApdbSchema):
         type_object : `object`
             Database-specific type definition.
         """
-        if engine.name == 'mysql':
+        if engine.name == "mysql":
             from sqlalchemy.dialects.mysql import DOUBLE
+
             return DOUBLE(asdecimal=False)
-        elif engine.name == 'postgresql':
+        elif engine.name == "postgresql":
             from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
+
             return DOUBLE_PRECISION
-        elif engine.name == 'oracle':
+        elif engine.name == "oracle":
             from sqlalchemy.dialects.oracle import DOUBLE_PRECISION
+
             return DOUBLE_PRECISION
-        elif engine.name == 'sqlite':
+        elif engine.name == "sqlite":
             # all floats in sqlite are 8-byte
             from sqlalchemy.dialects.sqlite import REAL
+
             return REAL
         else:
-            raise TypeError('cannot determine DOUBLE type, unexpected dialect: ' + engine.name)
+            raise TypeError("cannot determine DOUBLE type, unexpected dialect: " + engine.name)

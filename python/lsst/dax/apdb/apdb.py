@@ -21,11 +21,14 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbConfig", "Apdb"]
+__all__ = ["ApdbConfig", "Apdb", "ApdbInsertId", "ApdbTableData"]
 
 import os
 from abc import ABC, abstractmethod
-from typing import Iterable, Mapping, Optional
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from typing import Optional
+from uuid import UUID, uuid4
 
 import lsst.daf.base as dafBase
 import pandas
@@ -37,43 +40,84 @@ from .apdbSchema import ApdbTables
 
 
 def _data_file_name(basename: str) -> str:
-    """Return path name of a data file in sdm_schemas package.
-    """
+    """Return path name of a data file in sdm_schemas package."""
     return os.path.join("${SDM_SCHEMAS_DIR}", "yml", basename)
 
 
 class ApdbConfig(Config):
-    """Part of Apdb configuration common to all implementations.
-    """
-    read_sources_months = Field[int](
-        doc="Number of months of history to read from DiaSource",
-        default=12
-    )
+    """Part of Apdb configuration common to all implementations."""
+
+    read_sources_months = Field[int](doc="Number of months of history to read from DiaSource", default=12)
     read_forced_sources_months = Field[int](
-        doc="Number of months of history to read from DiaForcedSource",
-        default=12
+        doc="Number of months of history to read from DiaForcedSource", default=12
     )
     schema_file = Field[str](
-        doc="Location of (YAML) configuration file with standard schema",
-        default=_data_file_name("apdb.yaml")
+        doc="Location of (YAML) configuration file with standard schema", default=_data_file_name("apdb.yaml")
     )
-    schema_name = Field[str](
-        doc="Name of the schema in YAML configuration file.",
-        default="ApdbSchema"
-    )
+    schema_name = Field[str](doc="Name of the schema in YAML configuration file.", default="ApdbSchema")
     extra_schema_file = Field[str](
         doc="Location of (YAML) configuration file with extra schema, "
-            "definitions in this file are merged with the definitions in "
-            "'schema_file', extending or replacing parts of the schema.",
+        "definitions in this file are merged with the definitions in "
+        "'schema_file', extending or replacing parts of the schema.",
         default=None,
         optional=True,
-        deprecated="This field is deprecated, its value is not used."
+        deprecated="This field is deprecated, its value is not used.",
     )
+    use_insert_id = Field[bool](
+        doc=(
+            "If True (default), make and fill additional tables used for getHistory methods. "
+            "Databases created with earlier versions of APDB may not have these tables, "
+            "and corresponding methods will not work for them."
+        ),
+        default=True,
+    )
+
+
+class ApdbTableData(ABC):
+    """Abstract class for representing table data."""
+
+    @abstractmethod
+    def column_names(self) -> list[str]:
+        """Return ordered sequence of column names in the table.
+
+        Returns
+        -------
+        names : `list` [`str`]
+            Column names.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def rows(self) -> Iterable[tuple]:
+        """Return table rows, each row is a tuple of values.
+
+        Returns
+        -------
+        rows : `iterable` [`tuple`]
+            Iterable of tuples.
+        """
+        raise NotImplementedError()
+
+
+@dataclass(frozen=True)
+class ApdbInsertId:
+    """Class used to identify single insert operation.
+
+    Instances of this class are used to identify the units of transfer from
+    APDB to PPDB. Usually single `ApdbInsertId` corresponds to a single call to
+    `store` method.
+    """
+
+    id: UUID
+
+    @classmethod
+    def new_insert_id(cls) -> ApdbInsertId:
+        """Generate new unique insert identifier."""
+        return ApdbInsertId(id=uuid4())
 
 
 class Apdb(ABC):
-    """Abstract interface for APDB.
-    """
+    """Abstract interface for APDB."""
 
     ConfigClass = ApdbConfig
 
@@ -128,9 +172,9 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaSources(self, region: Region,
-                      object_ids: Optional[Iterable[int]],
-                      visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+    def getDiaSources(
+        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
+    ) -> Optional[pandas.DataFrame]:
         """Return catalog of DiaSource instances from a given region.
 
         Parameters
@@ -164,9 +208,9 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaForcedSources(self, region: Region,
-                            object_ids: Optional[Iterable[int]],
-                            visit_time: dafBase.DateTime) -> Optional[pandas.DataFrame]:
+    def getDiaForcedSources(
+        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
+    ) -> Optional[pandas.DataFrame]:
         """Return catalog of DiaForcedSource instances from a given region.
 
         Parameters
@@ -205,30 +249,52 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaObjectsHistory(self,
-                             start_time: dafBase.DateTime,
-                             end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> pandas.DataFrame:
+    def getInsertIds(self) -> list[ApdbInsertId] | None:
+        """Return collection of insert identifiers known to the database.
+
+        Returns
+        -------
+        ids : `list` [`ApdbInsertId`] or `None`
+            List of identifiers, they may be time-ordered if database supports
+            ordering. `None` is returned if database is not configured to store
+            insert identifiers.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
+        """Remove insert identifiers from the database.
+
+        Parameters
+        -------
+        ids : `iterable` [`ApdbInsertId`]
+            Insert identifiers, can include items returned from `getInsertIds`.
+
+        Notes
+        -----
+        This method causes Apdb to forget about specified identifiers. If there
+        are any auxiliary data associated with the identifiers, it is also
+        removed from database (but data in regular tables is not removed).
+        This method should be called after successful transfer of data from
+        APDB to PPDB to free space used by history.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
         """Returns catalog of DiaObject instances from a given time period
         including the history of each DiaObject.
 
         Parameters
         ----------
-        start_time : `dafBase.DateTime`
-            Starting time for DiaObject history search. DiaObject record is
-            selected when its ``validityStart`` falls into an interval
-            between ``start_time`` (inclusive) and ``end_time`` (exclusive).
-        end_time : `dafBase.DateTime`
-            Upper limit on time for DiaObject history search.
-        region : `lsst.sphgeom.Region`, optional
-            Region to search for DiaObjects, if not specified then whole sky
-            is searched. If region is specified then some returned records may
-            fall outside of this region.
+        ids : `iterable` [`ApdbInsertId`]
+            Insert identifiers, can include items returned from `getInsertIds`.
 
         Returns
         -------
-        catalog : `pandas.DataFrame`
-            Catalog containing DiaObject records.
+        data : `ApdbTableData`
+            Catalog containing DiaObject records. In addition to all regular
+            columns it will contain ``insert_id`` column.
 
         Notes
         -----
@@ -238,29 +304,19 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaSourcesHistory(self,
-                             start_time: dafBase.DateTime,
-                             end_time: dafBase.DateTime,
-                             region: Optional[Region] = None) -> pandas.DataFrame:
+    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
         """Returns catalog of DiaSource instances from a given time period.
 
         Parameters
         ----------
-        start_time : `dafBase.DateTime`
-            Starting time for DiaSource history search. DiaSource record is
-            selected when its ``midPointTai`` falls into an interval between
-            ``start_time`` (inclusive) and ``end_time`` (exclusive).
-        end_time : `dafBase.DateTime`
-            Upper limit on time for DiaSource history search.
-        region : `lsst.sphgeom.Region`, optional
-            Region to search for DiaSources, if not specified then whole sky
-            is searched. If region is specified then some returned records may
-            fall outside of this region.
+        ids : `iterable` [`ApdbInsertId`]
+            Insert identifiers, can include items returned from `getInsertIds`.
 
         Returns
         -------
-        catalog : `pandas.DataFrame`
-            Catalog containing DiaObject records.
+        data : `ApdbTableData`
+            Catalog containing DiaSource records. In addition to all regular
+            columns it will contain ``insert_id`` column.
 
         Notes
         -----
@@ -270,36 +326,25 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaForcedSourcesHistory(self,
-                                   start_time: dafBase.DateTime,
-                                   end_time: dafBase.DateTime,
-                                   region: Optional[Region] = None) -> pandas.DataFrame:
+    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
         """Returns catalog of DiaForcedSource instances from a given time
         period.
 
         Parameters
         ----------
-        start_time : `dafBase.DateTime`
-            Starting time for DiaForcedSource history search. DiaForcedSource
-            record is selected when its ``midPointTai`` falls into an interval
-            between ``start_time`` (inclusive) and ``end_time`` (exclusive).
-        end_time : `dafBase.DateTime`
-            Upper limit on time for DiaForcedSource history search.
-        region : `lsst.sphgeom.Region`, optional
-            Region to search for DiaForcedSources, if not specified then whole
-            sky is searched. If region is specified then some returned records
-            may fall outside of this region.
+        ids : `iterable` [`ApdbInsertId`]
+            Insert identifiers, can include items returned from `getInsertIds`.
 
         Returns
         -------
-        catalog : `pandas.DataFrame`
-            Catalog containing DiaObject records.
+        data : `ApdbTableData`
+            Catalog containing DiaForcedSource records. In addition to all
+            regular columns it will contain ``insert_id`` column.
 
         Notes
         -----
         This part of API may not be very stable and can change before the
-        implementation finalizes. Some implementations may not support region
-        filtering, they will return records from the whole sky.
+        implementation finalizes.
         """
         raise NotImplementedError()
 
@@ -316,11 +361,13 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def store(self,
-              visit_time: dafBase.DateTime,
-              objects: pandas.DataFrame,
-              sources: Optional[pandas.DataFrame] = None,
-              forced_sources: Optional[pandas.DataFrame] = None) -> None:
+    def store(
+        self,
+        visit_time: dafBase.DateTime,
+        objects: pandas.DataFrame,
+        sources: Optional[pandas.DataFrame] = None,
+        forced_sources: Optional[pandas.DataFrame] = None,
+    ) -> None:
         """Store all three types of catalogs in the database.
 
         Parameters

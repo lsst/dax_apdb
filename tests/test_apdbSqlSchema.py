@@ -28,19 +28,24 @@ from typing import Any
 
 import lsst.utils.tests
 import sqlalchemy
-from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema
+from lsst.dax.apdb.apdbSchema import ApdbTables
+from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from sqlalchemy import create_engine
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
 class ApdbSchemaTestCase(unittest.TestCase):
-    """A test case for ApdbSqlSchema class
-    """
+    """Test case for ApdbSqlSchema class."""
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        pass
+    # number of columns as defined in tests/config/schema.yaml
+    table_column_count = {
+        ApdbTables.DiaObject: 8,
+        ApdbTables.DiaObjectLast: 5,
+        ApdbTables.DiaSource: 10,
+        ApdbTables.DiaForcedSource: 4,
+        ApdbTables.SSObject: 3,
+    }
 
     def _assertTable(self, table: sqlalchemy.schema.Table, name: str, ncol: int) -> None:
         """validation for tables schema.
@@ -63,58 +68,135 @@ class ApdbSchemaTestCase(unittest.TestCase):
         Schema is defined in YAML files, some checks here depend on that
         configuration and will need to be updated when configuration changes.
         """
-        engine = create_engine('sqlite://')
+        engine = create_engine("sqlite://")
 
         # create standard (baseline) schema
-        schema = ApdbSqlSchema(engine=engine,
-                               dia_object_index="baseline",
-                               htm_index_column="pixelId",
-                               schema_file=TEST_SCHEMA)
+        schema = ApdbSqlSchema(
+            engine=engine, dia_object_index="baseline", htm_index_column="pixelId", schema_file=TEST_SCHEMA
+        )
         schema.makeSchema()
-        self._assertTable(schema.objects, "DiaObject", 9)
-        self.assertEqual(len(schema.objects.primary_key), 2)
-        self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "DiaSource", 11)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
+        table = schema.get_table(ApdbTables.DiaObject)
+        # DiaObject table adds pixelId column.
+        self._assertTable(table, "DiaObject", self.table_column_count[ApdbTables.DiaObject] + 1)
+        self.assertEqual(len(table.primary_key), 2)
+        self.assertEqual(
+            len(schema.get_apdb_columns(ApdbTables.DiaObject)), self.table_column_count[ApdbTables.DiaObject]
+        )
+        with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
+            schema.get_table(ApdbTables.DiaObjectLast)
+        # DiaSource table also adds pixelId column.
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaSource),
+            "DiaSource",
+            self.table_column_count[ApdbTables.DiaSource] + 1,
+        )
+        self.assertEqual(
+            len(schema.get_apdb_columns(ApdbTables.DiaSource)), self.table_column_count[ApdbTables.DiaSource]
+        )
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaForcedSource),
+            "DiaForcedSource",
+            self.table_column_count[ApdbTables.DiaForcedSource],
+        )
+        self.assertEqual(
+            len(schema.get_apdb_columns(ApdbTables.DiaForcedSource)),
+            self.table_column_count[ApdbTables.DiaForcedSource],
+        )
+        for table_enum in ExtraTables:
+            with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
+                schema.get_table(table_enum)
 
         # create schema using prefix
-        schema = ApdbSqlSchema(engine=engine,
-                               dia_object_index="baseline",
-                               htm_index_column="pixelId",
-                               schema_file=TEST_SCHEMA,
-                               prefix="Pfx")
+        schema = ApdbSqlSchema(
+            engine=engine,
+            dia_object_index="baseline",
+            htm_index_column="pixelId",
+            schema_file=TEST_SCHEMA,
+            prefix="Pfx",
+        )
         # Drop existing tables (but we don't check it here)
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "PfxDiaObject", 9)
-        self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "PfxDiaSource", 11)
-        self._assertTable(schema.forcedSources, "PfxDiaForcedSource", 4)
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaObject),
+            "PfxDiaObject",
+            self.table_column_count[ApdbTables.DiaObject] + 1,
+        )
+        with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
+            schema.get_table(ApdbTables.DiaObjectLast)
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaSource),
+            "PfxDiaSource",
+            self.table_column_count[ApdbTables.DiaSource] + 1,
+        )
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaForcedSource),
+            "PfxDiaForcedSource",
+            self.table_column_count[ApdbTables.DiaForcedSource],
+        )
 
-        # use different indexing for DiaObject, need extra schema for that
-        schema = ApdbSqlSchema(engine=engine,
-                               dia_object_index="pix_id_iov",
-                               htm_index_column="pixelId",
-                               schema_file=TEST_SCHEMA)
+        # use different indexing for DiaObject, changes number of PK columns
+        schema = ApdbSqlSchema(
+            engine=engine, dia_object_index="pix_id_iov", htm_index_column="pixelId", schema_file=TEST_SCHEMA
+        )
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 9)
-        self.assertEqual(len(schema.objects.primary_key), 3)
-        self.assertIsNone(schema.objects_last)
-        self._assertTable(schema.sources, "DiaSource", 11)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
+        table = schema.get_table(ApdbTables.DiaObject)
+        self._assertTable(table, "DiaObject", self.table_column_count[ApdbTables.DiaObject] + 1)
+        self.assertEqual(len(table.primary_key), 3)
+        with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
+            schema.get_table(ApdbTables.DiaObjectLast)
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaSource),
+            "DiaSource",
+            self.table_column_count[ApdbTables.DiaSource] + 1,
+        )
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaForcedSource),
+            "DiaForcedSource",
+            self.table_column_count[ApdbTables.DiaForcedSource],
+        )
 
         # use DiaObjectLast table for DiaObject
-        schema = ApdbSqlSchema(engine=engine,
-                               dia_object_index="last_object_table",
-                               htm_index_column="pixelId",
-                               schema_file=TEST_SCHEMA)
+        schema = ApdbSqlSchema(
+            engine=engine,
+            dia_object_index="last_object_table",
+            htm_index_column="pixelId",
+            schema_file=TEST_SCHEMA,
+        )
         schema.makeSchema(drop=True)
-        self._assertTable(schema.objects, "DiaObject", 9)
-        self.assertEqual(len(schema.objects.primary_key), 2)
-        self._assertTable(schema.objects_last, "DiaObjectLast", 6)
-        assert schema.objects_last is not None
-        self.assertEqual(len(schema.objects_last.primary_key), 2)
-        self._assertTable(schema.sources, "DiaSource", 11)
-        self._assertTable(schema.forcedSources, "DiaForcedSource", 4)
+        table = schema.get_table(ApdbTables.DiaObject)
+        self._assertTable(table, "DiaObject", self.table_column_count[ApdbTables.DiaObject] + 1)
+        self.assertEqual(len(table.primary_key), 2)
+        table = schema.get_table(ApdbTables.DiaObjectLast)
+        self._assertTable(table, "DiaObjectLast", self.table_column_count[ApdbTables.DiaObjectLast] + 1)
+        self.assertEqual(len(table.primary_key), 2)
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaSource),
+            "DiaSource",
+            self.table_column_count[ApdbTables.DiaSource] + 1,
+        )
+        self._assertTable(
+            schema.get_table(ApdbTables.DiaForcedSource),
+            "DiaForcedSource",
+            self.table_column_count[ApdbTables.DiaForcedSource],
+        )
+
+        # Add history_id tables
+        schema = ApdbSqlSchema(
+            engine=engine,
+            dia_object_index="last_object_table",
+            htm_index_column="pixelId",
+            schema_file=TEST_SCHEMA,
+            use_insert_id=True,
+        )
+        schema.makeSchema(drop=True)
+        self._assertTable(schema.get_table(ExtraTables.DiaInsertId), "DiaInsertId", 2)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaInsertId)), 2)
+        self._assertTable(schema.get_table(ExtraTables.DiaObjectInsertId), "DiaObjectInsertId", 3)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaObjectInsertId)), 3)
+        self._assertTable(schema.get_table(ExtraTables.DiaSourceInsertId), "DiaSourceInsertId", 2)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaSourceInsertId)), 2)
+        self._assertTable(schema.get_table(ExtraTables.DiaForcedSourceInsertId), "DiaFSourceInsertId", 3)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaForcedSourceInsertId)), 3)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
