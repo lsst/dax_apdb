@@ -72,7 +72,6 @@ class CassandraMissingError(Exception):
 
 
 class ApdbCassandraConfig(ApdbConfig):
-
     contact_points = ListField[str](
         doc="The list of contact points to try connecting for cluster discovery.", default=["127.0.0.1"]
     )
@@ -181,7 +180,6 @@ class ApdbCassandra(Apdb):
     """Start time for partition 0, this should never be changed."""
 
     def __init__(self, config: ApdbCassandraConfig):
-
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
@@ -653,7 +651,6 @@ class ApdbCassandra(Apdb):
         return table_data
 
     def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime) -> None:
-
         # Cassandra timestamp uses milliseconds since epoch
         timestamp = visit_time.nsecs() // 1_000_000
 
@@ -811,7 +808,6 @@ class ApdbCassandra(Apdb):
         qfields_str = ",".join(qfields)
 
         with Timer(table_name.name + " query build", self.config.timer):
-
             table = self._schema.tableName(table_name)
             if time_part is not None:
                 table = f"{table}_{time_part}"
