@@ -67,13 +67,13 @@ class GUID(sqlalchemy.TypeDecorator):
 
     cache_ok = True
 
-    def load_dialect_impl(self, dialect: sqlalchemy.Dialect) -> sqlalchemy.TypeEngine:
+    def load_dialect_impl(self, dialect: sqlalchemy.engine.Dialect) -> sqlalchemy.types.TypeEngine:
         if dialect.name == "postgresql":
             return dialect.type_descriptor(UUID())
         else:
             return dialect.type_descriptor(sqlalchemy.CHAR(32))
 
-    def process_bind_param(self, value: Any, dialect: sqlalchemy.Dialect) -> Optional[str]:
+    def process_bind_param(self, value: Any, dialect: sqlalchemy.engine.Dialect) -> Optional[str]:
         if value is None:
             return value
 
@@ -94,8 +94,13 @@ class GUID(sqlalchemy.TypeDecorator):
         else:
             return "%.32x" % value.int
 
-    def process_result_value(self, value: Optional[str], dialect: sqlalchemy.Dialect) -> Optional[uuid.UUID]:
+    def process_result_value(
+        self, value: str | uuid.UUID | None, dialect: sqlalchemy.engine.Dialect
+    ) -> Optional[uuid.UUID]:
         if value is None:
+            return value
+        elif isinstance(value, uuid.UUID):
+            # sqlalchemy 2 converts to UUID internally
             return value
         else:
             return uuid.UUID(hex=value)
@@ -183,7 +188,6 @@ class ApdbSqlSchema(ApdbSchema):
         namespace: Optional[str] = None,
         use_insert_id: bool = False,
     ):
-
         super().__init__(schema_file, schema_name)
 
         self._engine = engine
@@ -350,7 +354,6 @@ class ApdbSqlSchema(ApdbSchema):
         """
         tables = {}
         for table_enum in ApdbTables:
-
             if table_enum is ApdbTables.DiaObjectLast and self._dia_object_index != "last_object_table":
                 continue
 
@@ -421,7 +424,7 @@ class ApdbSqlSchema(ApdbSchema):
         table_schema = self.tableSchemas[table_name]
 
         # convert all column dicts into alchemy Columns
-        column_defs = []
+        column_defs: list[Column] = []
         for column in table_schema.columns:
             kwargs: Dict[str, Any] = dict(nullable=column.nullable)
             if column.value is not None:
@@ -433,7 +436,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         return column_defs
 
-    def _tableIndices(self, table_name: ApdbTables) -> List[sqlalchemy.schema.Constraint]:
+    def _tableIndices(self, table_name: ApdbTables) -> List[sqlalchemy.schema.SchemaItem]:
         """Return set of constraints/indices in a table
 
         Parameters
@@ -452,18 +455,20 @@ class ApdbSqlSchema(ApdbSchema):
         table_schema = self.tableSchemas[table_name]
 
         # convert all index dicts into alchemy Columns
-        index_defs: List[sqlalchemy.schema.Constraint] = []
+        index_defs: List[sqlalchemy.schema.SchemaItem] = []
         if table_schema.primary_key:
             index_defs.append(PrimaryKeyConstraint(*[column.name for column in table_schema.primary_key]))
         for index in table_schema.indexes:
             name = self._prefix + index.name if index.name else ""
             index_defs.append(Index(name, *[column.name for column in index.columns]))
         for constraint in table_schema.constraints:
-            kwargs = {}
+            constr_name: str | None = None
             if constraint.name:
-                kwargs["name"] = self._prefix + constraint.name
+                constr_name = self._prefix + constraint.name
             if isinstance(constraint, simple.UniqueConstraint):
-                index_defs.append(UniqueConstraint(*[column.name for column in constraint.columns], **kwargs))
+                index_defs.append(
+                    UniqueConstraint(*[column.name for column in constraint.columns], name=constr_name)
+                )
 
         return index_defs
 
@@ -480,7 +485,7 @@ class ApdbSqlSchema(ApdbSchema):
     def _tablePkColumns(self, table_enum: ApdbTables) -> list[Column]:
         """Return a list of columns for table PK."""
         table_schema = self.tableSchemas[table_enum]
-        column_defs = []
+        column_defs: list[Column] = []
         for column in table_schema.primary_key:
             ctype = self._type_map[column.datatype]
             column_defs.append(Column(column.name, ctype, nullable=False, autoincrement=False))
@@ -491,9 +496,9 @@ class ApdbSqlSchema(ApdbSchema):
         table_enum: ExtraTables,
         apdb_table: sqlalchemy.schema.Table,
         parent_table: sqlalchemy.schema.Table,
-    ) -> List[sqlalchemy.schema.Constraint]:
+    ) -> List[sqlalchemy.schema.SchemaItem]:
         """Return set of constraints/indices for insert ID tables."""
-        index_defs: List[sqlalchemy.schema.Constraint] = []
+        index_defs: List[sqlalchemy.schema.SchemaItem] = []
 
         # Special case for insert ID tables that are not in felis schema.
         insert_id_tables = ExtraTables.insert_id_tables()
@@ -520,7 +525,7 @@ class ApdbSqlSchema(ApdbSchema):
         return index_defs
 
     @classmethod
-    def _getDoubleType(cls, engine: sqlalchemy.engine.Engine) -> Type:
+    def _getDoubleType(cls, engine: sqlalchemy.engine.Engine) -> Type | sqlalchemy.types.TypeEngine:
         """DOUBLE type is database-specific, select one based on dialect.
 
         Parameters

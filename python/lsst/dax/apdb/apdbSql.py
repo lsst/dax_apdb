@@ -27,7 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 import lsst.daf.base as dafBase
@@ -38,7 +38,8 @@ from felis.simple import Table
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
-from sqlalchemy import func, sql
+from sqlalchemy import func, inspection, sql
+from sqlalchemy.engine import Inspector
 from sqlalchemy.pool import NullPool
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
@@ -47,6 +48,44 @@ from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from .timer import Timer
 
 _LOG = logging.getLogger(__name__)
+
+
+class _ConnectionHackSA2(sqlalchemy.engine.Connectable):
+    """Terrible hack to workaround Pandas incomplete support for sqlalchemy 2.
+
+    We need to pass a Connection instance to pandas method, but in SA 2 the
+    Connection class lost ``connect`` method which is used by Pandas.
+    """
+
+    def __init__(self, connection: sqlalchemy.engine.Connection):
+        self._connection = connection
+
+    def connect(self) -> Any:
+        return self
+
+    @property
+    def execute(self) -> Callable:
+        return self._connection.execute
+
+    @property
+    def execution_options(self) -> Callable:
+        return self._connection.execution_options
+
+    @property
+    def connection(self) -> Any:
+        return self._connection.connection
+
+    def __enter__(self) -> sqlalchemy.engine.Connection:
+        return self._connection
+
+    def __exit__(self, type_: Any, value: Any, traceback: Any) -> None:
+        # Do not close connection here
+        pass
+
+
+@inspection._inspects(_ConnectionHackSA2)
+def _connection_insp(conn: _ConnectionHackSA2) -> Inspector:
+    return Inspector._construct(Inspector._init_connection, conn._connection)
 
 
 def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
@@ -148,14 +187,14 @@ class ApdbSqlTableData(ApdbTableData):
     """Implementation of ApdbTableData that wraps sqlalchemy Result."""
 
     def __init__(self, result: sqlalchemy.engine.Result):
-        self.result = result
+        self._keys = list(result.keys())
+        self._rows: list[tuple] = cast(list[tuple], list(result.fetchall()))
 
     def column_names(self) -> list[str]:
-        return self.result.keys()
+        return self._keys
 
     def rows(self) -> Iterable[tuple]:
-        for row in self.result:
-            yield tuple(row)
+        return self._rows
 
 
 class ApdbSql(Apdb):
@@ -174,7 +213,6 @@ class ApdbSql(Apdb):
     ConfigClass = ApdbSqlConfig
 
     def __init__(self, config: ApdbSqlConfig):
-
         config.validate()
         self.config = config
 
@@ -235,11 +273,12 @@ class ApdbSql(Apdb):
         tables = [ApdbTables.DiaObject, ApdbTables.DiaSource, ApdbTables.DiaForcedSource]
         if self.config.dia_object_index == "last_object_table":
             tables.append(ApdbTables.DiaObjectLast)
-        for table in tables:
-            sa_table = self._schema.get_table(table)
-            stmt = sql.select([func.count()]).select_from(sa_table)
-            count = self._engine.scalar(stmt)
-            res[table.name] = count
+        with self._engine.begin() as conn:
+            for table in tables:
+                sa_table = self._schema.get_table(table)
+                stmt = sql.select(func.count()).select_from(sa_table)
+                count: int = conn.execute(stmt).scalar_one()
+                res[table.name] = count
 
         return res
 
@@ -278,7 +317,7 @@ class ApdbSql(Apdb):
         # execute select
         with Timer("DiaObject select", self.config.timer):
             with self._engine.begin() as conn:
-                objects = pandas.read_sql_query(query, conn)
+                objects = pandas.read_sql_query(query, _ConnectionHackSA2(conn))
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
@@ -415,9 +454,9 @@ class ApdbSql(Apdb):
 
         # execute select
         with Timer(f"{table.name} history select", self.config.timer):
-            connection = self._engine.connect(close_with_result=True)
-            result = connection.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
-        return ApdbSqlTableData(result)
+            with self._engine.begin() as conn:
+                result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
+                return ApdbSqlTableData(result)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -443,7 +482,6 @@ class ApdbSql(Apdb):
 
         # We want to run all inserts in one transaction.
         with self._engine.begin() as connection:
-
             insert_id: ApdbInsertId | None = None
             if self._schema.has_insert_id:
                 insert_id = ApdbInsertId.new_insert_id()
@@ -469,14 +507,13 @@ class ApdbSql(Apdb):
 
         # everything to be done in single transaction
         with self._engine.begin() as conn:
-
             # Find record IDs that already exist. Some types like np.int64 can
             # cause issues with sqlalchemy, convert them to int.
             ids = sorted(int(oid) for oid in objects[idColumn])
 
             query = sql.select(table.columns[idColumn], table.columns[idColumn].in_(ids))
             result = conn.execute(query)
-            knownIds = set(row[idColumn] for row in result)
+            knownIds = set(row.ssObjectId for row in result)
 
             filter = objects[idColumn].isin(knownIds)
             toUpdate = cast(pandas.DataFrame, objects[filter])
@@ -484,15 +521,17 @@ class ApdbSql(Apdb):
 
             # insert new records
             if len(toInsert) > 0:
-                toInsert.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
+                toInsert.to_sql(
+                    table.name, _ConnectionHackSA2(conn), if_exists="append", index=False, schema=table.schema
+                )
 
             # update existing records
             if len(toUpdate) > 0:
                 whereKey = f"{idColumn}_param"
-                query = table.update().where(table.columns[idColumn] == sql.bindparam(whereKey))
+                update = table.update().where(table.columns[idColumn] == sql.bindparam(whereKey))
                 toUpdate = toUpdate.rename({idColumn: whereKey}, axis="columns")
                 values = toUpdate.to_dict("records")
-                result = conn.execute(query, values)
+                result = conn.execute(update, values)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
@@ -516,16 +555,7 @@ class ApdbSql(Apdb):
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
-
-        if self._engine.name == "postgresql":
-
-            # do VACUUM on all tables
-            _LOG.info("Running VACUUM on all tables")
-            connection = self._engine.raw_connection()
-            ISOLATION_LEVEL_AUTOCOMMIT = 0
-            connection.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-            cursor = connection.cursor()
-            cursor.execute("VACUUM ANALYSE")
+        pass
 
     def countUnassociatedObjects(self) -> int:
         # docstring is inherited from a base class
@@ -534,12 +564,12 @@ class ApdbSql(Apdb):
         table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaObject)
 
         # Construct the sql statement.
-        stmt = sql.select([func.count()]).select_from(table).where(table.c.nDiaSources == 1)
+        stmt = sql.select(func.count()).select_from(table).where(table.c.nDiaSources == 1)
         stmt = stmt.where(table.c.validityEnd == None)  # noqa: E711
 
         # Return the count.
         with self._engine.begin() as conn:
-            count = conn.scalar(stmt)
+            count = conn.execute(stmt).scalar_one()
 
         return count
 
@@ -633,7 +663,7 @@ class ApdbSql(Apdb):
         sources: Optional[pandas.DataFrame] = None
         if len(object_ids) <= 0:
             _LOG.debug("ID list is empty, just fetch empty result")
-            query = sql.select(*columns).where(False)
+            query = sql.select(*columns).where(sql.literal(False))
             with self._engine.begin() as conn:
                 sources = pandas.read_sql_query(query, conn)
         else:
@@ -667,7 +697,6 @@ class ApdbSql(Apdb):
     def _storeInsertId(
         self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime, connection: sqlalchemy.engine.Connection
     ) -> None:
-
         dt = visit_time.toPython()
 
         table = self._schema.get_table(ExtraTables.DiaInsertId)
@@ -705,7 +734,6 @@ class ApdbSql(Apdb):
 
         # everything to be done in single transaction
         if self.config.dia_object_index == "last_object_table":
-
             # insert and replace all records in LAST table, mysql and postgres have
             # non-standard features
             table = self._schema.get_table(ApdbTables.DiaObjectLast)
@@ -732,13 +760,18 @@ class ApdbSql(Apdb):
                 last_objs = pandas.concat([last_objs, extra_column], axis="columns")
 
             with Timer("DiaObjectLast insert", self.config.timer):
-                last_objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+                last_objs.to_sql(
+                    table.name,
+                    _ConnectionHackSA2(connection),
+                    if_exists="append",
+                    index=False,
+                    schema=table.schema,
+                )
         else:
-
             # truncate existing validity intervals
             table = self._schema.get_table(ApdbTables.DiaObject)
 
-            query = (
+            update = (
                 table.update()
                 .values(validityEnd=dt)
                 .where(
@@ -752,7 +785,7 @@ class ApdbSql(Apdb):
             # _LOG.debug("query: %s", query)
 
             with Timer(table.name + " truncate", self.config.timer):
-                res = connection.execute(query)
+                res = connection.execute(update)
             _LOG.debug("truncated %s intervals", res.rowcount)
 
         objs = _coerce_uint64(objs)
@@ -791,9 +824,15 @@ class ApdbSql(Apdb):
 
         # insert new versions
         with Timer("DiaObject insert", self.config.timer):
-            objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            objs.to_sql(
+                table.name,
+                _ConnectionHackSA2(connection),
+                if_exists="append",
+                index=False,
+                schema=table.schema,
+            )
             if history_stmt is not None:
-                connection.execute(history_stmt, *history_data)
+                connection.execute(history_stmt, history_data)
 
     def _storeDiaSources(
         self,
@@ -824,9 +863,15 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            sources.to_sql(
+                table.name,
+                _ConnectionHackSA2(connection),
+                if_exists="append",
+                index=False,
+                schema=table.schema,
+            )
             if history_stmt is not None:
-                connection.execute(history_stmt, *history)
+                connection.execute(history_stmt, history)
 
     def _storeDiaForcedSources(
         self,
@@ -857,9 +902,15 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaForcedSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            sources.to_sql(
+                table.name,
+                _ConnectionHackSA2(connection),
+                if_exists="append",
+                index=False,
+                schema=table.schema,
+            )
             if history_stmt is not None:
-                connection.execute(history_stmt, *history)
+                connection.execute(history_stmt, history)
 
     def _htm_indices(self, region: Region) -> List[Tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.
@@ -878,7 +929,7 @@ class ApdbSql(Apdb):
 
         return indices.ranges()
 
-    def _filterRegion(self, table: sqlalchemy.schema.Table, region: Region) -> sql.ClauseElement:
+    def _filterRegion(self, table: sqlalchemy.schema.Table, region: Region) -> sql.ColumnElement:
         """Make SQLAlchemy expression for selecting records in a region."""
         htm_index_column = table.columns[self.config.htm_index_column]
         exprlist = []
