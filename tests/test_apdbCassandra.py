@@ -82,7 +82,6 @@ class ApdbCassandraMixin:
         del apdb
 
     def tearDown(self) -> None:
-
         config = self.make_config()
         apdb = ApdbCassandra(config)
         query = f"DROP KEYSPACE {self.keyspace}"

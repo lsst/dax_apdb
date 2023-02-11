@@ -202,7 +202,6 @@ def select_concurrent(
 
     ep = session.get_execution_profile(execution_profile)
     if ep.row_factory is raw_data_factory:
-
         # Collect rows into a single list and build Dataframe out of that
         _LOG.debug("making pandas data frame out of rows/columns")
         table_data: ApdbCassandraTableData | None = None
@@ -222,7 +221,6 @@ def select_concurrent(
         return table_data
 
     elif ep.row_factory is pandas_dataframe_factory:
-
         # Merge multiple DataFrames into one
         _LOG.debug("making pandas data frame out of set of data frames")
         dataframes = []
@@ -241,7 +239,6 @@ def select_concurrent(
         return catalog
 
     else:
-
         # Just concatenate all rows into a single collection.
         rows = []
         for success, result in results:

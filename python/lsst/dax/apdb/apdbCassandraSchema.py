@@ -132,7 +132,6 @@ class ApdbCassandraSchema(ApdbSchema):
         time_partition_tables: bool = False,
         use_insert_id: bool = False,
     ):
-
         super().__init__(schema_file, schema_name)
 
         self._session = session
@@ -250,7 +249,6 @@ class ApdbCassandraSchema(ApdbSchema):
         )
 
         for insert_id_table_enum, apdb_table_enum in ExtraTables.insert_id_tables().items():
-
             apdb_table_def = self.tableSchemas[apdb_table_enum]
 
             extra_tables[insert_id_table_enum] = simple.Table(
