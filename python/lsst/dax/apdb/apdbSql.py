@@ -160,7 +160,7 @@ class ApdbSqlConfig(ApdbConfig):
     htm_index_column = Field[str](
         default="pixelId", doc="Name of a HTM index column for DiaObject and DiaSource tables"
     )
-    ra_dec_columns = ListField[str](default=["ra", "decl"], doc="Names ra/dec columns in DiaObject table")
+    ra_dec_columns = ListField[str](default=["ra", "decl"], doc="Names of ra/dec columns in DiaObject table")
     dia_object_columns = ListField[str](
         doc="List of columns to read from DiaObject, by default read all columns", default=[]
     )
@@ -168,7 +168,7 @@ class ApdbSqlConfig(ApdbConfig):
     namespace = Field[str](
         doc=(
             "Namespace or schema name for all tables in APDB database. "
-            "Presently only makes sense for PostgresQL backend. "
+            "Presently only works for PostgreSQL backend. "
             "If schema with this name does not exist it will be created when "
             "APDB tables are created."
         ),

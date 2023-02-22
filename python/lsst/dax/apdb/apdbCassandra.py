@@ -101,7 +101,7 @@ class ApdbCassandraConfig(ApdbConfig):
     )
     part_pix_level = Field[int](doc="Pixelization level used for partitioning index.", default=10)
     part_pix_max_ranges = Field[int](doc="Max number of ranges in pixelization envelope", default=64)
-    ra_dec_columns = ListField[str](default=["ra", "decl"], doc="Names ra/dec columns in DiaObject table")
+    ra_dec_columns = ListField[str](default=["ra", "decl"], doc="Names of ra/dec columns in DiaObject table")
     timer = Field[bool](doc="If True then print/log timing information", default=False)
     time_partition_tables = Field[bool](
         doc="Use per-partition tables for sources instead of partitioning by time", default=True
@@ -136,7 +136,7 @@ class ApdbCassandraConfig(ApdbConfig):
     )
     query_per_spatial_part = Field[bool](
         default=False,
-        doc="If True then build one query per spacial partition, otherwise build single query.",
+        doc="If True then build one query per spatial partition, otherwise build single query.",
     )
 
 
@@ -589,7 +589,7 @@ class ApdbCassandra(Apdb):
         Returns
         -------
         catalog : `pandas.DataFrame`, or `None`
-            Catalog contaning DiaSource records. Empty catalog is returned if
+            Catalog containing DiaSource records. Empty catalog is returned if
             ``object_ids`` is empty.
         """
         object_id_set: Set[int] = set()
@@ -840,7 +840,7 @@ class ApdbCassandra(Apdb):
             self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
 
     def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
-        """Calculate spacial partition for each record and add it to a
+        """Calculate spatial partition for each record and add it to a
         DataFrame.
 
         Notes
