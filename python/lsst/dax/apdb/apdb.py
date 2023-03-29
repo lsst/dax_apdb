@@ -55,7 +55,7 @@ class ApdbConfig(Config):
         doc="Location of (YAML) configuration file with standard schema", default=_data_file_name("apdb.yaml")
     )
     schema_name = Field[str](doc="Name of the schema in YAML configuration file.", default="ApdbSchema")
-    extra_schema_file = Field[str](
+    extra_schema_file = Field[str | None](
         doc="Location of (YAML) configuration file with extra schema, "
         "definitions in this file are merged with the definitions in "
         "'schema_file', extending or replacing parts of the schema.",

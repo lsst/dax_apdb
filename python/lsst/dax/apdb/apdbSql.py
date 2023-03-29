@@ -118,7 +118,7 @@ class ApdbSqlConfig(ApdbConfig):
     """APDB configuration class for SQL implementation (ApdbSql)."""
 
     db_url = Field[str](doc="SQLAlchemy database connection URI")
-    isolation_level = ChoiceField[str](
+    isolation_level = ChoiceField[str | None](
         doc=(
             "Transaction isolation level, if unset then backend-default value "
             "is used, except for SQLite backend where we use READ_UNCOMMITTED. "
@@ -137,7 +137,7 @@ class ApdbSqlConfig(ApdbConfig):
         doc="If False then disable SQLAlchemy connection pool. Do not use connection pool when forking.",
         default=True,
     )
-    connection_timeout = Field[float](
+    connection_timeout = Field[float | None](
         doc=(
             "Maximum time to wait time for database lock to be released before exiting. "
             "Defaults to sqlalchemy defaults if not set."
@@ -165,7 +165,7 @@ class ApdbSqlConfig(ApdbConfig):
         doc="List of columns to read from DiaObject, by default read all columns", default=[]
     )
     prefix = Field[str](doc="Prefix to add to table names and index names", default="")
-    namespace = Field[str](
+    namespace = Field[str | None](
         doc=(
             "Namespace or schema name for all tables in APDB database. "
             "Presently only works for PostgreSQL backend. "
