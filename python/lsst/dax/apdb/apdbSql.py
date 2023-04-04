@@ -50,42 +50,51 @@ from .timer import Timer
 _LOG = logging.getLogger(__name__)
 
 
-class _ConnectionHackSA2(sqlalchemy.engine.Connectable):
-    """Terrible hack to workaround Pandas incomplete support for sqlalchemy 2.
+if pandas.__version__.partition(".")[0] == "1":
 
-    We need to pass a Connection instance to pandas method, but in SA 2 the
-    Connection class lost ``connect`` method which is used by Pandas.
-    """
+    class _ConnectionHackSA2(sqlalchemy.engine.Connectable):
+        """Terrible hack to workaround Pandas 1 incomplete support for
+        sqlalchemy 2.
 
-    def __init__(self, connection: sqlalchemy.engine.Connection):
-        self._connection = connection
+        We need to pass a Connection instance to pandas method, but in SA 2 the
+        Connection class lost ``connect`` method which is used by Pandas.
+        """
 
-    def connect(self) -> Any:
-        return self
+        def __init__(self, connection: sqlalchemy.engine.Connection):
+            self._connection = connection
 
-    @property
-    def execute(self) -> Callable:
-        return self._connection.execute
+        def connect(self, **kwargs: Any) -> Any:
+            return self
 
-    @property
-    def execution_options(self) -> Callable:
-        return self._connection.execution_options
+        @property
+        def execute(self) -> Callable:
+            return self._connection.execute
 
-    @property
-    def connection(self) -> Any:
-        return self._connection.connection
+        @property
+        def execution_options(self) -> Callable:
+            return self._connection.execution_options
 
-    def __enter__(self) -> sqlalchemy.engine.Connection:
-        return self._connection
+        @property
+        def connection(self) -> Any:
+            return self._connection.connection
 
-    def __exit__(self, type_: Any, value: Any, traceback: Any) -> None:
-        # Do not close connection here
-        pass
+        def __enter__(self) -> sqlalchemy.engine.Connection:
+            return self._connection
 
+        def __exit__(self, type_: Any, value: Any, traceback: Any) -> None:
+            # Do not close connection here
+            pass
 
-@inspection._inspects(_ConnectionHackSA2)
-def _connection_insp(conn: _ConnectionHackSA2) -> Inspector:
-    return Inspector._construct(Inspector._init_connection, conn._connection)
+    @inspection._inspects(_ConnectionHackSA2)
+    def _connection_insp(conn: _ConnectionHackSA2) -> Inspector:
+        return Inspector._construct(Inspector._init_connection, conn._connection)
+
+else:
+    # Pandas 2.0 supports SQLAlchemy 2 correctly.
+    def _ConnectionHackSA2(  # type: ignore[no-redef]
+        conn: sqlalchemy.engine.Connectable,
+    ) -> sqlalchemy.engine.Connectable:
+        return conn
 
 
 def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
