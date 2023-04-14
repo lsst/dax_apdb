@@ -56,7 +56,7 @@ def createTestObjects(
     data = {
         id_column_name: numpy.arange(n_objects, dtype=numpy.int64),
         "ra": numpy.full(n_objects, 1 * geom.degrees, dtype=numpy.float64),
-        "decl": numpy.full(n_objects, 1 * geom.degrees, dtype=numpy.float64),
+        "dec": numpy.full(n_objects, 1 * geom.degrees, dtype=numpy.float64),
     }
     for field, type in extra_fields.items():
         data[field] = numpy.ones(n_objects, dtype=type)

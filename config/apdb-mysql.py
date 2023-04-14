@@ -37,8 +37,8 @@ config.read_forced_sources_months=12
 
 # List of columns to read from DiaObject, by default read all columns
 config.dia_object_columns = [
-    "diaObjectId", "lastNonForcedSource", "ra", "decl",
-    "raSigma", "declSigma", "ra_decl_Cov", "pixelId"
+    "diaObjectId", "lastNonForcedSource", "ra", "dec",
+    "raSigma", "decSigma", "ra_dec_Cov", "pixelId"
     ]
 
 # If True (default) then use "upsert" for DiaObjectsLast table

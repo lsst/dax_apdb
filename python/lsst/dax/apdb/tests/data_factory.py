@@ -87,21 +87,21 @@ def makeObjectCatalog(
     Notes
     -----
     Returned catalog only contains three columns - ``diaObjectId`, ``ra``, and
-    ``decl`` (in degrees).
+    ``dec`` (in degrees).
     """
     points = list(_genPointsInRegion(region, count))
     # diaObjectId=0 may be used in some code for DiaSource foreign key to mean
     # the same as ``None``.
     ids = numpy.arange(start_id, len(points) + start_id, dtype=numpy.int64)
     ras = numpy.array([sp.getRa().asDegrees() for sp in points], dtype=numpy.float64)
-    decls = numpy.array([sp.getDec().asDegrees() for sp in points], dtype=numpy.float64)
+    decs = numpy.array([sp.getDec().asDegrees() for sp in points], dtype=numpy.float64)
     nDiaSources = numpy.ones(len(points), dtype=numpy.int32)
     dt = visit_time.toPython()
     data = dict(
         kwargs,
         diaObjectId=ids,
         ra=ras,
-        decl=decls,
+        dec=decs,
         nDiaSources=nDiaSources,
         lastNonForcedSource=dt,
     )
@@ -136,7 +136,7 @@ def makeSourceCatalog(
     Returned catalog only contains small number of columns needed for tests.
     """
     nrows = len(objects)
-    midPointTai = visit_time.get(system=DateTime.MJD)
+    midpointMjdTai = visit_time.get(system=DateTime.MJD)
     df = pandas.DataFrame(
         {
             "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
@@ -144,8 +144,8 @@ def makeSourceCatalog(
             "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
             "parentDiaSourceId": 0,
             "ra": objects["ra"],
-            "decl": objects["decl"],
-            "midPointTai": numpy.full(nrows, midPointTai, dtype=numpy.float64),
+            "dec": objects["dec"],
+            "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
         }
     )
@@ -177,12 +177,12 @@ def makeForcedSourceCatalog(
     Returned catalog only contains small number of columns needed for tests.
     """
     nrows = len(objects)
-    midPointTai = visit_time.get(system=DateTime.MJD)
+    midpointMjdTai = visit_time.get(system=DateTime.MJD)
     df = pandas.DataFrame(
         {
             "diaObjectId": objects["diaObjectId"],
             "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
-            "midPointTai": numpy.full(nrows, midPointTai, dtype=numpy.float64),
+            "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
         }
     )

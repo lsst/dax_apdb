@@ -52,7 +52,7 @@ config.part_pixelization='mq3c'
 config.part_pix_level=10
 
 # Names ra/dec columns in DiaObject table
-config.ra_dec_columns=['ra', 'decl']
+config.ra_dec_columns=['ra', 'dec']
 
 # If True then print/log timing information
 config.timer=False

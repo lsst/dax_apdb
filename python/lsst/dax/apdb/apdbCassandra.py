@@ -101,7 +101,7 @@ class ApdbCassandraConfig(ApdbConfig):
     )
     part_pix_level = Field[int](doc="Pixelization level used for partitioning index.", default=10)
     part_pix_max_ranges = Field[int](doc="Max number of ranges in pixelization envelope", default=64)
-    ra_dec_columns = ListField[str](default=["ra", "decl"], doc="Names of ra/dec columns in DiaObject table")
+    ra_dec_columns = ListField[str](default=["ra", "dec"], doc="Names of ra/dec columns in DiaObject table")
     timer = Field[bool](doc="If True then print/log timing information", default=False)
     time_partition_tables = Field[bool](
         doc="Use per-partition tables for sources instead of partitioning by time", default=True
@@ -624,8 +624,8 @@ class ApdbCassandra(Apdb):
         if len(object_id_set) > 0:
             catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
 
-        # precise filtering on midPointTai
-        catalog = cast(pandas.DataFrame, catalog[catalog["midPointTai"] > mjd_start])
+        # precise filtering on midpointMjdTai
+        catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] > mjd_start])
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog

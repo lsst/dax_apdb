@@ -103,7 +103,7 @@ def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
     return df.astype({name: np.int64 for name in names})
 
 
-def _make_midPointTai_start(visit_time: dafBase.DateTime, months: int) -> float:
+def _make_midpointMjdTai_start(visit_time: dafBase.DateTime, months: int) -> float:
     """Calculate starting point for time-based source search.
 
     Parameters
@@ -116,7 +116,7 @@ def _make_midPointTai_start(visit_time: dafBase.DateTime, months: int) -> float:
     Returns
     -------
     time : `float`
-        A ``midPointTai`` starting point, MJD time.
+        A ``midpointMjdTai`` starting point, MJD time.
     """
     # TODO: `system` must be consistent with the code in ap_association
     # (see DM-31996)
@@ -169,7 +169,7 @@ class ApdbSqlConfig(ApdbConfig):
     htm_index_column = Field[str](
         default="pixelId", doc="Name of a HTM index column for DiaObject and DiaSource tables"
     )
-    ra_dec_columns = ListField[str](default=["ra", "decl"], doc="Names of ra/dec columns in DiaObject table")
+    ra_dec_columns = ListField[str](default=["ra", "dec"], doc="Names of ra/dec columns in DiaObject table")
     dia_object_columns = ListField[str](
         doc="List of columns to read from DiaObject, by default read all columns", default=[]
     )
@@ -393,12 +393,14 @@ class ApdbSql(Apdb):
             raise NotImplementedError("Region-based selection is not supported")
 
         # TODO: DateTime.MJD must be consistent with code in ap_association,
-        # alternatively we can fill midPointTai ourselves in store()
-        midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_forced_sources_months)
-        _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
+        # alternatively we can fill midpointMjdTai ourselves in store()
+        midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_forced_sources_months)
+        _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
 
         with Timer("DiaForcedSource select", self.config.timer):
-            sources = self._getSourcesByIDs(ApdbTables.DiaForcedSource, list(object_ids), midPointTai_start)
+            sources = self._getSourcesByIDs(
+                ApdbTables.DiaForcedSource, list(object_ids), midpointMjdTai_start
+            )
 
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
@@ -598,16 +600,16 @@ class ApdbSql(Apdb):
             Catalog containing DiaSource records.
         """
         # TODO: DateTime.MJD must be consistent with code in ap_association,
-        # alternatively we can fill midPointTai ourselves in store()
-        midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_sources_months)
-        _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
+        # alternatively we can fill midpointMjdTai ourselves in store()
+        midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_sources_months)
+        _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
 
         table = self._schema.get_table(ApdbTables.DiaSource)
         columns = self._schema.get_apdb_columns(ApdbTables.DiaSource)
         query = sql.select(*columns)
 
         # build selection
-        time_filter = table.columns["midPointTai"] > midPointTai_start
+        time_filter = table.columns["midpointMjdTai"] > midpointMjdTai_start
         where = sql.expression.and_(self._filterRegion(table, region), time_filter)
         query = query.where(where)
 
@@ -634,18 +636,18 @@ class ApdbSql(Apdb):
             Catalog contaning DiaSource records.
         """
         # TODO: DateTime.MJD must be consistent with code in ap_association,
-        # alternatively we can fill midPointTai ourselves in store()
-        midPointTai_start = _make_midPointTai_start(visit_time, self.config.read_sources_months)
-        _LOG.debug("midPointTai_start = %.6f", midPointTai_start)
+        # alternatively we can fill midpointMjdTai ourselves in store()
+        midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_sources_months)
+        _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
 
         with Timer("DiaSource select", self.config.timer):
-            sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, midPointTai_start)
+            sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, midpointMjdTai_start)
 
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
     def _getSourcesByIDs(
-        self, table_enum: ApdbTables, object_ids: List[int], midPointTai_start: float
+        self, table_enum: ApdbTables, object_ids: List[int], midpointMjdTai_start: float
     ) -> pandas.DataFrame:
         """Returns catalog of DiaSource or DiaForcedSource instances given set
         of DiaObject IDs.
@@ -656,8 +658,8 @@ class ApdbSql(Apdb):
             Database table.
         object_ids :
             Collection of DiaObject IDs
-        midPointTai_start : `float`
-            Earliest midPointTai to retrieve.
+        midpointMjdTai_start : `float`
+            Earliest midpointMjdTai to retrieve.
 
         Returns
         -------
@@ -688,7 +690,7 @@ class ApdbSql(Apdb):
                 query = query.where(
                     sql.expression.and_(
                         table.columns["diaObjectId"].in_(int_ids),
-                        table.columns["midPointTai"] > midPointTai_start,
+                        table.columns["midpointMjdTai"] > midpointMjdTai_start,
                     )
                 )
 
