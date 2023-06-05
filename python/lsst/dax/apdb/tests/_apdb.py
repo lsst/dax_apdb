@@ -410,7 +410,7 @@ class ApdbTest(ABC):
             )
         self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
 
-    def test_midPointTai_src(self) -> None:
+    def test_midpointMjdTai_src(self) -> None:
         """Test for time filtering of DiaSources."""
         config = self.make_config()
         apdb = make_apdb(config)
@@ -448,7 +448,7 @@ class ApdbTest(ABC):
         res = apdb.getDiaSources(region, oids, visit_time2)
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
-    def test_midPointTai_fsrc(self) -> None:
+    def test_midpointMjdTai_fsrc(self) -> None:
         """Test for time filtering of DiaForcedSources."""
         config = self.make_config()
         apdb = make_apdb(config)

@@ -36,11 +36,11 @@ tables:
     mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.ra
-  - name: decl
-    "@id": "#DiaObject.decl"
+  - name: dec
+    "@id": "#DiaObject.dec"
     datatype: double
     nullable: false
-    description: Decl-coordinate of the position of the object at time radecTai.
+    description: Dec-coordinate of the position of the object at time radecTai.
     mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.dec
@@ -150,8 +150,8 @@ tables:
     mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.ra
-  - name: decl
-    "@id": "#DiaSource.decl"
+  - name: dec
+    "@id": "#DiaSource.dec"
     datatype: double
     nullable: false
     description: " Decl-coordinate of the center of this diaSource."
@@ -165,8 +165,8 @@ tables:
     description: Time when this diaSource was reassociated from diaObject to ssObject
       (if such reassociation happens, otherwise NULL).
     mysql:datatype: DATETIME
-  - name: midPointTai
-    "@id": "#DiaSource.midPointTai"
+  - name: midpointMjdTai
+    "@id": "#DiaSource.midpointMjdTai"
     datatype: double
     nullable: false
     description: Effective mid-exposure time for this diaSource.
@@ -215,8 +215,8 @@ tables:
       span multiple ccds.
     mysql:datatype: BIGINT
     ivoa:ucd: meta.id;obs.image
-  - name: midPointTai
-    "@id": "#DiaForcedSource.midPointTai"
+  - name: midpointMjdTai
+    "@id": "#DiaForcedSource.midpointMjdTai"
     datatype: double
     nullable: false
     description: Effective mid-exposure time for this diaForcedSource
@@ -287,8 +287,8 @@ tables:
     description: RA-coordinate of the position of the object at time radecTai.
     ivoa:ucd: pos.eq.ra
     fits:tunit: deg
-  - name: decl
-    "@id": "#DiaObjectLast.decl"
+  - name: dec
+    "@id": "#DiaObjectLast.dec"
     datatype: double
     nullable: false
     description: Decl-coordinate of the position of the object at time radecTai.
