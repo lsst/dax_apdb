@@ -47,6 +47,7 @@ def _data_file_name(basename: str) -> str:
 class ApdbConfig(Config):
     """Part of Apdb configuration common to all implementations."""
 
+    instrument = Field[str](doc="Short instrument name for this namespace (e.g. 'LSSTCam')'.")
     read_sources_months = Field[int](doc="Number of months of history to read from DiaSource", default=12)
     read_forced_sources_months = Field[int](
         doc="Number of months of history to read from DiaForcedSource", default=12
@@ -146,6 +147,18 @@ class Apdb(ABC):
         ----------
         drop : `bool`
             If True then drop all tables before creating new ones.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getInstrument(self) -> str:
+        """Return the name of the instrument stored in the Instrument table.
+
+        Returns
+        -------
+        instrument : `str`
+            Instrument stored in the Instrument table when this database was
+            created.
         """
         raise NotImplementedError()
 

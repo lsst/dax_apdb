@@ -125,6 +125,8 @@ class ApdbTest(ABC):
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.Instrument))
+        self.assertEqual(apdb.getInstrument(), config.instrument)
 
     def test_empty_gets(self) -> None:
         """Test for getting data from empty database.

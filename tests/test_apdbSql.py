@@ -54,6 +54,7 @@ class ApdbSQLiteTestCase(unittest.TestCase, ApdbTest):
             "schema_file": TEST_SCHEMA,
             "dia_object_index": self.dia_object_index,
             "use_insert_id": self.use_insert_id,
+            "instrument": "TestCam",
         }
         kw.update(kwargs)
         return ApdbSqlConfig(**kw)
@@ -124,6 +125,7 @@ class ApdbPostgresTestCase(unittest.TestCase, ApdbTest):
             "db_url": self.server.url(),
             "schema_file": TEST_SCHEMA,
             "dia_object_index": self.dia_object_index,
+            "instrument": "TestCam",
         }
         kw.update(kwargs)
         return ApdbSqlConfig(**kw)
@@ -160,6 +162,7 @@ class ApdbSchemaUpdateSQLiteTestCase(unittest.TestCase, ApdbSchemaUpdateTest):
         kw = {
             "db_url": self.db_url,
             "schema_file": TEST_SCHEMA,
+            "instrument": "TestCam",
         }
         kw.update(kwargs)
         return ApdbSqlConfig(**kw)

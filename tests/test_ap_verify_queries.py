@@ -68,6 +68,7 @@ class TestApVerifyQueries(unittest.TestCase):
     def setUp(self) -> None:
         self.apdbCfg = ApdbSqlConfig()
         # Create DB in memory.
+        self.apdbCfg.instrument = "TestCam"
         self.apdbCfg.db_url = "sqlite://"
         self.apdbCfg.schema_file = TEST_SCHEMA
         self.apdbCfg.dia_object_index = "baseline"
