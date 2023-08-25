@@ -151,7 +151,7 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
-        """Returns catalog of DiaObject instances from a given region.
+        """Return catalog of DiaObject instances from a given region.
 
         This method returns only the last version of each DiaObject. Some
         records in a returned catalog may be outside the specified region, it
@@ -238,13 +238,14 @@ class Apdb(ABC):
 
         Notes
         -----
-        This method returns DiaForcedSource catalog for a region with additional
-        filtering based on DiaObject IDs. Only a subset of DiaSource history
-        is returned limited by ``read_forced_sources_months`` config parameter,
-        w.r.t. ``visit_time``. If ``object_ids`` is empty then an empty catalog
-        is always returned with the correct schema (columns/types). If
-        ``object_ids`` is `None` then no filtering is performed and some of the
-        returned records may be outside the specified region.
+        This method returns DiaForcedSource catalog for a region with
+        additional filtering based on DiaObject IDs. Only a subset of DiaSource
+        history is returned limited by ``read_forced_sources_months`` config
+        parameter, w.r.t. ``visit_time``. If ``object_ids`` is empty then an
+        empty catalog is always returned with the correct schema
+        (columns/types). If ``object_ids`` is `None` then no filtering is
+        performed and some of the returned records may be outside the specified
+        region.
         """
         raise NotImplementedError()
 
@@ -266,7 +267,7 @@ class Apdb(ABC):
         """Remove insert identifiers from the database.
 
         Parameters
-        -------
+        ----------
         ids : `iterable` [`ApdbInsertId`]
             Insert identifiers, can include items returned from `getInsertIds`.
 
@@ -282,7 +283,7 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Returns catalog of DiaObject instances from a given time period
+        """Return catalog of DiaObject instances from a given time period
         including the history of each DiaObject.
 
         Parameters
@@ -305,7 +306,7 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Returns catalog of DiaSource instances from a given time period.
+        """Return catalog of DiaSource instances from a given time period.
 
         Parameters
         ----------
@@ -327,7 +328,7 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Returns catalog of DiaForcedSource instances from a given time
+        """Return catalog of DiaForcedSource instances from a given time
         period.
 
         Parameters
@@ -350,7 +351,7 @@ class Apdb(ABC):
 
     @abstractmethod
     def getSSObjects(self) -> pandas.DataFrame:
-        """Returns catalog of SSObject instances.
+        """Return catalog of SSObject instances.
 
         Returns
         -------

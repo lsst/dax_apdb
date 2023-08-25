@@ -65,6 +65,8 @@ def createTestObjects(
 
 
 class TestApVerifyQueries(unittest.TestCase):
+    """Tests for ap_verify queries."""
+
     def setUp(self) -> None:
         self.apdbCfg = ApdbSqlConfig()
         # Create DB in memory.
@@ -96,10 +98,11 @@ class TestApVerifyQueries(unittest.TestCase):
 
 
 class MemoryTester(lsst.utils.tests.MemoryTestCase):
-    pass
+    """Run file leak tests."""
 
 
 def setup_module(module: Any) -> None:
+    """Configure pytest."""
     lsst.utils.tests.init()
 
 

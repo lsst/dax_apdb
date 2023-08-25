@@ -82,6 +82,8 @@ class CassandraMissingError(Exception):
 
 
 class ApdbCassandraConfig(ApdbConfig):
+    """Configuration class for Cassandra-based APDB implementation."""
+
     contact_points = ListField[str](
         doc="The list of contact points to try connecting for cluster discovery.", default=["127.0.0.1"]
     )
@@ -555,7 +557,6 @@ class ApdbCassandra(Apdb):
 
     def _makeProfiles(self, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
         """Make all execution profiles used in the code."""
-
         if config.private_ips:
             loadBalancePolicy = WhiteListRoundRobinPolicy(hosts=config.contact_points)
         else:
@@ -621,7 +622,7 @@ class ApdbCassandra(Apdb):
         mjd_end: float,
         table_name: ApdbTables,
     ) -> pandas.DataFrame:
-        """Returns catalog of DiaSource instances given set of DiaObject IDs.
+        """Return catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
         ----------
@@ -809,7 +810,7 @@ class ApdbCassandra(Apdb):
         extra_columns: Optional[Mapping] = None,
         time_part: Optional[int] = None,
     ) -> None:
-        """Generic store method.
+        """Store generic objects.
 
         Takes Pandas catalog and stores a bunch of records in a table.
 

@@ -152,10 +152,11 @@ class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, unittest.TestCase, A
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
-    pass
+    """Run file leak tests."""
 
 
 def setup_module(module: Any) -> None:
+    """Configure pytest."""
     lsst.utils.tests.init()
 
 

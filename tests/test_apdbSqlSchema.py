@@ -48,7 +48,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
     }
 
     def _assertTable(self, table: sqlalchemy.schema.Table, name: str, ncol: int) -> None:
-        """validation for tables schema.
+        """Validate tables schema.
 
         Parameters
         ----------
@@ -200,10 +200,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
-    pass
+    """Run file leak tests."""
 
 
 def setup_module(module: Any) -> None:
+    """Configure pytest."""
     lsst.utils.tests.init()
 
 

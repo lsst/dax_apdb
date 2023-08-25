@@ -129,7 +129,8 @@ class ExtraTables(enum.Enum):
     @classmethod
     def insert_id_tables(cls) -> Mapping[ExtraTables, ApdbTables]:
         """Return mapping of tables used for insert ID tracking to their
-        corresponding regular tables."""
+        corresponding regular tables.
+        """
         return {
             cls.DiaObjectInsertId: ApdbTables.DiaObject,
             cls.DiaSourceInsertId: ApdbTables.DiaSource,
@@ -451,7 +452,6 @@ class ApdbSqlSchema(ApdbSchema):
         index_defs : `list`
             List of SQLAlchemy index/constraint objects.
         """
-
         table_schema = self.tableSchemas[table_name]
 
         # convert all index dicts into alchemy Columns

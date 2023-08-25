@@ -113,8 +113,7 @@ class ApdbCassandraTableData(ApdbTableData):
 
 
 def pandas_dataframe_factory(colnames: list[str], rows: list[tuple]) -> pandas.DataFrame:
-    """Special non-standard row factory that creates pandas DataFrame from
-    Cassandra result set.
+    """Create pandas DataFrame from Cassandra result set.
 
     Parameters
     ----------
@@ -138,8 +137,8 @@ def pandas_dataframe_factory(colnames: list[str], rows: list[tuple]) -> pandas.D
 
 
 def raw_data_factory(colnames: list[str], rows: list[tuple]) -> ApdbCassandraTableData:
-    """Special non-standard row factory that makes 2-element tuple containing
-    unmodified data: list of column names and list of rows.
+    """Make 2-element tuple containing unmodified data: list of column names
+    and list of rows.
 
     Parameters
     ----------
