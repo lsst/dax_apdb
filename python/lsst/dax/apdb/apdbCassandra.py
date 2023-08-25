@@ -35,6 +35,7 @@ import pandas
 try:
     import cassandra
     import cassandra.query
+    from cassandra.auth import AuthProvider, PlainTextAuthProvider
     from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
     from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
 
@@ -47,6 +48,7 @@ import lsst.daf.base as dafBase
 from felis.simple import Table
 from lsst import sphgeom
 from lsst.pex.config import ChoiceField, Field, ListField
+from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
@@ -65,6 +67,14 @@ from .timer import Timer
 
 _LOG = logging.getLogger(__name__)
 
+# Copied from daf_butler.
+DB_AUTH_ENVVAR = "LSST_DB_AUTH"
+"""Default name of the environmental variable that will be used to locate DB
+credentials configuration file. """
+
+DB_AUTH_PATH = "~/.lsst/db-auth.yaml"
+"""Default path at which it is expected that DB credentials are found."""
+
 
 class CassandraMissingError(Exception):
     def __init__(self) -> None:
@@ -76,7 +86,12 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="The list of contact points to try connecting for cluster discovery.", default=["127.0.0.1"]
     )
     private_ips = ListField[str](doc="List of internal IP addresses for contact_points.", default=[])
+    port = Field[int](doc="Port number to connect to.", default=9042)
     keyspace = Field[str](doc="Default keyspace for operations.", default="apdb")
+    username = Field[str](
+        doc=f"Cassandra user name, if empty then {DB_AUTH_PATH} has to provide it with password.",
+        default="",
+    )
     read_consistency = Field[str](
         doc="Name for consistency level of read operations, default: QUORUM, can be ONE.", default="QUORUM"
     )
@@ -196,15 +211,17 @@ class ApdbCassandra(Apdb):
 
         addressTranslator: Optional[AddressTranslator] = None
         if config.private_ips:
-            addressTranslator = _AddressTranslator(config.contact_points, config.private_ips)
+            addressTranslator = _AddressTranslator(list(config.contact_points), list(config.private_ips))
 
         self._keyspace = config.keyspace
 
         self._cluster = Cluster(
             execution_profiles=self._makeProfiles(config),
             contact_points=self.config.contact_points,
+            port=self.config.port,
             address_translator=addressTranslator,
             protocol_version=self.config.protocol_version,
+            auth_provider=self._make_auth_provider(config),
         )
         self._session = self._cluster.connect()
         # Disable result paging
@@ -225,7 +242,40 @@ class ApdbCassandra(Apdb):
         self._prepared_statements: Dict[str, cassandra.query.PreparedStatement] = {}
 
     def __del__(self) -> None:
-        self._cluster.shutdown()
+        if hasattr(self, "_cluster"):
+            self._cluster.shutdown()
+
+    def _make_auth_provider(self, config: ApdbCassandraConfig) -> AuthProvider | None:
+        """Make Cassandra authentication provider instance."""
+        try:
+            dbauth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
+        except DbAuthNotFoundError:
+            # Credentials file doesn't exist, use anonymous login.
+            return None
+
+        empty_username = True
+        # Try every contact point in turn.
+        for hostname in config.contact_points:
+            try:
+                username, password = dbauth.getAuth(
+                    "cassandra", config.username, hostname, config.port, config.keyspace
+                )
+                if not username:
+                    # Password without user name, try next hostname, but give
+                    # warning later if no better match is found.
+                    empty_username = True
+                else:
+                    return PlainTextAuthProvider(username=username, password=password)
+            except DbAuthNotFoundError:
+                pass
+
+        if empty_username:
+            _LOG.warning(
+                f"Credentials file ({DB_AUTH_PATH} or ${DB_AUTH_ENVVAR}) provided password but not "
+                f"user name, anonymous Cassandra logon will be attempted."
+            )
+
+        return None
 
     def tableDef(self, table: ApdbTables) -> Optional[Table]:
         # docstring is inherited from a base class

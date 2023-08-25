@@ -363,6 +363,13 @@ class ApdbCassandraSchema(ApdbSchema):
             DiaForcedSource tables. If `None` then per-partition tables are
             not created.
         """
+        # Try to create keyspace if it does not exist
+        query = (
+            f'CREATE KEYSPACE IF NOT EXISTS "{self._keyspace}"'
+            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 3}"
+        )
+        self._session.execute(query)
+
         for table in self._apdb_tables:
             self._makeTableSchema(table, drop, part_range)
         for extra_table in self._extra_tables:
