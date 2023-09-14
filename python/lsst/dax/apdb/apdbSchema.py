@@ -19,7 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""This module contains methods and classes for generic APDB schema operations.
+"""Module containing methods and classes for generic APDB schema operations.
 
 The code in this module is independent of the specific technology used to
 implement APDB.
@@ -162,7 +162,6 @@ class ApdbSchema:
         schemas : `dict`
             Mapping of table names to `TableDef` instances.
         """
-
         schema_file = os.path.expandvars(schema_file)
         with open(schema_file) as yaml_stream:
             schemas_list = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))

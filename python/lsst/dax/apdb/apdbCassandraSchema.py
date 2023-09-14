@@ -72,7 +72,8 @@ class ExtraTables(enum.Enum):
     @classmethod
     def insert_id_tables(cls) -> Mapping[ExtraTables, ApdbTables]:
         """Return mapping of tables used for insert ID tracking to their
-        corresponding regular tables."""
+        corresponding regular tables.
+        """
         return {
             cls.DiaObjectInsertId: ApdbTables.DiaObject,
             cls.DiaSourceInsertId: ApdbTables.DiaSource,
@@ -286,7 +287,7 @@ class ApdbCassandraSchema(ApdbSchema):
         return table_name.table_name(self._prefix)
 
     def getColumnMap(self, table_name: ApdbTables | ExtraTables) -> Mapping[str, simple.Column]:
-        """Returns mapping of column names to Column definitions.
+        """Return mapping of column names to Column definitions.
 
         Parameters
         ----------
@@ -303,7 +304,8 @@ class ApdbCassandraSchema(ApdbSchema):
         return cmap
 
     def apdbColumnNames(self, table_name: ApdbTables | ExtraTables) -> List[str]:
-        """Return a list of columns names for a table as defined in APDB schema.
+        """Return a list of columns names for a table as defined in APDB
+        schema.
 
         Parameters
         ----------
@@ -363,6 +365,13 @@ class ApdbCassandraSchema(ApdbSchema):
             DiaForcedSource tables. If `None` then per-partition tables are
             not created.
         """
+        # Try to create keyspace if it does not exist
+        query = (
+            f'CREATE KEYSPACE IF NOT EXISTS "{self._keyspace}"'
+            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 3}"
+        )
+        self._session.execute(query)
+
         for table in self._apdb_tables:
             self._makeTableSchema(table, drop, part_range)
         for extra_table in self._extra_tables:

@@ -98,7 +98,9 @@ else:
 
 
 def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
-    """Change type of the uint64 columns to int64, return copy of data frame."""
+    """Change the type of uint64 columns to int64, and return copy of data
+    frame.
+    """
     names = [c[0] for c in df.dtypes.items() if c[1] == np.uint64]
     return df.astype({name: np.int64 for name in names})
 
@@ -268,7 +270,7 @@ class ApdbSql(Apdb):
         self.use_insert_id = self._schema.has_insert_id
 
     def tableRowCount(self) -> Dict[str, int]:
-        """Returns dictionary with the table names and row counts.
+        """Return dictionary with the table names and row counts.
 
         Used by ``ap_proto`` to keep track of the size of the database tables.
         Depending on database technology this could be expensive operation.
@@ -347,43 +349,7 @@ class ApdbSql(Apdb):
     def getDiaForcedSources(
         self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
     ) -> Optional[pandas.DataFrame]:
-        """Return catalog of DiaForcedSource instances from a given region.
-
-        Parameters
-        ----------
-        region : `lsst.sphgeom.Region`
-            Region to search for DIASources.
-        object_ids : iterable [ `int` ], optional
-            List of DiaObject IDs to further constrain the set of returned
-            sources. If list is empty then empty catalog is returned with a
-            correct schema.
-        visit_time : `lsst.daf.base.DateTime`
-            Time of the current visit.
-
-        Returns
-        -------
-        catalog : `pandas.DataFrame`, or `None`
-            Catalog containing DiaSource records. `None` is returned if
-            ``read_sources_months`` configuration parameter is set to 0.
-
-        Raises
-        ------
-        NotImplementedError
-            Raised if ``object_ids`` is `None`.
-
-        Notes
-        -----
-        Even though base class allows `None` to be passed for ``object_ids``,
-        this class requires ``object_ids`` to be not-`None`.
-        `NotImplementedError` is raised if `None` is passed.
-
-        This method returns DiaForcedSource catalog for a region with additional
-        filtering based on DiaObject IDs. Only a subset of DiaSource history
-        is returned limited by ``read_forced_sources_months`` config parameter,
-        w.r.t. ``visit_time``. If ``object_ids`` is empty then an empty catalog
-        is always returned with a correct schema (columns/types).
-        """
-
+        # docstring is inherited from a base class
         if self.config.read_forced_sources_months == 0:
             _LOG.debug("Skip DiaForceSources fetching")
             return None
@@ -449,7 +415,9 @@ class ApdbSql(Apdb):
         table_enum: ApdbTables,
         history_table_enum: ExtraTables,
     ) -> ApdbTableData:
-        """Common implementation of the history methods."""
+        """Return catalog of records for given insert identifiers, common
+        implementation for all DIA tables.
+        """
         if not self._schema.has_insert_id:
             raise ValueError("APDB is not configured for history retrieval")
 
@@ -552,8 +520,8 @@ class ApdbSql(Apdb):
 
         with self._engine.begin() as conn:
             # Need to make sure that every ID exists in the database, but
-            # executemany may not support rowcount, so iterate and check what is
-            # missing.
+            # executemany may not support rowcount, so iterate and check what
+            # is missing.
             missing_ids: List[int] = []
             for key, value in idMap.items():
                 params = dict(srcId=key, diaObjectId=0, ssObjectId=value)
@@ -585,7 +553,7 @@ class ApdbSql(Apdb):
         return count
 
     def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime) -> pandas.DataFrame:
-        """Returns catalog of DiaSource instances from given region.
+        """Return catalog of DiaSource instances from given region.
 
         Parameters
         ----------
@@ -621,7 +589,7 @@ class ApdbSql(Apdb):
         return sources
 
     def _getDiaSourcesByIDs(self, object_ids: List[int], visit_time: dafBase.DateTime) -> pandas.DataFrame:
-        """Returns catalog of DiaSource instances given set of DiaObject IDs.
+        """Return catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
         ----------
@@ -649,7 +617,7 @@ class ApdbSql(Apdb):
     def _getSourcesByIDs(
         self, table_enum: ApdbTables, object_ids: List[int], midpointMjdTai_start: float
     ) -> pandas.DataFrame:
-        """Returns catalog of DiaSource or DiaForcedSource instances given set
+        """Return catalog of DiaSource or DiaForcedSource instances given set
         of DiaObject IDs.
 
         Parameters
@@ -733,7 +701,6 @@ class ApdbSql(Apdb):
         insert_id : `ApdbInsertId`
             Insert identifier.
         """
-
         # Some types like np.int64 can cause issues with sqlalchemy, convert
         # them to int.
         ids = sorted(int(oid) for oid in objs["diaObjectId"])
@@ -745,8 +712,7 @@ class ApdbSql(Apdb):
 
         # everything to be done in single transaction
         if self.config.dia_object_index == "last_object_table":
-            # insert and replace all records in LAST table, mysql and postgres have
-            # non-standard features
+            # Insert and replace all records in LAST table.
             table = self._schema.get_table(ApdbTables.DiaObjectLast)
 
             # Drop the previous objects (pandas cannot upsert).
@@ -762,8 +728,8 @@ class ApdbSql(Apdb):
             last_objs = _coerce_uint64(last_objs)
 
             if "lastNonForcedSource" in last_objs.columns:
-                # lastNonForcedSource is defined NOT NULL, fill it with visit time
-                # just in case.
+                # lastNonForcedSource is defined NOT NULL, fill it with visit
+                # time just in case.
                 last_objs["lastNonForcedSource"].fillna(dt, inplace=True)
             else:
                 extra_column = pandas.Series([dt] * len(objs), name="lastNonForcedSource")

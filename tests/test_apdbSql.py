@@ -84,7 +84,7 @@ class ApdbSQLiteTestCasePixIdIovIndex(ApdbSQLiteTestCase):
 
 
 class ApdbSQLiteTestCaseInsertIds(ApdbSQLiteTestCase):
-    """A test case for ApdbSql class using SQLite backend with use_insert_id."""
+    """Test case for ApdbSql class using SQLite backend with use_insert_id."""
 
     use_insert_id = True
 
@@ -166,10 +166,11 @@ class ApdbSchemaUpdateSQLiteTestCase(unittest.TestCase, ApdbSchemaUpdateTest):
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
-    pass
+    """Run file leak tests."""
 
 
 def setup_module(module: Any) -> None:
+    """Configure pytest."""
     lsst.utils.tests.init()
 
 

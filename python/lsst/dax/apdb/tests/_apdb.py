@@ -132,7 +132,6 @@ class ApdbTest(ABC):
         All get() methods should return empty results, only useful for
         checking that code is not broken.
         """
-
         # use non-zero months for Forced/Source fetching
         config = self.make_config()
         apdb = make_apdb(config)
@@ -179,7 +178,6 @@ class ApdbTest(ABC):
 
         All get() methods should return empty DataFrame or None.
         """
-
         # set read_sources_months to 0 so that Forced/Sources are None
         config = self.make_config(read_sources_months=0, read_forced_sources_months=0)
         apdb = make_apdb(config)
@@ -208,7 +206,6 @@ class ApdbTest(ABC):
 
     def test_storeObjects(self) -> None:
         """Store and retrieve DiaObjects."""
-
         # don't care about sources.
         config = self.make_config()
         apdb = make_apdb(config)
@@ -258,7 +255,6 @@ class ApdbTest(ABC):
 
     def test_storeForcedSources(self) -> None:
         """Store and retrieve DiaForcedSources."""
-
         config = self.make_config()
         apdb = make_apdb(config)
         apdb.makeSchema()
@@ -283,7 +279,6 @@ class ApdbTest(ABC):
 
     def test_getHistory(self) -> None:
         """Store and retrieve catalog history."""
-
         # don't care about sources.
         config = self.make_config()
         apdb = make_apdb(config)
@@ -351,7 +346,6 @@ class ApdbTest(ABC):
 
     def test_storeSSObjects(self) -> None:
         """Store and retrieve SSObjects."""
-
         # don't care about sources.
         config = self.make_config()
         apdb = make_apdb(config)
@@ -377,7 +371,6 @@ class ApdbTest(ABC):
 
     def test_reassignObjects(self) -> None:
         """Reassign DiaObjects."""
-
         # don't care about sources.
         config = self.make_config()
         apdb = make_apdb(config)
@@ -516,7 +509,6 @@ class ApdbSchemaUpdateTest(ABC):
         """Check that new code can work with old schema without history
         tables.
         """
-
         # Make schema without history tables.
         config = self.make_config(use_insert_id=False)
         apdb = make_apdb(config)
