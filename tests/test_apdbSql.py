@@ -124,6 +124,7 @@ class ApdbPostgresTestCase(unittest.TestCase, ApdbTest):
             "db_url": self.server.url(),
             "schema_file": TEST_SCHEMA,
             "dia_object_index": self.dia_object_index,
+            "use_insert_id": self.use_insert_id,
         }
         kw.update(kwargs)
         return ApdbSqlConfig(**kw)
