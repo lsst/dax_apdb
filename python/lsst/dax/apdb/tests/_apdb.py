@@ -320,8 +320,9 @@ class ApdbTest(ABC):
             assert insert_ids is not None
             self.assertEqual(len(insert_ids), 8)
 
-            def _check_history(insert_ids: list[ApdbInsertId]) -> None:
-                n_records = len(insert_ids) * nobj
+            def _check_history(insert_ids: list[ApdbInsertId], n_records: int | None = None) -> None:
+                if n_records is None:
+                    n_records = len(insert_ids) * nobj
                 res = apdb.getDiaObjectsHistory(insert_ids)
                 self.assert_table_data(res, n_records, ApdbTables.DiaObject)
                 res = apdb.getDiaSourcesHistory(insert_ids)
@@ -337,7 +338,12 @@ class ApdbTest(ABC):
             _check_history([])
 
             # try to remove some of those
-            apdb.deleteInsertIds(insert_ids[:2])
+            deleted_ids = insert_ids[:2]
+            apdb.deleteInsertIds(deleted_ids)
+
+            # All queries on deleted ids should return empty set.
+            _check_history(deleted_ids, 0)
+
             insert_ids = apdb.getInsertIds()
             assert insert_ids is not None
             self.assertEqual(len(insert_ids), 6)

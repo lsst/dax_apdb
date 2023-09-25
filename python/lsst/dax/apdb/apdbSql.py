@@ -28,7 +28,8 @@ __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
-from typing import Any, Dict, List, Optional, Tuple, cast
+from contextlib import closing
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import lsst.daf.base as dafBase
 import numpy as np
@@ -46,6 +47,9 @@ from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
 from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from .timer import Timer
+
+if TYPE_CHECKING:
+    import sqlite3
 
 _LOG = logging.getLogger(__name__)
 
@@ -123,6 +127,14 @@ def _make_midpointMjdTai_start(visit_time: dafBase.DateTime, months: int) -> flo
     # TODO: `system` must be consistent with the code in ap_association
     # (see DM-31996)
     return visit_time.get(system=dafBase.DateTime.MJD) - months * 30
+
+
+def _onSqlite3Connect(
+    dbapiConnection: sqlite3.Connection, connectionRecord: sqlalchemy.pool._ConnectionRecord
+) -> None:
+    # Enable foreign keys
+    with closing(dbapiConnection.cursor()) as cursor:
+        cursor.execute("PRAGMA foreign_keys=ON;")
 
 
 class ApdbSqlConfig(ApdbConfig):
@@ -254,6 +266,10 @@ class ApdbSql(Apdb):
                 conn_args.update(connect_timeout=self.config.connection_timeout)
         kw.update(connect_args=conn_args)
         self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
+
+        if self._engine.dialect.name == "sqlite":
+            # Need to enable foreign keys on every new connection.
+            sqlalchemy.event.listen(self._engine, "connect", _onSqlite3Connect)
 
         self._schema = ApdbSqlSchema(
             engine=self._engine,
