@@ -155,6 +155,13 @@ class ApdbCassandraConfig(ApdbConfig):
         default=False,
         doc="If True then build one query per spatial partition, otherwise build single query.",
     )
+    use_insert_id_skips_diaobjects = Field[bool](
+        default=False,
+        doc=(
+            "If True then do not store DiaObjects when use_insert_id is True "
+            "(DiaObjectsInsertId has the same data)."
+        ),
+    )
 
 
 if CASSANDRA_IMPORTED:
@@ -376,7 +383,10 @@ class ApdbCassandra(Apdb):
         )
         # order by insert_time
         rows = sorted(result)
-        return [ApdbInsertId(row[1]) for row in rows]
+        return [
+            ApdbInsertId(id=row[1], insert_time=dafBase.DateTime(int(row[0].timestamp() * 1e9)))
+            for row in rows
+        ]
 
     def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
         # docstring is inherited from a base class
@@ -399,6 +409,20 @@ class ApdbCassandra(Apdb):
             [partition] + insert_ids,
             timeout=self.config.write_timeout,
         )
+
+        # Also remove those insert_ids from Dia*InsertId tables.abs
+        for table in (
+            ExtraTables.DiaObjectInsertId,
+            ExtraTables.DiaSourceInsertId,
+            ExtraTables.DiaForcedSourceInsertId,
+        ):
+            table_name = self._schema.tableName(table)
+            query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
+            self._session.execute(
+                self._prep_statement(query),
+                insert_ids,
+                timeout=self.config.write_timeout,
+            )
 
     def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
         # docstring is inherited from a base class
@@ -436,7 +460,7 @@ class ApdbCassandra(Apdb):
 
         insert_id: ApdbInsertId | None = None
         if self._schema.has_insert_id:
-            insert_id = ApdbInsertId.new_insert_id()
+            insert_id = ApdbInsertId.new_insert_id(visit_time)
             self._storeInsertId(insert_id, visit_time)
 
         # fill region partition column for DiaObjects
@@ -487,11 +511,11 @@ class ApdbCassandra(Apdb):
 
         # Make mapping from source ID to its partition.
         id2partitions: Dict[int, Tuple[int, int]] = {}
-        id2insert_id: Dict[int, ApdbInsertId] = {}
+        id2insert_id: Dict[int, uuid.UUID] = {}
         for row in result:
             id2partitions[row[0]] = row[1:3]
             if row[3] is not None:
-                id2insert_id[row[0]] = ApdbInsertId(row[3])
+                id2insert_id[row[0]] = row[3]
 
         # make sure we know partitions for each ID
         if set(id2partitions) != set(idMap):
@@ -527,7 +551,7 @@ class ApdbCassandra(Apdb):
             # should be handled by WHERE in UPDATE.
             known_ids = set()
             if insert_ids := self.getInsertIds():
-                known_ids = set(insert_ids)
+                known_ids = set(insert_id.id for insert_id in insert_ids)
             id2insert_id = {key: value for key, value in id2insert_id.items() if value in known_ids}
             if id2insert_id:
                 table_name = self._schema.tableName(ExtraTables.DiaSourceInsertId)
@@ -538,7 +562,7 @@ class ApdbCassandra(Apdb):
                             ' SET "ssObjectId" = ?, "diaObjectId" = NULL '
                             'WHERE "insert_id" = ? AND "diaSourceId" = ?'
                         )
-                        values = (ssObjectId, insert_id.id, diaSourceId)
+                        values = (ssObjectId, insert_id, diaSourceId)
                         queries.add(self._prep_statement(query), values)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
@@ -703,7 +727,7 @@ class ApdbCassandra(Apdb):
 
     def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime) -> None:
         # Cassandra timestamp uses milliseconds since epoch
-        timestamp = visit_time.nsecs() // 1_000_000
+        timestamp = insert_id.insert_time.nsecs() // 1_000_000
 
         # everything goes into a single partition
         partition = 0
@@ -743,7 +767,12 @@ class ApdbCassandra(Apdb):
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
-        self._storeObjectsPandas(objs, ApdbTables.DiaObject, extra_columns=extra_columns, time_part=time_part)
+        # Only store DiaObects if not storing insert_ids or explicitly
+        # configured to always store them
+        if insert_id is None or not self.config.use_insert_id_skips_diaobjects:
+            self._storeObjectsPandas(
+                objs, ApdbTables.DiaObject, extra_columns=extra_columns, time_part=time_part
+            )
 
         if insert_id is not None:
             extra_columns = dict(insert_id=insert_id.id, validityStart=visit_time_dt)

@@ -378,11 +378,17 @@ class ApdbSql(Apdb):
 
         table = self._schema.get_table(ExtraTables.DiaInsertId)
         assert table is not None, "has_insert_id=True means it must be defined"
-        query = sql.select(table.columns["insert_id"]).order_by(table.columns["insert_time"])
+        query = sql.select(table.columns["insert_id"], table.columns["insert_time"]).order_by(
+            table.columns["insert_time"]
+        )
         with Timer("DiaObject insert id select", self.config.timer):
             with self._engine.connect() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
-                return [ApdbInsertId(row) for row in result.scalars()]
+                ids = []
+                for row in result:
+                    insert_time = dafBase.DateTime(int(row[1].timestamp() * 1e9))
+                    ids.append(ApdbInsertId(id=row[0], insert_time=insert_time))
+                return ids
 
     def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
         # docstring is inherited from a base class
@@ -463,7 +469,7 @@ class ApdbSql(Apdb):
         with self._engine.begin() as connection:
             insert_id: ApdbInsertId | None = None
             if self._schema.has_insert_id:
-                insert_id = ApdbInsertId.new_insert_id()
+                insert_id = ApdbInsertId.new_insert_id(visit_time)
                 self._storeInsertId(insert_id, visit_time, connection)
 
             # fill pixelId column for DiaObjects

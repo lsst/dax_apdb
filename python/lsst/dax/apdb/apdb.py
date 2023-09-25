@@ -109,11 +109,15 @@ class ApdbInsertId:
     """
 
     id: UUID
+    insert_time: dafBase.DateTime
+    """Time of this insert, usually corresponds to visit time
+    (`dafBase.DateTime`).
+    """
 
     @classmethod
-    def new_insert_id(cls) -> ApdbInsertId:
+    def new_insert_id(cls, insert_time: dafBase.DateTime) -> ApdbInsertId:
         """Generate new unique insert identifier."""
-        return ApdbInsertId(id=uuid4())
+        return ApdbInsertId(id=uuid4(), insert_time=insert_time)
 
 
 class Apdb(ABC):
