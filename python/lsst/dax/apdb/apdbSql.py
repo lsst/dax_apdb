@@ -29,7 +29,7 @@ __all__ = ["ApdbSqlConfig", "ApdbSql"]
 import logging
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from contextlib import closing
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import lsst.daf.base as dafBase
 import numpy as np
@@ -251,7 +251,7 @@ class ApdbSql(Apdb):
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
         kw: MutableMapping[str, Any] = dict(echo=self.config.sql_echo)
-        conn_args: Dict[str, Any] = dict()
+        conn_args: dict[str, Any] = dict()
         if not self.config.connection_pool:
             kw.update(poolclass=NullPool)
         if self.config.isolation_level is not None:
@@ -285,7 +285,7 @@ class ApdbSql(Apdb):
         self.pixelator = HtmPixelization(self.config.htm_level)
         self.use_insert_id = self._schema.has_insert_id
 
-    def tableRowCount(self) -> Dict[str, int]:
+    def tableRowCount(self) -> dict[str, int]:
         """Return dictionary with the table names and row counts.
 
         Used by ``ap_proto`` to keep track of the size of the database tables.
@@ -309,7 +309,7 @@ class ApdbSql(Apdb):
 
         return res
 
-    def tableDef(self, table: ApdbTables) -> Optional[Table]:
+    def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
@@ -349,8 +349,8 @@ class ApdbSql(Apdb):
         return objects
 
     def getDiaSources(
-        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
-    ) -> Optional[pandas.DataFrame]:
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+    ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         if self.config.read_sources_months == 0:
             _LOG.debug("Skip DiaSources fetching")
@@ -363,8 +363,8 @@ class ApdbSql(Apdb):
             return self._getDiaSourcesByIDs(list(object_ids), visit_time)
 
     def getDiaForcedSources(
-        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
-    ) -> Optional[pandas.DataFrame]:
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+    ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         if self.config.read_forced_sources_months == 0:
             _LOG.debug("Skip DiaForceSources fetching")
@@ -476,8 +476,8 @@ class ApdbSql(Apdb):
         self,
         visit_time: dafBase.DateTime,
         objects: pandas.DataFrame,
-        sources: Optional[pandas.DataFrame] = None,
-        forced_sources: Optional[pandas.DataFrame] = None,
+        sources: pandas.DataFrame | None = None,
+        forced_sources: pandas.DataFrame | None = None,
     ) -> None:
         # docstring is inherited from a base class
 
@@ -544,7 +544,7 @@ class ApdbSql(Apdb):
             # Need to make sure that every ID exists in the database, but
             # executemany may not support rowcount, so iterate and check what
             # is missing.
-            missing_ids: List[int] = []
+            missing_ids: list[int] = []
             for key, value in idMap.items():
                 params = dict(srcId=key, diaObjectId=0, ssObjectId=value)
                 result = conn.execute(query, params)
@@ -610,7 +610,7 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def _getDiaSourcesByIDs(self, object_ids: List[int], visit_time: dafBase.DateTime) -> pandas.DataFrame:
+    def _getDiaSourcesByIDs(self, object_ids: list[int], visit_time: dafBase.DateTime) -> pandas.DataFrame:
         """Return catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
@@ -637,7 +637,7 @@ class ApdbSql(Apdb):
         return sources
 
     def _getSourcesByIDs(
-        self, table_enum: ApdbTables, object_ids: List[int], midpointMjdTai_start: float
+        self, table_enum: ApdbTables, object_ids: list[int], midpointMjdTai_start: float
     ) -> pandas.DataFrame:
         """Return catalog of DiaSource or DiaForcedSource instances given set
         of DiaObject IDs.
@@ -661,7 +661,7 @@ class ApdbSql(Apdb):
         table = self._schema.get_table(table_enum)
         columns = self._schema.get_apdb_columns(table_enum)
 
-        sources: Optional[pandas.DataFrame] = None
+        sources: pandas.DataFrame | None = None
         if len(object_ids) <= 0:
             _LOG.debug("ID list is empty, just fetch empty result")
             query = sql.select(*columns).where(sql.literal(False))
@@ -790,7 +790,7 @@ class ApdbSql(Apdb):
         objs = _coerce_uint64(objs)
 
         # Fill additional columns
-        extra_columns: List[pandas.Series] = []
+        extra_columns: list[pandas.Series] = []
         if "validityStart" in objs.columns:
             objs["validityStart"] = dt
         else:
@@ -911,7 +911,7 @@ class ApdbSql(Apdb):
             if history_stmt is not None:
                 connection.execute(history_stmt, history)
 
-    def _htm_indices(self, region: Region) -> List[Tuple[int, int]]:
+    def _htm_indices(self, region: Region) -> list[tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.
 
         Parameters
@@ -976,7 +976,7 @@ class ApdbSql(Apdb):
         (pixelId). Original DataFrame is not changed, copy of a DataFrame is
         returned.
         """
-        pixel_id_map: Dict[int, int] = {
+        pixel_id_map: dict[int, int] = {
             diaObjectId: pixelId
             for diaObjectId, pixelId in zip(objs["diaObjectId"], objs[self.config.htm_index_column])
         }

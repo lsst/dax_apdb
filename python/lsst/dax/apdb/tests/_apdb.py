@@ -25,7 +25,7 @@ __all__ = ["ApdbSchemaUpdateTest", "ApdbTest"]
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, ContextManager, Optional
+from typing import TYPE_CHECKING, Any, ContextManager
 
 import pandas
 from lsst.daf.base import DateTime
@@ -140,7 +140,7 @@ class ApdbTest(ABC):
         region = _make_region()
         visit_time = self.visit_time
 
-        res: Optional[pandas.DataFrame]
+        res: pandas.DataFrame | None
 
         # get objects by region
         res = apdb.getDiaObjects(region)
@@ -186,7 +186,7 @@ class ApdbTest(ABC):
         region = _make_region()
         visit_time = self.visit_time
 
-        res: Optional[pandas.DataFrame]
+        res: pandas.DataFrame | None
 
         # get objects by region
         res = apdb.getDiaObjects(region)

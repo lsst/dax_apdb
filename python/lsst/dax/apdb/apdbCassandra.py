@@ -25,7 +25,8 @@ __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
 import logging
 import uuid
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Set, Tuple, Union, cast
+from collections.abc import Iterable, Iterator, Mapping, Set
+from typing import Any, cast
 
 import numpy as np
 import pandas
@@ -172,7 +173,7 @@ if CASSANDRA_IMPORTED:
         Only used for docker-based setup, not viable long-term solution.
         """
 
-        def __init__(self, public_ips: List[str], private_ips: List[str]):
+        def __init__(self, public_ips: list[str], private_ips: list[str]):
             self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
 
         def translate(self, private_ip: str) -> str:
@@ -218,7 +219,7 @@ class ApdbCassandra(Apdb):
             config.part_pixelization, config.part_pix_level, config.part_pix_max_ranges
         )
 
-        addressTranslator: Optional[AddressTranslator] = None
+        addressTranslator: AddressTranslator | None = None
         if config.private_ips:
             addressTranslator = _AddressTranslator(list(config.contact_points), list(config.private_ips))
 
@@ -248,7 +249,7 @@ class ApdbCassandra(Apdb):
         self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
         # Cache for prepared statements
-        self._prepared_statements: Dict[str, cassandra.query.PreparedStatement] = {}
+        self._prepared_statements: dict[str, cassandra.query.PreparedStatement] = {}
 
     def __del__(self) -> None:
         if hasattr(self, "_cluster"):
@@ -286,7 +287,7 @@ class ApdbCassandra(Apdb):
 
         return None
 
-    def tableDef(self, table: ApdbTables) -> Optional[Table]:
+    def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
@@ -316,7 +317,7 @@ class ApdbCassandra(Apdb):
 
         table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
         query = f'SELECT {what} from "{self._keyspace}"."{table_name}"'
-        statements: List[Tuple] = []
+        statements: list[tuple] = []
         for where, params in sp_where:
             full_query = f"{query} WHERE {where}"
             if params:
@@ -341,8 +342,8 @@ class ApdbCassandra(Apdb):
         return objects
 
     def getDiaSources(
-        self, region: sphgeom.Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
-    ) -> Optional[pandas.DataFrame]:
+        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+    ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         months = self.config.read_sources_months
         if months == 0:
@@ -353,8 +354,8 @@ class ApdbCassandra(Apdb):
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaSource)
 
     def getDiaForcedSources(
-        self, region: sphgeom.Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
-    ) -> Optional[pandas.DataFrame]:
+        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+    ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         months = self.config.read_forced_sources_months
         if months == 0:
@@ -453,8 +454,8 @@ class ApdbCassandra(Apdb):
         self,
         visit_time: dafBase.DateTime,
         objects: pandas.DataFrame,
-        sources: Optional[pandas.DataFrame] = None,
-        forced_sources: Optional[pandas.DataFrame] = None,
+        sources: pandas.DataFrame | None = None,
+        forced_sources: pandas.DataFrame | None = None,
     ) -> None:
         # docstring is inherited from a base class
 
@@ -490,7 +491,7 @@ class ApdbCassandra(Apdb):
 
         table_name = self._schema.tableName(ExtraTables.DiaSourceToPartition)
         # split it into 1k IDs per query
-        selects: List[Tuple] = []
+        selects: list[tuple] = []
         for ids in chunk_iterable(idMap.keys(), 1_000):
             ids_str = ",".join(str(item) for item in ids)
             selects.append(
@@ -505,13 +506,13 @@ class ApdbCassandra(Apdb):
 
         # No need for DataFrame here, read data as tuples.
         result = cast(
-            List[Tuple[int, int, int, uuid.UUID | None]],
+            list[tuple[int, int, int, uuid.UUID | None]],
             select_concurrent(self._session, selects, "read_tuples", self.config.read_concurrency),
         )
 
         # Make mapping from source ID to its partition.
-        id2partitions: Dict[int, Tuple[int, int]] = {}
-        id2insert_id: Dict[int, uuid.UUID] = {}
+        id2partitions: dict[int, tuple[int, int]] = {}
+        id2insert_id: dict[int, uuid.UUID] = {}
         for row in result:
             id2partitions[row[0]] = row[1:3]
             if row[3] is not None:
@@ -527,7 +528,7 @@ class ApdbCassandra(Apdb):
         table_name = self._schema.tableName(ApdbTables.DiaSource)
         for diaSourceId, ssObjectId in idMap.items():
             apdb_part, apdb_time_part = id2partitions[diaSourceId]
-            values: Tuple
+            values: tuple
             if self.config.time_partition_tables:
                 query = (
                     f'UPDATE "{self._keyspace}"."{table_name}_{apdb_time_part}"'
@@ -641,7 +642,7 @@ class ApdbCassandra(Apdb):
     def _getSources(
         self,
         region: sphgeom.Region,
-        object_ids: Optional[Iterable[int]],
+        object_ids: Iterable[int] | None,
         mjd_start: float,
         mjd_end: float,
         table_name: ApdbTables,
@@ -681,7 +682,7 @@ class ApdbCassandra(Apdb):
         what = ",".join(_quote_column(column) for column in column_names)
 
         # Build all queries
-        statements: List[Tuple] = []
+        statements: list[tuple] = []
         for table in tables:
             prefix = f'SELECT {what} from "{self._keyspace}"."{table}"'
             statements += list(self._combine_where(prefix, sp_where, temporal_where))
@@ -762,7 +763,7 @@ class ApdbCassandra(Apdb):
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
         extra_columns["validityStart"] = visit_time_dt
-        time_part: Optional[int] = self._time_partition(visit_time)
+        time_part: int | None = self._time_partition(visit_time)
         if not self.config.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
             time_part = None
@@ -794,7 +795,7 @@ class ApdbCassandra(Apdb):
         visit_time : `lsst.daf.base.DateTime`
             Time of the current visit.
         """
-        time_part: Optional[int] = self._time_partition(visit_time)
+        time_part: int | None = self._time_partition(visit_time)
         extra_columns: dict[str, Any] = {}
         if not self.config.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
@@ -835,9 +836,9 @@ class ApdbCassandra(Apdb):
     def _storeObjectsPandas(
         self,
         records: pandas.DataFrame,
-        table_name: Union[ApdbTables, ExtraTables],
-        extra_columns: Optional[Mapping] = None,
-        time_part: Optional[int] = None,
+        table_name: ApdbTables | ExtraTables,
+        extra_columns: Mapping | None = None,
+        time_part: int | None = None,
     ) -> None:
         """Store generic objects.
 
@@ -954,7 +955,7 @@ class ApdbCassandra(Apdb):
         (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
         returned.
         """
-        pixel_id_map: Dict[int, int] = {
+        pixel_id_map: dict[int, int] = {
             diaObjectId: apdb_part for diaObjectId, apdb_part in zip(objs["diaObjectId"], objs["apdb_part"])
         }
         apdb_part = np.zeros(sources.shape[0], dtype=np.int64)
@@ -989,7 +990,7 @@ class ApdbCassandra(Apdb):
         (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
         returned.
         """
-        pixel_id_map: Dict[int, int] = {
+        pixel_id_map: dict[int, int] = {
             diaObjectId: apdb_part for diaObjectId, apdb_part in zip(objs["diaObjectId"], objs["apdb_part"])
         }
         apdb_part = np.zeros(sources.shape[0], dtype=np.int64)
@@ -999,7 +1000,7 @@ class ApdbCassandra(Apdb):
         sources["apdb_part"] = apdb_part
         return sources
 
-    def _time_partition(self, time: Union[float, dafBase.DateTime]) -> int:
+    def _time_partition(self, time: float | dafBase.DateTime) -> int:
         """Calculate time partiton number for a given time.
 
         Parameters
@@ -1053,10 +1054,10 @@ class ApdbCassandra(Apdb):
     def _combine_where(
         self,
         prefix: str,
-        where1: List[Tuple[str, Tuple]],
-        where2: List[Tuple[str, Tuple]],
-        suffix: Optional[str] = None,
-    ) -> Iterator[Tuple[cassandra.query.Statement, Tuple]]:
+        where1: list[tuple[str, tuple]],
+        where2: list[tuple[str, tuple]],
+        suffix: str | None = None,
+    ) -> Iterator[tuple[cassandra.query.Statement, tuple]]:
         """Make cartesian product of two parts of WHERE clause into a series
         of statements to execute.
 
@@ -1095,8 +1096,8 @@ class ApdbCassandra(Apdb):
                 yield (statement, params)
 
     def _spatial_where(
-        self, region: Optional[sphgeom.Region], use_ranges: bool = False
-    ) -> List[Tuple[str, Tuple]]:
+        self, region: sphgeom.Region | None, use_ranges: bool = False
+    ) -> list[tuple[str, tuple]]:
         """Generate expressions for spatial part of WHERE clause.
 
         Parameters
@@ -1118,7 +1119,7 @@ class ApdbCassandra(Apdb):
             return []
         if use_ranges:
             pixel_ranges = self._pixelization.envelope(region)
-            expressions: List[Tuple[str, Tuple]] = []
+            expressions: list[tuple[str, tuple]] = []
             for lower, upper in pixel_ranges:
                 upper -= 1
                 if lower == upper:
@@ -1137,10 +1138,10 @@ class ApdbCassandra(Apdb):
     def _temporal_where(
         self,
         table: ApdbTables,
-        start_time: Union[float, dafBase.DateTime],
-        end_time: Union[float, dafBase.DateTime],
-        query_per_time_part: Optional[bool] = None,
-    ) -> Tuple[List[str], List[Tuple[str, Tuple]]]:
+        start_time: float | dafBase.DateTime,
+        end_time: float | dafBase.DateTime,
+        query_per_time_part: bool | None = None,
+    ) -> tuple[list[str], list[tuple[str, tuple]]]:
         """Generate table names and expressions for temporal part of WHERE
         clauses.
 
@@ -1162,8 +1163,8 @@ class ApdbCassandra(Apdb):
         expressions : `list` [ `tuple` ]
             A list of zero or more (expression, parameters) tuples.
         """
-        tables: List[str]
-        temporal_where: List[Tuple[str, Tuple]] = []
+        tables: list[str]
+        temporal_where: list[tuple[str, tuple]] = []
         table_name = self._schema.tableName(table)
         time_part_start = self._time_partition(start_time)
         time_part_end = self._time_partition(end_time)

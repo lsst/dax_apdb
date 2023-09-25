@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import resource
 import time
-from typing import Any, Optional, Type
+from typing import Any
 
 _LOG = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class Timer:
         self.start()
         return self
 
-    def __exit__(self, exc_type: Optional[Type], exc_val: Any, exc_tb: Any) -> Any:
+    def __exit__(self, exc_type: type | None, exc_val: Any, exc_tb: Any) -> Any:
         """
         Exit context, stop and dump timer
         """

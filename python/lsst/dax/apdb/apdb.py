@@ -27,7 +27,6 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Optional
 from uuid import UUID, uuid4
 
 import lsst.daf.base as dafBase
@@ -126,7 +125,7 @@ class Apdb(ABC):
     ConfigClass = ApdbConfig
 
     @abstractmethod
-    def tableDef(self, table: ApdbTables) -> Optional[Table]:
+    def tableDef(self, table: ApdbTables) -> Table | None:
         """Return table schema definition for a given table.
 
         Parameters
@@ -177,8 +176,8 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaSources(
-        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
-    ) -> Optional[pandas.DataFrame]:
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+    ) -> pandas.DataFrame | None:
         """Return catalog of DiaSource instances from a given region.
 
         Parameters
@@ -213,8 +212,8 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaForcedSources(
-        self, region: Region, object_ids: Optional[Iterable[int]], visit_time: dafBase.DateTime
-    ) -> Optional[pandas.DataFrame]:
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+    ) -> pandas.DataFrame | None:
         """Return catalog of DiaForcedSource instances from a given region.
 
         Parameters
@@ -370,8 +369,8 @@ class Apdb(ABC):
         self,
         visit_time: dafBase.DateTime,
         objects: pandas.DataFrame,
-        sources: Optional[pandas.DataFrame] = None,
-        forced_sources: Optional[pandas.DataFrame] = None,
+        sources: pandas.DataFrame | None = None,
+        forced_sources: pandas.DataFrame | None = None,
     ) -> None:
         """Store all three types of catalogs in the database.
 

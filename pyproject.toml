@@ -15,7 +15,6 @@ classifiers = [
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Astronomy",
@@ -109,8 +108,6 @@ extend-select = [
 ]
 
 [tool.ruff.per-file-ignores]
-# parserYacc docstrings can not be fixed. Docstrings are used to define grammar.
-"python/lsst/daf/butler/registry/queries/expressions/parser/parserYacc.py" = ["D401", "D403"]
 
 [tool.ruff.pycodestyle]
 max-doc-length = 79
