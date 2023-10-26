@@ -24,8 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbSchemaUpdateTest", "ApdbTest"]
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, ContextManager, Optional
+from typing import TYPE_CHECKING, Any
 
 import pandas
 from lsst.daf.base import DateTime
@@ -33,6 +32,17 @@ from lsst.dax.apdb import ApdbConfig, ApdbInsertId, ApdbTableData, ApdbTables, m
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
+
+if TYPE_CHECKING:
+    import unittest
+
+    class TestCaseMixin(unittest.TestCase):
+        """Base class for mixin test classes that use TestCase methods."""
+
+else:
+
+    class TestCaseMixin:
+        """Do-nothing definition of mixin base class for regular execution."""
 
 
 def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
@@ -43,7 +53,7 @@ def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
     return region
 
 
-class ApdbTest(ABC):
+class ApdbTest(TestCaseMixin, ABC):
     """Base class for Apdb tests that can be specialized for concrete
     implementation.
 
@@ -140,7 +150,7 @@ class ApdbTest(ABC):
         region = _make_region()
         visit_time = self.visit_time
 
-        res: Optional[pandas.DataFrame]
+        res: pandas.DataFrame | None
 
         # get objects by region
         res = apdb.getDiaObjects(region)
@@ -186,7 +196,7 @@ class ApdbTest(ABC):
         region = _make_region()
         visit_time = self.visit_time
 
-        res: Optional[pandas.DataFrame]
+        res: pandas.DataFrame | None
 
         # get objects by region
         res = apdb.getDiaObjects(region)
@@ -320,8 +330,9 @@ class ApdbTest(ABC):
             assert insert_ids is not None
             self.assertEqual(len(insert_ids), 8)
 
-            def _check_history(insert_ids: list[ApdbInsertId]) -> None:
-                n_records = len(insert_ids) * nobj
+            def _check_history(insert_ids: list[ApdbInsertId], n_records: int | None = None) -> None:
+                if n_records is None:
+                    n_records = len(insert_ids) * nobj
                 res = apdb.getDiaObjectsHistory(insert_ids)
                 self.assert_table_data(res, n_records, ApdbTables.DiaObject)
                 res = apdb.getDiaSourcesHistory(insert_ids)
@@ -337,7 +348,12 @@ class ApdbTest(ABC):
             _check_history([])
 
             # try to remove some of those
-            apdb.deleteInsertIds(insert_ids[:2])
+            deleted_ids = insert_ids[:2]
+            apdb.deleteInsertIds(deleted_ids)
+
+            # All queries on deleted ids should return empty set.
+            _check_history(deleted_ids, 0)
+
             insert_ids = apdb.getInsertIds()
             assert insert_ids is not None
             self.assertEqual(len(insert_ids), 6)
@@ -478,19 +494,8 @@ class ApdbTest(ABC):
         res = apdb.getDiaForcedSources(region, oids, visit_time2)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
-    if TYPE_CHECKING:
-        # This is a mixin class, some methods from unittest.TestCase declared
-        # here to silence mypy.
-        assertEqual: Callable[[Any, Any], None]
-        assertIs: Callable[[Any, Any], None]
-        assertIsInstance: Callable[[Any, Any], None]
-        assertIsNone: Callable[[Any], None]
-        assertIsNotNone: Callable[[Any], None]
-        assertRaises: Callable[[Any], ContextManager]
-        assertRaisesRegex: Callable[[Any, Any], ContextManager]
 
-
-class ApdbSchemaUpdateTest(ABC):
+class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
     """Base class for unit tests that verify how schema changes work."""
 
     visit_time = DateTime("2021-01-01T00:00:00", DateTime.TAI)
@@ -531,8 +536,3 @@ class ApdbSchemaUpdateTest(ABC):
         # There should be no history.
         insert_ids = apdb.getInsertIds()
         self.assertIsNone(insert_ids)
-
-    if TYPE_CHECKING:
-        # This is a mixin class, some methods from unittest.TestCase declared
-        # here to silence mypy.
-        assertIsNone: Callable[[Any], None]

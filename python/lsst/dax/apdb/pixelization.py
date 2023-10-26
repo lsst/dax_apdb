@@ -24,7 +24,6 @@ from __future__ import annotations
 __all__ = ["Pixelization"]
 
 import logging
-from typing import List, Tuple
 
 from lsst import sphgeom
 
@@ -56,7 +55,7 @@ class Pixelization:
             raise ValueError(f"unknown pixelization: {pixelization}")
         self._pix_max_ranges = pix_max_ranges
 
-    def pixels(self, region: sphgeom.Region) -> List[int]:
+    def pixels(self, region: sphgeom.Region) -> list[int]:
         """Compute set of the pixel indices for given region.
 
         Parameters
@@ -80,7 +79,7 @@ class Pixelization:
         index = self.pixelator.index(direction)
         return index
 
-    def envelope(self, region: sphgeom.Region) -> List[Tuple[int, int]]:
+    def envelope(self, region: sphgeom.Region) -> list[tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.
 
         Parameters

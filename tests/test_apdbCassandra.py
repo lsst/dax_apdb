@@ -38,7 +38,7 @@ import logging
 import os
 import unittest
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import lsst.utils.tests
 from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbTables
@@ -98,8 +98,8 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, unittest.TestCase, ApdbTest):
     """A test case for ApdbCassandra class"""
 
     time_partition_tables = False
-    time_partition_start: Optional[str] = None
-    time_partition_end: Optional[str] = None
+    time_partition_start: str | None = None
+    time_partition_end: str | None = None
 
     def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
         """Make config class instance used in all tests."""

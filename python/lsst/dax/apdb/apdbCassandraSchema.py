@@ -26,7 +26,7 @@ __all__ = ["ApdbCassandraSchema"]
 import enum
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 import felis.types
 from felis import simple
@@ -303,7 +303,7 @@ class ApdbCassandraSchema(ApdbSchema):
         cmap = {column.name: column for column in table_schema.columns}
         return cmap
 
-    def apdbColumnNames(self, table_name: ApdbTables | ExtraTables) -> List[str]:
+    def apdbColumnNames(self, table_name: ApdbTables | ExtraTables) -> list[str]:
         """Return a list of columns names for a table as defined in APDB
         schema.
 
@@ -320,7 +320,7 @@ class ApdbCassandraSchema(ApdbSchema):
         table_schema = self._table_schema(table_name)
         return table_schema.annotations["cassandra:apdb_column_names"]
 
-    def partitionColumns(self, table_name: ApdbTables | ExtraTables) -> List[str]:
+    def partitionColumns(self, table_name: ApdbTables | ExtraTables) -> list[str]:
         """Return a list of columns used for table partitioning.
 
         Parameters
@@ -336,7 +336,7 @@ class ApdbCassandraSchema(ApdbSchema):
         table_schema = self._table_schema(table_name)
         return table_schema.annotations.get("cassandra:partitioning_columns", [])
 
-    def clusteringColumns(self, table_name: ApdbTables | ExtraTables) -> List[str]:
+    def clusteringColumns(self, table_name: ApdbTables | ExtraTables) -> list[str]:
         """Return a list of columns used for clustering.
 
         Parameters
@@ -352,7 +352,7 @@ class ApdbCassandraSchema(ApdbSchema):
         table_schema = self._table_schema(table_name)
         return [column.name for column in table_schema.primary_key]
 
-    def makeSchema(self, drop: bool = False, part_range: Optional[Tuple[int, int]] = None) -> None:
+    def makeSchema(self, drop: bool = False, part_range: tuple[int, int] | None = None) -> None:
         """Create or re-create all tables.
 
         Parameters
@@ -383,7 +383,7 @@ class ApdbCassandraSchema(ApdbSchema):
         self,
         table: ApdbTables | ExtraTables,
         drop: bool = False,
-        part_range: Optional[Tuple[int, int]] = None,
+        part_range: tuple[int, int] | None = None,
     ) -> None:
         _LOG.debug("Making table %s", table)
 
@@ -416,7 +416,7 @@ class ApdbCassandraSchema(ApdbSchema):
             future.result()
             _LOG.debug("query finished: %s", future.query)
 
-    def _tableColumns(self, table_name: ApdbTables | ExtraTables) -> List[str]:
+    def _tableColumns(self, table_name: ApdbTables | ExtraTables) -> list[str]:
         """Return set of columns in a table
 
         Parameters

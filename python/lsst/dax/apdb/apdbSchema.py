@@ -33,7 +33,6 @@ import enum
 import logging
 import os
 from collections.abc import Mapping, MutableMapping
-from typing import Type, Union
 
 import felis.types
 import numpy
@@ -46,7 +45,7 @@ _LOG = logging.getLogger(__name__)
 # In most cases column types are determined by Cassandra driver, but in some
 # cases we need to create Pandas Dataframe ourselves and we use this map to
 # infer types of columns from their YAML schema.
-_dtype_map: Mapping[Type[felis.types.FelisType], Union[Type, str]] = {
+_dtype_map: Mapping[type[felis.types.FelisType], type | str] = {
     felis.types.Double: numpy.float64,
     felis.types.Float: numpy.float32,
     felis.types.Timestamp: "datetime64[ms]",
@@ -117,7 +116,7 @@ class ApdbSchema:
         # build complete table schema
         self.tableSchemas = self._buildSchemas(schema_file, schema_name)
 
-    def column_dtype(self, felis_type: Type[felis.types.FelisType]) -> Union[type, str]:
+    def column_dtype(self, felis_type: type[felis.types.FelisType]) -> type | str:
         """Return Pandas data type for a given Felis column type.
 
         Parameters

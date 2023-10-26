@@ -22,7 +22,8 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import numpy
 import pandas

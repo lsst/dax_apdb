@@ -29,7 +29,8 @@ __all__ = ["ApdbSqlSchema", "ExtraTables"]
 import enum
 import logging
 import uuid
-from typing import Any, Dict, List, Mapping, Optional, Type
+from collections.abc import Mapping
+from typing import Any
 
 import felis.types
 import sqlalchemy
@@ -73,7 +74,7 @@ class GUID(sqlalchemy.TypeDecorator):
         else:
             return dialect.type_descriptor(sqlalchemy.CHAR(32))
 
-    def process_bind_param(self, value: Any, dialect: sqlalchemy.engine.Dialect) -> Optional[str]:
+    def process_bind_param(self, value: Any, dialect: sqlalchemy.engine.Dialect) -> str | None:
         if value is None:
             return value
 
@@ -96,7 +97,7 @@ class GUID(sqlalchemy.TypeDecorator):
 
     def process_result_value(
         self, value: str | uuid.UUID | None, dialect: sqlalchemy.engine.Dialect
-    ) -> Optional[uuid.UUID]:
+    ) -> uuid.UUID | None:
         if value is None:
             return value
         elif isinstance(value, uuid.UUID):
@@ -186,7 +187,7 @@ class ApdbSqlSchema(ApdbSchema):
         schema_file: str,
         schema_name: str = "ApdbSchema",
         prefix: str = "",
-        namespace: Optional[str] = None,
+        namespace: str | None = None,
         use_insert_id: bool = False,
     ):
         super().__init__(schema_file, schema_name)
@@ -407,7 +408,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         return tables
 
-    def _tableColumns(self, table_name: ApdbTables) -> List[Column]:
+    def _tableColumns(self, table_name: ApdbTables) -> list[Column]:
         """Return set of columns in a table
 
         Parameters
@@ -427,7 +428,7 @@ class ApdbSqlSchema(ApdbSchema):
         # convert all column dicts into alchemy Columns
         column_defs: list[Column] = []
         for column in table_schema.columns:
-            kwargs: Dict[str, Any] = dict(nullable=column.nullable)
+            kwargs: dict[str, Any] = dict(nullable=column.nullable)
             if column.value is not None:
                 kwargs.update(server_default=str(column.value))
             if column in table_schema.primary_key:
@@ -437,7 +438,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         return column_defs
 
-    def _tableIndices(self, table_name: ApdbTables) -> List[sqlalchemy.schema.SchemaItem]:
+    def _tableIndices(self, table_name: ApdbTables) -> list[sqlalchemy.schema.SchemaItem]:
         """Return set of constraints/indices in a table
 
         Parameters
@@ -455,7 +456,7 @@ class ApdbSqlSchema(ApdbSchema):
         table_schema = self.tableSchemas[table_name]
 
         # convert all index dicts into alchemy Columns
-        index_defs: List[sqlalchemy.schema.SchemaItem] = []
+        index_defs: list[sqlalchemy.schema.SchemaItem] = []
         if table_schema.primary_key:
             index_defs.append(PrimaryKeyConstraint(*[column.name for column in table_schema.primary_key]))
         for index in table_schema.indexes:
@@ -472,7 +473,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         return index_defs
 
-    def _insertIdColumns(self, table_enum: ExtraTables) -> List[Column]:
+    def _insertIdColumns(self, table_enum: ExtraTables) -> list[Column]:
         """Return list of columns for insert ID tables."""
         column_defs: list[Column] = [Column("insert_id", GUID, nullable=False)]
         insert_id_tables = ExtraTables.insert_id_tables()
@@ -496,9 +497,9 @@ class ApdbSqlSchema(ApdbSchema):
         table_enum: ExtraTables,
         apdb_table: sqlalchemy.schema.Table,
         parent_table: sqlalchemy.schema.Table,
-    ) -> List[sqlalchemy.schema.SchemaItem]:
+    ) -> list[sqlalchemy.schema.SchemaItem]:
         """Return set of constraints/indices for insert ID tables."""
-        index_defs: List[sqlalchemy.schema.SchemaItem] = []
+        index_defs: list[sqlalchemy.schema.SchemaItem] = []
 
         # Special case for insert ID tables that are not in felis schema.
         insert_id_tables = ExtraTables.insert_id_tables()
@@ -525,7 +526,7 @@ class ApdbSqlSchema(ApdbSchema):
         return index_defs
 
     @classmethod
-    def _getDoubleType(cls, engine: sqlalchemy.engine.Engine) -> Type | sqlalchemy.types.TypeEngine:
+    def _getDoubleType(cls, engine: sqlalchemy.engine.Engine) -> type | sqlalchemy.types.TypeEngine:
         """DOUBLE type is database-specific, select one based on dialect.
 
         Parameters
