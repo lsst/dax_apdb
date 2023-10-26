@@ -103,6 +103,7 @@ class ApdbCassandraConfig(ApdbConfig):
     )
     read_timeout = Field[float](doc="Timeout in seconds for read operations.", default=120.0)
     write_timeout = Field[float](doc="Timeout in seconds for write operations.", default=10.0)
+    remove_timeout = Field[float](doc="Timeout in seconds for remove operations.", default=600.0)
     read_concurrency = Field[int](doc="Concurrency level for read operations.", default=500)
     protocol_version = Field[int](
         doc="Cassandra protocol version to use, default is V4",
@@ -394,36 +395,39 @@ class ApdbCassandra(Apdb):
         if not self._schema.has_insert_id:
             raise ValueError("APDB is not configured for history storage")
 
-        insert_ids = [id.id for id in ids]
-        params = ",".join("?" * len(insert_ids))
+        all_insert_ids = [id.id for id in ids]
+        # There is 64k limit on number of markers in Cassandra CQL
+        for insert_ids in chunk_iterable(all_insert_ids, 20_000):
+            params = ",".join("?" * len(insert_ids))
 
-        # everything goes into a single partition
-        partition = 0
+            # everything goes into a single partition
+            partition = 0
 
-        table_name = self._schema.tableName(ExtraTables.DiaInsertId)
-        query = (
-            f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE partition = ? and insert_id IN ({params})'
-        )
+            table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+            query = (
+                f'DELETE FROM "{self._keyspace}"."{table_name}" '
+                f"WHERE partition = ? AND insert_id IN ({params})"
+            )
 
-        self._session.execute(
-            self._prep_statement(query),
-            [partition] + insert_ids,
-            timeout=self.config.write_timeout,
-        )
-
-        # Also remove those insert_ids from Dia*InsertId tables.abs
-        for table in (
-            ExtraTables.DiaObjectInsertId,
-            ExtraTables.DiaSourceInsertId,
-            ExtraTables.DiaForcedSourceInsertId,
-        ):
-            table_name = self._schema.tableName(table)
-            query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
             self._session.execute(
                 self._prep_statement(query),
-                insert_ids,
-                timeout=self.config.write_timeout,
+                [partition] + list(insert_ids),
+                timeout=self.config.remove_timeout,
             )
+
+            # Also remove those insert_ids from Dia*InsertId tables.abs
+            for table in (
+                ExtraTables.DiaObjectInsertId,
+                ExtraTables.DiaSourceInsertId,
+                ExtraTables.DiaForcedSourceInsertId,
+            ):
+                table_name = self._schema.tableName(table)
+                query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
+                self._session.execute(
+                    self._prep_statement(query),
+                    insert_ids,
+                    timeout=self.config.remove_timeout,
+                )
 
     def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
         # docstring is inherited from a base class
