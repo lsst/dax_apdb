@@ -44,12 +44,15 @@ from sqlalchemy.engine import Inspector
 from sqlalchemy.pool import NullPool
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
+from .apdbMetadataSql import ApdbMetadataSql
 from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from .timer import Timer
 
 if TYPE_CHECKING:
     import sqlite3
+
+    from .apdbMetadata import ApdbMetadata
 
 _LOG = logging.getLogger(__name__)
 
@@ -281,6 +284,7 @@ class ApdbSql(Apdb):
             htm_index_column=self.config.htm_index_column,
             use_insert_id=config.use_insert_id,
         )
+        self._metadata = ApdbMetadataSql(self._engine, self._schema)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
         self.use_insert_id = self._schema.has_insert_id
@@ -316,6 +320,8 @@ class ApdbSql(Apdb):
     def makeSchema(self, drop: bool = False) -> None:
         # docstring is inherited from a base class
         self._schema.makeSchema(drop=drop)
+        # Need to reset metadata after table was created.
+        self._metadata = ApdbMetadataSql(self._engine, self._schema)
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -611,6 +617,11 @@ class ApdbSql(Apdb):
             count = conn.execute(stmt).scalar_one()
 
         return count
+
+    @property
+    def metadata(self) -> ApdbMetadata:
+        # docstring is inherited from a base class
+        return self._metadata
 
     def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime) -> pandas.DataFrame:
         """Return catalog of DiaSource instances from given region.

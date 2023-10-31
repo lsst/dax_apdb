@@ -26,7 +26,7 @@ __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 import logging
 import uuid
 from collections.abc import Iterable, Iterator, Mapping, Set
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas
@@ -65,6 +65,9 @@ from .cassandra_utils import (
 )
 from .pixelization import Pixelization
 from .timer import Timer
+
+if TYPE_CHECKING:
+    from .apdbMetadata import ApdbMetadata
 
 _LOG = logging.getLogger(__name__)
 
@@ -587,6 +590,11 @@ class ApdbCassandra(Apdb):
 
         # It's too inefficient to implement it for Cassandra in current schema.
         raise NotImplementedError()
+
+    @property
+    def metadata(self) -> ApdbMetadata:
+        # docstring is inherited from a base class
+        raise NotImplementedError("Metadata is not yet implemented for Cassandra backend")
 
     def _makeProfiles(self, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
         """Make all execution profiles used in the code."""

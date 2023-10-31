@@ -22,6 +22,7 @@
 from .apdb import *
 from .apdbCassandra import *
 from .apdbCassandraSchema import *
+from .apdbMetadata import *
 from .apdbSchema import *
 from .apdbSql import *
 from .apdbSqlSchema import *

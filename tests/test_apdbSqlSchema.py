@@ -30,13 +30,18 @@ import lsst.utils.tests
 import sqlalchemy
 from lsst.dax.apdb.apdbSchema import ApdbTables
 from lsst.dax.apdb.apdbSqlSchema import ApdbSqlSchema, ExtraTables
+from lsst.dax.apdb.tests import update_schema_yaml
 from sqlalchemy import create_engine
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
 class ApdbSchemaTestCase(unittest.TestCase):
-    """Test case for ApdbSqlSchema class."""
+    """Test case for ApdbSqlSchema class.
+
+    Schema is defined in YAML files, some checks here depend on that
+    configuration and will need to be updated when configuration changes.
+    """
 
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
@@ -45,6 +50,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         ApdbTables.DiaSource: 10,
         ApdbTables.DiaForcedSource: 4,
         ApdbTables.SSObject: 3,
+        ApdbTables.metadata: 2,
     }
 
     def _assertTable(self, table: sqlalchemy.schema.Table, name: str, ncol: int) -> None:
@@ -62,12 +68,8 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(table.name, name)
         self.assertEqual(len(table.columns), ncol)
 
-    def test_makeSchema(self) -> None:
-        """Test for creating schemas.
-
-        Schema is defined in YAML files, some checks here depend on that
-        configuration and will need to be updated when configuration changes.
-        """
+    def test_makeSchema_default(self) -> None:
+        """Test for creating schema."""
         engine = create_engine("sqlite://")
 
         # create standard (baseline) schema
@@ -102,11 +104,22 @@ class ApdbSchemaTestCase(unittest.TestCase):
             len(schema.get_apdb_columns(ApdbTables.DiaForcedSource)),
             self.table_column_count[ApdbTables.DiaForcedSource],
         )
+        self._assertTable(
+            schema.get_table(ApdbTables.metadata),
+            "metadata",
+            self.table_column_count[ApdbTables.metadata],
+        )
+        self.assertEqual(
+            len(schema.get_apdb_columns(ApdbTables.metadata)),
+            self.table_column_count[ApdbTables.metadata],
+        )
         for table_enum in ExtraTables:
             with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
                 schema.get_table(table_enum)
 
-        # create schema using prefix
+    def test_makeSchema_prefix(self) -> None:
+        """Create schema using prefix."""
+        engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
             engine=engine,
             dia_object_index="baseline",
@@ -134,7 +147,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
             self.table_column_count[ApdbTables.DiaForcedSource],
         )
 
-        # use different indexing for DiaObject, changes number of PK columns
+    def test_makeSchema_other_index(self) -> None:
+        """Use different indexing for DiaObject, this changes number of PK
+        columns.
+        """
+        engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
             engine=engine, dia_object_index="pix_id_iov", htm_index_column="pixelId", schema_file=TEST_SCHEMA
         )
@@ -155,7 +172,9 @@ class ApdbSchemaTestCase(unittest.TestCase):
             self.table_column_count[ApdbTables.DiaForcedSource],
         )
 
-        # use DiaObjectLast table for DiaObject
+    def test_makeSchema_diaobjectlast(self) -> None:
+        """Use DiaObjectLast table for DiaObject."""
+        engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
             engine=engine,
             dia_object_index="last_object_table",
@@ -180,7 +199,9 @@ class ApdbSchemaTestCase(unittest.TestCase):
             self.table_column_count[ApdbTables.DiaForcedSource],
         )
 
-        # Add history_id tables
+    def test_makeSchema_history(self) -> None:
+        """Add history_id tables."""
+        engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
             engine=engine,
             dia_object_index="last_object_table",
@@ -197,6 +218,31 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaSourceInsertId)), 2)
         self._assertTable(schema.get_table(ExtraTables.DiaForcedSourceInsertId), "DiaFSourceInsertId", 3)
         self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaForcedSourceInsertId)), 3)
+
+    def test_makeSchema_nometa(self) -> None:
+        """Make schema using old yaml file without metadata table."""
+        with update_schema_yaml(TEST_SCHEMA, drop_metadata=True) as schema_file:
+            engine = create_engine("sqlite://")
+            schema = ApdbSqlSchema(
+                engine=engine,
+                dia_object_index="baseline",
+                htm_index_column="pixelId",
+                schema_file=schema_file,
+            )
+            schema.makeSchema(drop=True)
+            with self.assertRaisesRegex(ValueError, "Table type ApdbTables.metadata does not exist"):
+                schema.get_table(ApdbTables.metadata)
+
+            # Also check the case when database is missing metadata table but
+            # YAML schema has it.
+            schema = ApdbSqlSchema(
+                engine=engine,
+                dia_object_index="baseline",
+                htm_index_column="pixelId",
+                schema_file=TEST_SCHEMA,
+            )
+            with self.assertRaisesRegex(ValueError, "Table type ApdbTables.metadata does not exist"):
+                schema.get_table(ApdbTables.metadata)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

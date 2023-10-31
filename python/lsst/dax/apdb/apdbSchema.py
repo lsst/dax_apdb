@@ -87,6 +87,9 @@ class ApdbTables(enum.Enum):
     DiaObject_To_Object_Match = "DiaObject_To_Object_Match"
     """Name of the table for DiaObject_To_Object_Match records."""
 
+    metadata = "metadata"
+    """Name of the metadata table, this table may not always exist."""
+
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
         return prefix + self.value
