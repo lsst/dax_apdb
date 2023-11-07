@@ -366,6 +366,10 @@ class ApdbCassandra(Apdb):
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
+    def containsVisitDetector(self, visit: int, detector: int) -> bool:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
+
     def getInsertIds(self) -> list[ApdbInsertId] | None:
         # docstring is inherited from a base class
         if not self._schema.has_insert_id:

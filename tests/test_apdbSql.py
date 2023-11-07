@@ -46,6 +46,7 @@ class ApdbSQLiteTestCase(unittest.TestCase, ApdbTest):
 
     fsrc_requires_id_list = True
     dia_object_index = "baseline"
+    allow_visit_query = False
 
     def make_config(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
@@ -97,6 +98,7 @@ class ApdbPostgresTestCase(unittest.TestCase, ApdbTest):
     dia_object_index = "last_object_table"
     postgresql: Any
     use_insert_id = True
+    allow_visit_query = False
 
     @classmethod
     def setUpClass(cls) -> None:

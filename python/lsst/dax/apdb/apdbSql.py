@@ -387,6 +387,10 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
+    def containsVisitDetector(self, visit: int, detector: int) -> bool:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
+
     def getInsertIds(self) -> list[ApdbInsertId] | None:
         # docstring is inherited from a base class
         if not self._schema.has_insert_id:
