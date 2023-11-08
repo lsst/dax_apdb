@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas
 from lsst.daf.base import DateTime
-from lsst.dax.apdb import ApdbConfig, ApdbInsertId, ApdbTableData, ApdbTables, make_apdb
+from lsst.dax.apdb import ApdbConfig, ApdbInsertId, ApdbSql, ApdbTableData, ApdbTables, make_apdb
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
@@ -186,6 +186,11 @@ class ApdbTest(TestCaseMixin, ABC):
             with self.assertRaises(NotImplementedError):
                 apdb.containsVisitDetector(visit=0, detector=0)
 
+        # alternative method not part of the Apdb API
+        if isinstance(apdb, ApdbSql):
+            res = apdb.containsCcdVisit(1)
+            self.assertFalse(res)
+
         # get sources by region
         if self.fsrc_requires_id_list:
             with self.assertRaises(NotImplementedError):
@@ -232,6 +237,11 @@ class ApdbTest(TestCaseMixin, ABC):
         else:
             with self.assertRaises(NotImplementedError):
                 apdb.containsVisitDetector(visit=0, detector=0)
+
+        # alternative method not part of the Apdb API
+        if isinstance(apdb, ApdbSql):
+            res = apdb.containsCcdVisit(1)
+            self.assertFalse(res)
 
     def test_storeObjects(self) -> None:
         """Store and retrieve DiaObjects."""
@@ -293,6 +303,13 @@ class ApdbTest(TestCaseMixin, ABC):
             with self.assertRaises(NotImplementedError):
                 apdb.containsVisitDetector(visit=0, detector=0)
 
+        # alternative method not part of the Apdb API
+        if isinstance(apdb, ApdbSql):
+            res = apdb.containsCcdVisit(1)
+            self.assertTrue(res)
+            res = apdb.containsCcdVisit(42)
+            self.assertFalse(res)
+
     def test_storeForcedSources(self) -> None:
         """Store and retrieve DiaForcedSources."""
         config = self.make_config()
@@ -318,6 +335,13 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
         # TODO: test apdb.contains with generic implementation from DM-41671
+
+        # alternative method not part of the Apdb API
+        if isinstance(apdb, ApdbSql):
+            res = apdb.containsCcdVisit(1)
+            self.assertTrue(res)
+            res = apdb.containsCcdVisit(42)
+            self.assertFalse(res)
 
     def test_getHistory(self) -> None:
         """Store and retrieve catalog history."""

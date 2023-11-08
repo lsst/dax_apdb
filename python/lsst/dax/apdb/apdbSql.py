@@ -391,6 +391,40 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
         raise NotImplementedError()
 
+    def containsCcdVisit(self, ccdVisitId: int) -> bool:
+        """Test whether data for a given visit-detector is present in the APDB.
+
+        This method is a placeholder until `Apdb.containsVisitDetector` can
+        be implemented.
+
+        Parameters
+        ----------
+        ccdVisitId : `int`
+            The packed ID of the visit-detector to search for.
+
+        Returns
+        -------
+        present : `bool`
+            `True` if some DiaSource records exist for the specified
+            observation, `False` otherwise.
+        """
+        # TODO: remove this method in favor of containsVisitDetector on either
+        # DM-41671 or a ticket that removes ccdVisitId from these tables
+        src_table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaSource)
+        frcsrc_table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaForcedSource)
+        # Query should load only one leaf page of the index
+        query1 = sql.select(src_table.c.ccdVisitId).filter_by(ccdVisitId=ccdVisitId).limit(1)
+        # Backup query in case an image was processed but had no diaSources
+        query2 = sql.select(frcsrc_table.c.ccdVisitId).filter_by(ccdVisitId=ccdVisitId).limit(1)
+
+        with self._engine.begin() as conn:
+            result = conn.execute(query1).scalar_one_or_none()
+            if result is not None:
+                return True
+            else:
+                result = conn.execute(query2).scalar_one_or_none()
+                return result is not None
+
     def getInsertIds(self) -> list[ApdbInsertId] | None:
         # docstring is inherited from a base class
         if not self._schema.has_insert_id:
