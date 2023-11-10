@@ -253,6 +253,23 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def containsVisitDetector(self, visit: int, detector: int) -> bool:
+        """Test whether data for a given visit-detector is present in the APDB.
+
+        Parameters
+        ----------
+        visit, detector : `int`
+            The ID of the visit-detector to search for.
+
+        Returns
+        -------
+        present : `bool`
+            `True` if some DiaObject, DiaSource, or DiaForcedSource records
+            exist for the specified observation, `False` otherwise.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def getInsertIds(self) -> list[ApdbInsertId] | None:
         """Return collection of insert identifiers known to the database.
 
