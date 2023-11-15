@@ -295,20 +295,22 @@ class ApdbSql(Apdb):
             htm_index_column=self.config.htm_index_column,
             use_insert_id=config.use_insert_id,
         )
-        self._metadata = ApdbMetadataSql(self._engine, self._schema)
 
-        self._versionCheck()
+        self._metadata: ApdbMetadataSql | None = None
+        if not self._schema.empty():
+            self._metadata = ApdbMetadataSql(self._engine, self._schema)
+            self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
         self.use_insert_id = self._schema.has_insert_id
 
-    def _versionCheck(self) -> None:
+    def _versionCheck(self, metadata: ApdbMetadataSql) -> None:
         """Check schema version compatibility."""
 
         def _get_version(key: str, default: VersionTuple) -> VersionTuple:
             """Retrieve version number from given metadata key."""
-            if self._metadata.table_exists():
-                version_str = self._metadata.get(key)
+            if metadata.table_exists():
+                version_str = metadata.get(key)
                 if version_str is None:
                     # Should not happen with existing metadata table.
                     raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
@@ -682,6 +684,8 @@ class ApdbSql(Apdb):
     @property
     def metadata(self) -> ApdbMetadata:
         # docstring is inherited from a base class
+        if self._metadata is None:
+            raise RuntimeError("Database schema was not initialized.")
         return self._metadata
 
     def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime) -> pandas.DataFrame:

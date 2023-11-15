@@ -613,11 +613,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_config()
         apdb = make_apdb(config)
         apdb.makeSchema()
-
-        try:
-            metadata = apdb.metadata
-        except NotImplementedError as exc:
-            raise unittest.SkipTest(str(exc)) from None
+        metadata = apdb.metadata
 
         # APDB should write two metadata items with version numbers.
         self.assertFalse(metadata.empty())
@@ -650,11 +646,7 @@ class ApdbTest(TestCaseMixin, ABC):
             config = self.make_config(schema_file=schema_file)
             apdb = make_apdb(config)
             apdb.makeSchema()
-
-            try:
-                metadata = apdb.metadata
-            except NotImplementedError as exc:
-                raise unittest.SkipTest(str(exc)) from None
+            metadata = apdb.metadata
 
             self.assertTrue(metadata.empty())
             self.assertEqual(list(metadata.items()), [])
@@ -667,13 +659,19 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_schemaVersionFromYaml(self) -> None:
         """Check version number handling for reading schema from YAML."""
         config = self.make_config()
+        default_schema = config.schema_file
         apdb = make_apdb(config)
         self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
 
-        with update_schema_yaml(config.schema_file, version="") as schema_file:
+        with update_schema_yaml(default_schema, version="") as schema_file:
             config = self.make_config(schema_file=schema_file)
             apdb = make_apdb(config)
             self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 0))
+
+        with update_schema_yaml(default_schema, version="99.0.0") as schema_file:
+            config = self.make_config(schema_file=schema_file)
+            apdb = make_apdb(config)
+            self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(99, 0, 0))
 
 
 class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
@@ -723,16 +721,10 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         config = self.make_config()
         apdb = make_apdb(config)
 
-        # If metadata does not exist then version checks do not work.
-        try:
-            apdb.metadata
-        except NotImplementedError as exc:
-            raise unittest.SkipTest(str(exc)) from None
-
         self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
         apdb.makeSchema()
 
-        # Claim that schema version is now 1.0.0, must raise an exception.
+        # Claim that schema version is now 99.0.0, must raise an exception.
         with update_schema_yaml(config.schema_file, version="99.0.0") as schema_file:
             config = self.make_config(schema_file=schema_file)
             with self.assertRaises(IncompatibleVersionError):

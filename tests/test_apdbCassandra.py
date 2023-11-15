@@ -40,8 +40,16 @@ import unittest
 import uuid
 from typing import TYPE_CHECKING, Any
 
+try:
+    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
+    from cassandra.policies import RoundRobinPolicy
+
+    CASSANDRA_IMPORTED = True
+except ImportError:
+    CASSANDRA_IMPORTED = False
+
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbTables
+from lsst.dax.apdb import ApdbCassandraConfig, ApdbTables
 from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
@@ -56,18 +64,32 @@ class ApdbCassandraMixin:
     @classmethod
     def setUpClass(cls) -> None:
         """Prepare config for server connection."""
+        if not CASSANDRA_IMPORTED:
+            raise unittest.SkipTest("FAiled to import Cassandra modules")
         cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
         if not cluster_host:
             raise unittest.SkipTest("DAX_APDB_TEST_CASSANDRA_CLUSTER is not set")
         if not CASSANDRA_IMPORTED:
             raise unittest.SkipTest("cassandra_driver cannot be imported")
 
+    def _run_query(self, query: str) -> None:
+        # Used protocol version from default config.
+        config = ApdbCassandraConfig()
+        default_profile = ExecutionProfile(load_balancing_policy=RoundRobinPolicy())
+        profiles = {EXEC_PROFILE_DEFAULT: default_profile}
+        cluster = Cluster(
+            contact_points=[self.cluster_host],
+            execution_profiles=profiles,
+            protocol_version=config.protocol_version,
+        )
+        session = cluster.connect()
+        session.execute(query)
+        del session
+        cluster.shutdown()
+
     def setUp(self) -> None:
         """Prepare config for server connection."""
         self.cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
-        self.keyspace = ""
-
-        config = self.make_config()
 
         # create dedicated keyspace for each test
         key = uuid.uuid4()
@@ -76,17 +98,11 @@ class ApdbCassandraMixin:
             f"CREATE KEYSPACE {self.keyspace}"
             " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
         )
-
-        apdb = ApdbCassandra(config)
-        apdb._session.execute(query)
-        del apdb
+        self._run_query(query)
 
     def tearDown(self) -> None:
-        config = self.make_config()
-        apdb = ApdbCassandra(config)
         query = f"DROP KEYSPACE {self.keyspace}"
-        apdb._session.execute(query)
-        del apdb
+        self._run_query(query)
 
     if TYPE_CHECKING:
         # For mypy.

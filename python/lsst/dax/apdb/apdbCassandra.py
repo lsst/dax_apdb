@@ -54,9 +54,11 @@ from lsst.utils.iteration import chunk_iterable
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
+from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .apdbSchema import ApdbTables
 from .cassandra_utils import (
     ApdbCassandraTableData,
+    PreparedStatementCache,
     literal,
     pandas_dataframe_factory,
     quote_id,
@@ -65,7 +67,7 @@ from .cassandra_utils import (
 )
 from .pixelization import Pixelization
 from .timer import Timer
-from .versionTuple import VersionTuple
+from .versionTuple import IncompatibleVersionError, VersionTuple
 
 if TYPE_CHECKING:
     from .apdbMetadata import ApdbMetadata
@@ -211,6 +213,12 @@ class ApdbCassandra(Apdb):
         Configuration object.
     """
 
+    metadataSchemaVersionKey = "version:schema"
+    """Name of the metadata key to store schema version number."""
+
+    metadataCodeVersionKey = "version:ApdbCassandra"
+    """Name of the metadata key to store code version number."""
+
     partition_zero_epoch = dafBase.DateTime(1970, 1, 1, 0, 0, 0, dafBase.DateTime.TAI)
     """Start time for partition 0, this should never be changed."""
 
@@ -258,8 +266,13 @@ class ApdbCassandra(Apdb):
         )
         self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
+        self._metadata: ApdbMetadataCassandra | None = None
+        if not self._schema.empty():
+            self._metadata = ApdbMetadataCassandra(self._session, self._schema, self.config)
+            self._versionCheck(self._metadata)
+
         # Cache for prepared statements
-        self._prepared_statements: dict[str, cassandra.query.PreparedStatement] = {}
+        self._preparer = PreparedStatementCache(self._session)
 
     def __del__(self) -> None:
         if hasattr(self, "_cluster"):
@@ -297,6 +310,38 @@ class ApdbCassandra(Apdb):
 
         return None
 
+    def _versionCheck(self, metadata: ApdbMetadataCassandra) -> None:
+        """Check schema version compatibility."""
+
+        def _get_version(key: str, default: VersionTuple) -> VersionTuple:
+            """Retrieve version number from given metadata key."""
+            if metadata.table_exists():
+                version_str = metadata.get(key)
+                if version_str is None:
+                    # Should not happen with existing metadata table.
+                    raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
+                return VersionTuple.fromString(version_str)
+            return default
+
+        # For old databases where metadata table does not exist we assume that
+        # version of both code and schema is 0.1.0.
+        initial_version = VersionTuple(0, 1, 0)
+        db_schema_version = _get_version(self.metadataSchemaVersionKey, initial_version)
+        db_code_version = _get_version(self.metadataCodeVersionKey, initial_version)
+
+        # For now there is no way to make read-only APDB instances, assume that
+        # any access can do updates.
+        if not self._schema.schemaVersion().checkCompatibility(db_schema_version, True):
+            raise IncompatibleVersionError(
+                f"Configured schema version {self._schema.schemaVersion()} "
+                f"is not compatible with database version {db_schema_version}"
+            )
+        if not self.apdbImplementationVersion().checkCompatibility(db_code_version, True):
+            raise IncompatibleVersionError(
+                f"Current code version {self.apdbImplementationVersion()} "
+                f"is not compatible with database version {db_code_version}"
+            )
+
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
         # Docstring inherited from base class.
@@ -324,6 +369,16 @@ class ApdbCassandra(Apdb):
         else:
             self._schema.makeSchema(drop=drop)
 
+        # Reset metadata after schema initialization.
+        self._metadata = ApdbMetadataCassandra(self._session, self._schema, self.config)
+
+        # Fill version numbers, but only if they are not defined.
+        if self._metadata.table_exists():
+            if self._metadata.get(self.metadataSchemaVersionKey) is None:
+                self._metadata.set(self.metadataSchemaVersionKey, str(self._schema.schemaVersion()))
+            if self._metadata.get(self.metadataCodeVersionKey) is None:
+                self._metadata.set(self.metadataCodeVersionKey, str(self.apdbImplementationVersion()))
+
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
@@ -340,7 +395,7 @@ class ApdbCassandra(Apdb):
         for where, params in sp_where:
             full_query = f"{query} WHERE {where}"
             if params:
-                statement = self._prep_statement(full_query)
+                statement = self._preparer.prepare(full_query)
             else:
                 # If there are no params then it is likely that query has a
                 # bunch of literals rendered already, no point trying to
@@ -400,7 +455,7 @@ class ApdbCassandra(Apdb):
         query = f'SELECT insert_time, insert_id FROM "{self._keyspace}"."{table_name}" WHERE partition = ?'
 
         result = self._session.execute(
-            self._prep_statement(query),
+            self._preparer.prepare(query),
             (partition,),
             timeout=self.config.read_timeout,
             execution_profile="read_tuples",
@@ -432,7 +487,7 @@ class ApdbCassandra(Apdb):
             )
 
             self._session.execute(
-                self._prep_statement(query),
+                self._preparer.prepare(query),
                 [partition] + list(insert_ids),
                 timeout=self.config.remove_timeout,
             )
@@ -446,7 +501,7 @@ class ApdbCassandra(Apdb):
                 table_name = self._schema.tableName(table)
                 query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
                 self._session.execute(
-                    self._prep_statement(query),
+                    self._preparer.prepare(query),
                     insert_ids,
                     timeout=self.config.remove_timeout,
                 )
@@ -569,7 +624,7 @@ class ApdbCassandra(Apdb):
                     ' WHERE "apdb_part" = ? AND "apdb_time_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
-            queries.add(self._prep_statement(query), values)
+            queries.add(self._preparer.prepare(query), values)
 
         # Reassign in history tables, only if history is enabled
         if id2insert_id:
@@ -590,7 +645,7 @@ class ApdbCassandra(Apdb):
                             'WHERE "insert_id" = ? AND "diaSourceId" = ?'
                         )
                         values = (ssObjectId, insert_id, diaSourceId)
-                        queries.add(self._prep_statement(query), values)
+                        queries.add(self._preparer.prepare(query), values)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
         with Timer(table_name + " update", self.config.timer):
@@ -609,7 +664,9 @@ class ApdbCassandra(Apdb):
     @property
     def metadata(self) -> ApdbMetadata:
         # docstring is inherited from a base class
-        raise NotImplementedError("Metadata is not yet implemented for Cassandra backend")
+        if self._metadata is None:
+            raise RuntimeError("Database schema was not initialized.")
+        return self._metadata
 
     def _makeProfiles(self, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
         """Make all execution profiles used in the code."""
@@ -750,7 +807,7 @@ class ApdbCassandra(Apdb):
         # an insert_id column, and this is exactly what we need to return from
         # this method, so selecting a star is fine here.
         query = f'SELECT * FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
-        statement = self._prep_statement(query)
+        statement = self._preparer.prepare(query)
 
         with Timer("DiaObject history", self.config.timer):
             result = self._session.execute(statement, insert_ids, execution_profile="read_raw")
@@ -771,7 +828,7 @@ class ApdbCassandra(Apdb):
         )
 
         self._session.execute(
-            self._prep_statement(query),
+            self._preparer.prepare(query),
             (partition, insert_id.id, timestamp),
             timeout=self.config.write_timeout,
             execution_profile="write",
@@ -926,7 +983,7 @@ class ApdbCassandra(Apdb):
 
             holders = ",".join(["?"] * len(qfields))
             query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
-            statement = self._prep_statement(query)
+            statement = self._preparer.prepare(query)
             queries = cassandra.query.BatchStatement()
             for rec in records.itertuples(index=False):
                 values = []
@@ -1074,14 +1131,6 @@ class ApdbCassandra(Apdb):
         }
         return pandas.DataFrame(data)
 
-    def _prep_statement(self, query: str) -> cassandra.query.PreparedStatement:
-        """Convert query string into prepared statement."""
-        stmt = self._prepared_statements.get(query)
-        if stmt is None:
-            stmt = self._session.prepare(query)
-            self._prepared_statements[query] = stmt
-        return stmt
-
     def _combine_where(
         self,
         prefix: str,
@@ -1118,7 +1167,7 @@ class ApdbCassandra(Apdb):
                     full_query += " " + suffix
                 params = params1 + params2
                 if params:
-                    statement = self._prep_statement(full_query)
+                    statement = self._preparer.prepare(full_query)
                 else:
                     # If there are no params then it is likely that query
                     # has a bunch of literals rendered already, no point
