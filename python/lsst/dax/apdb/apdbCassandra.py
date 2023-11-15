@@ -65,11 +65,17 @@ from .cassandra_utils import (
 )
 from .pixelization import Pixelization
 from .timer import Timer
+from .versionTuple import VersionTuple
 
 if TYPE_CHECKING:
     from .apdbMetadata import ApdbMetadata
 
 _LOG = logging.getLogger(__name__)
+
+VERSION = VersionTuple(0, 1, 0)
+"""Version for the code defined in this module. This needs to be updated
+(following compatibility rules) when schema produced by this code changes.
+"""
 
 # Copied from daf_butler.
 DB_AUTH_ENVVAR = "LSST_DB_AUTH"
@@ -290,6 +296,15 @@ class ApdbCassandra(Apdb):
             )
 
         return None
+
+    @classmethod
+    def apdbImplementationVersion(cls) -> VersionTuple:
+        # Docstring inherited from base class.
+        return VERSION
+
+    def apdbSchemaVersion(self) -> VersionTuple:
+        # Docstring inherited from base class.
+        return self._schema.schemaVersion()
 
     def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class

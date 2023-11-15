@@ -41,7 +41,7 @@ except ImportError:
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
-class ApdbSQLiteTestCase(unittest.TestCase, ApdbTest):
+class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
     """A test case for ApdbSql class using SQLite backend."""
 
     fsrc_requires_id_list = True
@@ -91,7 +91,7 @@ class ApdbSQLiteTestCaseInsertIds(ApdbSQLiteTestCase):
 
 
 @unittest.skipUnless(testing is not None, "testing.postgresql module not found")
-class ApdbPostgresTestCase(unittest.TestCase, ApdbTest):
+class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     """A test case for ApdbSql class using Postgres backend."""
 
     fsrc_requires_id_list = True
@@ -148,7 +148,7 @@ class ApdbPostgresNamespaceTestCase(ApdbPostgresTestCase):
         return super().make_config(namespace=self.namespace, **kwargs)
 
 
-class ApdbSchemaUpdateSQLiteTestCase(unittest.TestCase, ApdbSchemaUpdateTest):
+class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
     """A test case for schema updates using SQLite backend."""
 
     def setUp(self) -> None:

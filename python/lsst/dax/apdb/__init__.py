@@ -28,3 +28,4 @@ from .apdbSql import *
 from .apdbSqlSchema import *
 from .factory import *
 from .version import *
+from .versionTuple import *

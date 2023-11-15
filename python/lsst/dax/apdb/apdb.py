@@ -40,6 +40,7 @@ from .apdbSchema import ApdbTables
 
 if TYPE_CHECKING:
     from .apdbMetadata import ApdbMetadata
+    from .versionTuple import VersionTuple
 
 
 def _data_file_name(basename: str) -> str:
@@ -127,6 +128,29 @@ class Apdb(ABC):
     """Abstract interface for APDB."""
 
     ConfigClass = ApdbConfig
+
+    @classmethod
+    @abstractmethod
+    def apdbImplementationVersion(cls) -> VersionTuple:
+        """Return version number for current APDB implementation.
+
+        Returns
+        -------
+        version : `VersionTuple`
+            Version of the code defined in implementation class.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def apdbSchemaVersion(self) -> VersionTuple:
+        """Return schema version number as defined in config file.
+
+        Returns
+        -------
+        version : `VersionTuple`
+            Version of the schema defined in schema config file.
+        """
+        raise NotImplementedError()
 
     @abstractmethod
     def tableDef(self, table: ApdbTables) -> Table | None:

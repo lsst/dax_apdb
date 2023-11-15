@@ -25,6 +25,7 @@ __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
 import os
+import unittest
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from tempfile import TemporaryDirectory
@@ -33,13 +34,21 @@ from typing import TYPE_CHECKING, Any
 import pandas
 import yaml
 from lsst.daf.base import DateTime
-from lsst.dax.apdb import ApdbConfig, ApdbInsertId, ApdbSql, ApdbTableData, ApdbTables, make_apdb
+from lsst.dax.apdb import (
+    ApdbConfig,
+    ApdbInsertId,
+    ApdbSql,
+    ApdbTableData,
+    ApdbTables,
+    IncompatibleVersionError,
+    VersionTuple,
+    make_apdb,
+)
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
 
 if TYPE_CHECKING:
-    import unittest
 
     class TestCaseMixin(unittest.TestCase):
         """Base class for mixin test classes that use TestCase methods."""
@@ -610,27 +619,27 @@ class ApdbTest(TestCaseMixin, ABC):
         except NotImplementedError as exc:
             raise unittest.SkipTest(str(exc)) from None
 
-        self.assertTrue(metadata.empty())
-        self.assertEqual(list(metadata.items()), [])
+        # APDB should write two metadata items with version numbers.
+        self.assertFalse(metadata.empty())
+        self.assertEqual(len(list(metadata.items())), 2)
 
         metadata.set("meta", "data")
         metadata.set("data", "meta")
 
         self.assertFalse(metadata.empty())
-        self.assertEqual(set(metadata.items()), {("meta", "data"), ("data", "meta")})
+        self.assertTrue(set(metadata.items()) >= {("meta", "data"), ("data", "meta")})
 
         with self.assertRaisesRegex(KeyError, "Metadata key 'meta' already exists"):
             metadata.set("meta", "data1")
 
         metadata.set("meta", "data2", force=True)
-        self.assertEqual(set(metadata.items()), {("meta", "data2"), ("data", "meta")})
+        self.assertTrue(set(metadata.items()) >= {("meta", "data2"), ("data", "meta")})
 
         self.assertTrue(metadata.delete("meta"))
-        self.assertEqual(set(metadata.items()), {("data", "meta")})
+        self.assertIsNone(metadata.get("meta"))
         self.assertFalse(metadata.delete("meta"))
 
         self.assertEqual(metadata.get("data"), "meta")
-        self.assertIsNone(metadata.get("meta"))
         self.assertEqual(metadata.get("meta", "meta"), "meta")
 
     def test_nometadata(self) -> None:
@@ -654,6 +663,17 @@ class ApdbTest(TestCaseMixin, ABC):
 
             self.assertTrue(metadata.empty())
             self.assertIsNone(metadata.get("meta"))
+
+    def test_schemaVersionFromYaml(self) -> None:
+        """Check version number handling for reading schema from YAML."""
+        config = self.make_config()
+        apdb = make_apdb(config)
+        self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
+
+        with update_schema_yaml(config.schema_file, version="") as schema_file:
+            config = self.make_config(schema_file=schema_file)
+            apdb = make_apdb(config)
+            self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 0))
 
 
 class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
@@ -697,3 +717,23 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         # There should be no history.
         insert_ids = apdb.getInsertIds()
         self.assertIsNone(insert_ids)
+
+    def test_schemaVersionCheck(self) -> None:
+        """Check version number compatibility."""
+        config = self.make_config()
+        apdb = make_apdb(config)
+
+        # If metadata does not exist then version checks do not work.
+        try:
+            apdb.metadata
+        except NotImplementedError as exc:
+            raise unittest.SkipTest(str(exc)) from None
+
+        self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
+        apdb.makeSchema()
+
+        # Claim that schema version is now 1.0.0, must raise an exception.
+        with update_schema_yaml(config.schema_file, version="99.0.0") as schema_file:
+            config = self.make_config(schema_file=schema_file)
+            with self.assertRaises(IncompatibleVersionError):
+                apdb = make_apdb(config)

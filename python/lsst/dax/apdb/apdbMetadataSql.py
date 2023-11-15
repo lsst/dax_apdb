@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbMetadata"]
+__all__ = ["ApdbMetadataSql"]
 
 from collections.abc import Generator
 from contextlib import suppress
@@ -119,3 +119,7 @@ class ApdbMetadataSql(ApdbMetadata):
             result = conn.execute(stmt)
             count = result.scalar()
         return count == 0
+
+    def table_exists(self) -> bool:
+        """Return `True` if metadata table exists."""
+        return self._table is not None

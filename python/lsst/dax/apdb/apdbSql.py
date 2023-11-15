@@ -48,6 +48,7 @@ from .apdbMetadataSql import ApdbMetadataSql
 from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from .timer import Timer
+from .versionTuple import IncompatibleVersionError, VersionTuple
 
 if TYPE_CHECKING:
     import sqlite3
@@ -56,6 +57,10 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
+VERSION = VersionTuple(0, 1, 0)
+"""Version for the code defined in this module. This needs to be updated
+(following compatibility rules) when schema produced by this code changes.
+"""
 
 if pandas.__version__.partition(".")[0] == "1":
 
@@ -238,6 +243,12 @@ class ApdbSql(Apdb):
 
     ConfigClass = ApdbSqlConfig
 
+    metadataSchemaVersionKey = "version:schema"
+    """Name of the metadata key to store schema version number."""
+
+    metadataCodeVersionKey = "version:ApdbSql"
+    """Name of the metadata key to store code version number."""
+
     def __init__(self, config: ApdbSqlConfig):
         config.validate()
         self.config = config
@@ -286,8 +297,51 @@ class ApdbSql(Apdb):
         )
         self._metadata = ApdbMetadataSql(self._engine, self._schema)
 
+        self._versionCheck()
+
         self.pixelator = HtmPixelization(self.config.htm_level)
         self.use_insert_id = self._schema.has_insert_id
+
+    def _versionCheck(self) -> None:
+        """Check schema version compatibility."""
+
+        def _get_version(key: str, default: VersionTuple) -> VersionTuple:
+            """Retrieve version number from given metadata key."""
+            if self._metadata.table_exists():
+                version_str = self._metadata.get(key)
+                if version_str is None:
+                    # Should not happen with existing metadata table.
+                    raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
+                return VersionTuple.fromString(version_str)
+            return default
+
+        # For old databases where metadata table does not exist we assume that
+        # version of both code and schema is 0.1.0.
+        initial_version = VersionTuple(0, 1, 0)
+        db_schema_version = _get_version(self.metadataSchemaVersionKey, initial_version)
+        db_code_version = _get_version(self.metadataCodeVersionKey, initial_version)
+
+        # For now there is no way to make read-only APDB instances, assume that
+        # any access can do updates.
+        if not self._schema.schemaVersion().checkCompatibility(db_schema_version, True):
+            raise IncompatibleVersionError(
+                f"Configured schema version {self._schema.schemaVersion()} "
+                f"is not compatible with database version {db_schema_version}"
+            )
+        if not self.apdbImplementationVersion().checkCompatibility(db_code_version, True):
+            raise IncompatibleVersionError(
+                f"Current code version {self.apdbImplementationVersion()} "
+                f"is not compatible with database version {db_code_version}"
+            )
+
+    @classmethod
+    def apdbImplementationVersion(cls) -> VersionTuple:
+        # Docstring inherited from base class.
+        return VERSION
+
+    def apdbSchemaVersion(self) -> VersionTuple:
+        # Docstring inherited from base class.
+        return self._schema.schemaVersion()
 
     def tableRowCount(self) -> dict[str, int]:
         """Return dictionary with the table names and row counts.
@@ -322,6 +376,13 @@ class ApdbSql(Apdb):
         self._schema.makeSchema(drop=drop)
         # Need to reset metadata after table was created.
         self._metadata = ApdbMetadataSql(self._engine, self._schema)
+
+        if self._metadata.table_exists():
+            # Fill version numbers, but only if they are not defined.
+            if self._metadata.get(self.metadataSchemaVersionKey) is None:
+                self._metadata.set(self.metadataSchemaVersionKey, str(self._schema.schemaVersion()))
+            if self._metadata.get(self.metadataCodeVersionKey) is None:
+                self._metadata.set(self.metadataCodeVersionKey, str(self.apdbImplementationVersion()))
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class

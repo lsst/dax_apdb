@@ -94,7 +94,7 @@ class ApdbCassandraMixin:
             ...
 
 
-class ApdbCassandraTestCase(ApdbCassandraMixin, unittest.TestCase, ApdbTest):
+class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     """A test case for ApdbCassandra class"""
 
     allow_visit_query = False
@@ -137,7 +137,7 @@ class ApdbCassandraTestCaseInsertIds(ApdbCassandraTestCase):
     use_insert_id = True
 
 
-class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, unittest.TestCase, ApdbSchemaUpdateTest):
+class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):
     """A test case for schema updates using Cassandra backend."""
 
     def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:

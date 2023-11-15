@@ -116,6 +116,7 @@ class ApdbMetadata(ABC):
         Returns
         -------
         empty : `bool`
-            True if there are no any attributes defined.
+            `True` if there are no any attributes defined. `True` is also
+            returned if metadata table is missing.
         """
         raise NotImplementedError()
