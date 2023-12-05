@@ -28,7 +28,7 @@ __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
-from contextlib import closing
+from contextlib import closing, suppress
 from typing import TYPE_CHECKING, Any, cast
 
 import lsst.daf.base as dafBase
@@ -298,7 +298,10 @@ class ApdbSql(Apdb):
 
         self._metadata: ApdbMetadataSql | None = None
         if not self._schema.empty():
-            self._metadata = ApdbMetadataSql(self._engine, self._schema)
+            table: sqlalchemy.schema.Table | None = None
+            with suppress(ValueError):
+                table = self._schema.get_table(ApdbTables.metadata)
+            self._metadata = ApdbMetadataSql(self._engine, table)
             self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
@@ -377,7 +380,10 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
         self._schema.makeSchema(drop=drop)
         # Need to reset metadata after table was created.
-        self._metadata = ApdbMetadataSql(self._engine, self._schema)
+        table: sqlalchemy.schema.Table | None = None
+        with suppress(ValueError):
+            table = self._schema.get_table(ApdbTables.metadata)
+        self._metadata = ApdbMetadataSql(self._engine, table)
 
         if self._metadata.table_exists():
             # Fill version numbers, but only if they are not defined.

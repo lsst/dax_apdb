@@ -24,16 +24,10 @@ from __future__ import annotations
 __all__ = ["ApdbMetadataSql"]
 
 from collections.abc import Generator
-from contextlib import suppress
-from typing import TYPE_CHECKING
 
 import sqlalchemy
 
 from .apdbMetadata import ApdbMetadata
-from .apdbSchema import ApdbTables
-
-if TYPE_CHECKING:
-    from .apdbSqlSchema import ApdbSqlSchema
 
 
 class ApdbMetadataSql(ApdbMetadata):
@@ -43,16 +37,14 @@ class ApdbMetadataSql(ApdbMetadata):
     ----------
     engine : `sqlalchemy.engine.Engine`
         Database access engine.
-    schema : `ApdbSqlSchema`
-        Object providing access to schema details.
+    table : `sqlalchemy.schema.Table` or `None`
+        Database table holding metadata. If table does not exists then `None`
+        should be specified.
     """
 
-    def __init__(self, engine: sqlalchemy.engine.Engine, schema: ApdbSqlSchema):
+    def __init__(self, engine: sqlalchemy.engine.Engine, table: sqlalchemy.schema.Table | None):
         self._engine = engine
-        # Metadata table may not exist for old databases.
-        self._table: sqlalchemy.schema.Table | None = None
-        with suppress(ValueError):
-            self._table = schema.get_table(ApdbTables.metadata)
+        self._table = table
 
     def get(self, key: str, default: str | None = None) -> str | None:
         # Docstring is inherited.
