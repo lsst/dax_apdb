@@ -27,6 +27,7 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import lsst.daf.base as dafBase
@@ -36,6 +37,10 @@ from lsst.pex.config import Config, ConfigurableField, Field
 from lsst.sphgeom import Region
 
 from .apdbSchema import ApdbTables
+
+if TYPE_CHECKING:
+    from .apdbMetadata import ApdbMetadata
+    from .versionTuple import VersionTuple
 
 
 def _data_file_name(basename: str) -> str:
@@ -123,6 +128,29 @@ class Apdb(ABC):
     """Abstract interface for APDB."""
 
     ConfigClass = ApdbConfig
+
+    @classmethod
+    @abstractmethod
+    def apdbImplementationVersion(cls) -> VersionTuple:
+        """Return version number for current APDB implementation.
+
+        Returns
+        -------
+        version : `VersionTuple`
+            Version of the code defined in implementation class.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def apdbSchemaVersion(self) -> VersionTuple:
+        """Return schema version number as defined in config file.
+
+        Returns
+        -------
+        version : `VersionTuple`
+            Version of the schema defined in schema config file.
+        """
+        raise NotImplementedError()
 
     @abstractmethod
     def tableDef(self, table: ApdbTables) -> Table | None:
@@ -495,3 +523,9 @@ class Apdb(ABC):
             A `~lsst.pex.config.ConfigurableField` for Apdb.
         """
         return ConfigurableField(doc=doc, target=cls)
+
+    @property
+    @abstractmethod
+    def metadata(self) -> ApdbMetadata:
+        """Object controlling access to APDB metadata (`ApdbMetadata`)."""
+        raise NotImplementedError()

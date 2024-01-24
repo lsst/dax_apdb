@@ -21,20 +21,34 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbSchemaUpdateTest", "ApdbTest"]
+__all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
+import contextlib
+import os
+import unittest
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 import pandas
+import yaml
 from lsst.daf.base import DateTime
-from lsst.dax.apdb import ApdbConfig, ApdbInsertId, ApdbSql, ApdbTableData, ApdbTables, make_apdb
+from lsst.dax.apdb import (
+    ApdbConfig,
+    ApdbInsertId,
+    ApdbSql,
+    ApdbTableData,
+    ApdbTables,
+    IncompatibleVersionError,
+    VersionTuple,
+    make_apdb,
+)
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
 
 if TYPE_CHECKING:
-    import unittest
 
     class TestCaseMixin(unittest.TestCase):
         """Base class for mixin test classes that use TestCase methods."""
@@ -51,6 +65,49 @@ def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
     fov = 0.05  # radians
     region = Circle(pointing_v, Angle(fov / 2))
     return region
+
+
+@contextlib.contextmanager
+def update_schema_yaml(
+    schema_file: str,
+    drop_metadata: bool = False,
+    version: str | None = None,
+) -> Iterator[str]:
+    """Update schema definition and return name of the new schema file.
+
+    Parameters
+    ----------
+    schema_file : `str`
+        Path for the existing YAML file with APDB schema.
+    drop_metadata : `bool`
+        If `True` then remove metadata table from the list of tables.
+    version : `str` or `None`
+        If non-empty string then set schema version to this string, if empty
+        string then remove schema version from config, if `None` - don't change
+        the version in config.
+
+    Yields
+    ------
+    Path for the updated configuration file.
+    """
+    with open(schema_file) as yaml_stream:
+        schemas_list = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
+    # Edit YAML contents.
+    for schema in schemas_list:
+        # Optionally drop metadata table.
+        if drop_metadata:
+            schema["tables"] = [table for table in schema["tables"] if table["name"] != "metadata"]
+        if version is not None:
+            if version == "":
+                del schema["version"]
+            else:
+                schema["version"] = version
+
+    with TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+        output_path = os.path.join(tmpdir, "schema.yaml")
+        with open(output_path, "w") as yaml_stream:
+            yaml.dump_all(schemas_list, stream=yaml_stream)
+        yield output_path
 
 
 class ApdbTest(TestCaseMixin, ABC):
@@ -138,6 +195,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.metadata))
 
     def test_empty_gets(self) -> None:
         """Test for getting data from empty database.
@@ -550,6 +608,71 @@ class ApdbTest(TestCaseMixin, ABC):
         res = apdb.getDiaForcedSources(region, oids, visit_time2)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
+    def test_metadata(self) -> None:
+        """Simple test for writing/reading metadata table"""
+        config = self.make_config()
+        apdb = make_apdb(config)
+        apdb.makeSchema()
+        metadata = apdb.metadata
+
+        # APDB should write two metadata items with version numbers.
+        self.assertFalse(metadata.empty())
+        self.assertEqual(len(list(metadata.items())), 2)
+
+        metadata.set("meta", "data")
+        metadata.set("data", "meta")
+
+        self.assertFalse(metadata.empty())
+        self.assertTrue(set(metadata.items()) >= {("meta", "data"), ("data", "meta")})
+
+        with self.assertRaisesRegex(KeyError, "Metadata key 'meta' already exists"):
+            metadata.set("meta", "data1")
+
+        metadata.set("meta", "data2", force=True)
+        self.assertTrue(set(metadata.items()) >= {("meta", "data2"), ("data", "meta")})
+
+        self.assertTrue(metadata.delete("meta"))
+        self.assertIsNone(metadata.get("meta"))
+        self.assertFalse(metadata.delete("meta"))
+
+        self.assertEqual(metadata.get("data"), "meta")
+        self.assertEqual(metadata.get("meta", "meta"), "meta")
+
+    def test_nometadata(self) -> None:
+        """Test case for when metadata table is missing"""
+        config = self.make_config()
+        # We expect that schema includes metadata table, drop it.
+        with update_schema_yaml(config.schema_file, drop_metadata=True) as schema_file:
+            config = self.make_config(schema_file=schema_file)
+            apdb = make_apdb(config)
+            apdb.makeSchema()
+            metadata = apdb.metadata
+
+            self.assertTrue(metadata.empty())
+            self.assertEqual(list(metadata.items()), [])
+            with self.assertRaisesRegex(RuntimeError, "Metadata table does not exist"):
+                metadata.set("meta", "data")
+
+            self.assertTrue(metadata.empty())
+            self.assertIsNone(metadata.get("meta"))
+
+    def test_schemaVersionFromYaml(self) -> None:
+        """Check version number handling for reading schema from YAML."""
+        config = self.make_config()
+        default_schema = config.schema_file
+        apdb = make_apdb(config)
+        self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
+
+        with update_schema_yaml(default_schema, version="") as schema_file:
+            config = self.make_config(schema_file=schema_file)
+            apdb = make_apdb(config)
+            self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 0))
+
+        with update_schema_yaml(default_schema, version="99.0.0") as schema_file:
+            config = self.make_config(schema_file=schema_file)
+            apdb = make_apdb(config)
+            self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(99, 0, 0))
+
 
 class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
     """Base class for unit tests that verify how schema changes work."""
@@ -592,3 +715,17 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         # There should be no history.
         insert_ids = apdb.getInsertIds()
         self.assertIsNone(insert_ids)
+
+    def test_schemaVersionCheck(self) -> None:
+        """Check version number compatibility."""
+        config = self.make_config()
+        apdb = make_apdb(config)
+
+        self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
+        apdb.makeSchema()
+
+        # Claim that schema version is now 99.0.0, must raise an exception.
+        with update_schema_yaml(config.schema_file, version="99.0.0") as schema_file:
+            config = self.make_config(schema_file=schema_file)
+            with self.assertRaises(IncompatibleVersionError):
+                apdb = make_apdb(config)

@@ -40,6 +40,8 @@ import yaml
 from felis import DEFAULT_FRAME
 from felis.simple import SimpleVisitor, Table
 
+from .versionTuple import VersionTuple
+
 _LOG = logging.getLogger(__name__)
 
 # In most cases column types are determined by Cassandra driver, but in some
@@ -87,6 +89,9 @@ class ApdbTables(enum.Enum):
     DiaObject_To_Object_Match = "DiaObject_To_Object_Match"
     """Name of the table for DiaObject_To_Object_Match records."""
 
+    metadata = "metadata"
+    """Name of the metadata table, this table may not always exist."""
+
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
         return prefix + self.value
@@ -114,7 +119,7 @@ class ApdbSchema:
         schema_name: str = "ApdbSchema",
     ):
         # build complete table schema
-        self.tableSchemas = self._buildSchemas(schema_file, schema_name)
+        self.tableSchemas, self._schemaVersion = self._buildSchemas(schema_file, schema_name)
 
     def column_dtype(self, felis_type: type[felis.types.FelisType]) -> type | str:
         """Return Pandas data type for a given Felis column type.
@@ -139,11 +144,25 @@ class ApdbSchema:
         except KeyError:
             raise TypeError(f"Unexpected Felis type: {felis_type}")
 
+    def schemaVersion(self) -> VersionTuple:
+        """Return schema version as defined in YAML schema file.
+
+        Returns
+        -------
+        version : `VersionTuple`
+            Version number read from YAML file, if YAML file does not define
+            schema version then "0.1.0" is returned.
+        """
+        if self._schemaVersion is None:
+            return VersionTuple(0, 1, 0)
+        else:
+            return self._schemaVersion
+
     def _buildSchemas(
         self,
         schema_file: str,
         schema_name: str = "ApdbSchema",
-    ) -> Mapping[ApdbTables, Table]:
+    ) -> tuple[Mapping[ApdbTables, Table], VersionTuple | None]:
         """Create schema definitions for all tables.
 
         Reads YAML schemas and builds dictionary containing `TableDef`
@@ -160,6 +179,9 @@ class ApdbSchema:
         -------
         schemas : `dict`
             Mapping of table names to `TableDef` instances.
+        version : `VersionTuple` or `None`
+            Schema version defined in schema file, `None` if version is not
+            defined.
         """
         schema_file = os.path.expandvars(schema_file)
         with open(schema_file) as yaml_stream:
@@ -186,4 +208,8 @@ class ApdbSchema:
             else:
                 schemas[table_enum] = table
 
-        return schemas
+        version: VersionTuple | None = None
+        if schema.version is not None:
+            version = VersionTuple.fromString(schema.version.current)
+
+        return schemas, version

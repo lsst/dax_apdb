@@ -107,6 +107,10 @@ class GUID(sqlalchemy.TypeDecorator):
             return uuid.UUID(hex=value)
 
 
+class InconsistentSchemaError(RuntimeError):
+    """Exception raised when schema state is inconsistent."""
+
+
 @enum.unique
 class ExtraTables(enum.Enum):
     """Names of the tables used for tracking insert IDs."""
@@ -210,7 +214,7 @@ class ApdbSqlSchema(ApdbSchema):
             felis.types.Short: sqlalchemy.types.Integer,
             felis.types.Byte: sqlalchemy.types.Integer,
             felis.types.Binary: sqlalchemy.types.LargeBinary,
-            felis.types.Text: sqlalchemy.types.CHAR,
+            felis.types.Text: sqlalchemy.types.Text,
             felis.types.String: sqlalchemy.types.CHAR,
             felis.types.Char: sqlalchemy.types.CHAR,
             felis.types.Unicode: sqlalchemy.types.CHAR,
@@ -251,6 +255,42 @@ class ApdbSqlSchema(ApdbSchema):
         self._extra_tables = self._make_extra_tables(self._apdb_tables)
 
         self._has_insert_id: bool | None = None
+        self._metadata_check: bool | None = None
+
+    def empty(self) -> bool:
+        """Return True if database schema is empty.
+
+        Returns
+        -------
+        empty : `bool`
+            `True` if none of the required APDB tables exist in the database,
+            `False` if all required tables exist.
+
+        Raises
+        ------
+        InconsistentSchemaError
+            Raised when some of the required tables exist but not all.
+        """
+        inspector = inspect(self._engine)
+        table_names = set(inspector.get_table_names(self._metadata.schema))
+
+        existing_tables = []
+        missing_tables = []
+        for table_enum in self._apdb_tables:
+            table_name = table_enum.table_name(self._prefix)
+            if table_name in table_names:
+                existing_tables.append(table_name)
+            else:
+                missing_tables.append(table_name)
+
+        if not missing_tables:
+            return False
+        elif not existing_tables:
+            return True
+        else:
+            raise InconsistentSchemaError(
+                f"Only some required APDB tables exist: {existing_tables}, missing tables: {missing_tables}"
+            )
 
     def makeSchema(self, drop: bool = False) -> None:
         """Create or re-create all tables.
@@ -279,6 +319,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         # Reset possibly cached value.
         self._has_insert_id = None
+        self._metadata_check = None
 
     def get_table(self, table_enum: ApdbTables | ExtraTables) -> Table:
         """Return SQLAlchemy table instance for a specified table type/enum.
@@ -300,6 +341,18 @@ class ApdbSqlSchema(ApdbSchema):
         """
         try:
             if isinstance(table_enum, ApdbTables):
+                if table_enum is ApdbTables.metadata:
+                    # There may be cases when schema is configured with the
+                    # metadata table but database is still missing it. Check
+                    # that table actually exists in the database. Note that
+                    # this may interact with `makeSchema`.
+                    if self._metadata_check is None:
+                        inspector = inspect(self._engine)
+                        table_name = table_enum.table_name(self._prefix)
+                        self._metadata_check = inspector.has_table(table_name, schema=self._metadata.schema)
+                    if not self._metadata_check:
+                        # this will be caught below
+                        raise LookupError("metadata table is missing")
                 return self._apdb_tables[table_enum]
             else:
                 return self._extra_tables[table_enum]
@@ -357,6 +410,9 @@ class ApdbSqlSchema(ApdbSchema):
         tables = {}
         for table_enum in ApdbTables:
             if table_enum is ApdbTables.DiaObjectLast and self._dia_object_index != "last_object_table":
+                continue
+            if table_enum is ApdbTables.metadata and table_enum not in self.tableSchemas:
+                # Schema does not define metadata.
                 continue
 
             columns = self._tableColumns(table_enum)

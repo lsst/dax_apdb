@@ -46,6 +46,10 @@ class _FelisUUID(felis.types.FelisType, felis_name="uuid", votable_name="uuid"):
     """
 
 
+class InconsistentSchemaError(RuntimeError):
+    """Exception raised when schema state is inconsistent."""
+
+
 @enum.unique
 class ExtraTables(enum.Enum):
     """Names of the extra tables used by Cassandra implementation."""
@@ -171,6 +175,11 @@ class ApdbCassandraSchema(ApdbSchema):
                 # primary key index).
                 part_columns = ["ssObjectId"]
                 primary_key = []
+            elif table is ApdbTables.metadata:
+                # Metadata is in one partition because we want to read all of
+                # it in one query, add an extra column for partition.
+                part_columns = ["meta_part"]
+                add_columns = part_columns
             else:
                 # TODO: Do not know what to do with the other tables
                 continue
@@ -282,9 +291,49 @@ class ApdbCassandraSchema(ApdbSchema):
         row = result.one()
         return bool(row[0])
 
+    def empty(self) -> bool:
+        """Return True if database schema is empty.
+
+        Returns
+        -------
+        empty : `bool`
+            `True` if none of the required APDB tables exist in the database,
+            `False` if all required tables exist.
+
+        Raises
+        ------
+        InconsistentSchemaError
+            Raised when some of the required tables exist but not all.
+        """
+        query = "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s"
+        result = self._session.execute(query, (self._keyspace,))
+        table_names = set(row[0] for row in result.all())
+
+        existing_tables = []
+        missing_tables = []
+        for table_enum in self._apdb_tables:
+            table_name = table_enum.table_name(self._prefix)
+            if table_name in table_names:
+                existing_tables.append(table_name)
+            else:
+                missing_tables.append(table_name)
+
+        if not missing_tables:
+            return False
+        elif not existing_tables:
+            return True
+        else:
+            raise InconsistentSchemaError(
+                f"Only some required APDB tables exist: {existing_tables}, missing tables: {missing_tables}"
+            )
+
     def tableName(self, table_name: ApdbTables | ExtraTables) -> str:
         """Return Cassandra table name for APDB table."""
         return table_name.table_name(self._prefix)
+
+    def keyspace(self) -> str:
+        """Return Cassandra keyspace for APDB tables."""
+        return self._keyspace
 
     def getColumnMap(self, table_name: ApdbTables | ExtraTables) -> Mapping[str, simple.Column]:
         """Return mapping of column names to Column definitions.

@@ -22,6 +22,8 @@
 from __future__ import annotations
 
 __all__ = [
+    "ApdbCassandraTableData",
+    "PreparedStatementCache",
     "literal",
     "pandas_dataframe_factory",
     "quote_id",
@@ -43,6 +45,7 @@ import pandas
 try:
     from cassandra.cluster import EXEC_PROFILE_DEFAULT, Session
     from cassandra.concurrent import execute_concurrent
+    from cassandra.query import PreparedStatement
 
     CASSANDRA_IMPORTED = True
 except ImportError:
@@ -110,6 +113,22 @@ class ApdbCassandraTableData(ApdbTableData):
     def __iter__(self) -> Iterator[tuple]:
         """Make it look like a row iterator, needed for some odd logic."""
         return iter(self._rows)
+
+
+class PreparedStatementCache:
+    """Cache for prepared Cassandra statements"""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+        self._prepared_statements: dict[str, PreparedStatement] = {}
+
+    def prepare(self, query: str) -> PreparedStatement:
+        """Convert query string into prepared statement."""
+        stmt = self._prepared_statements.get(query)
+        if stmt is None:
+            stmt = self._session.prepare(query)
+            self._prepared_statements[query] = stmt
+        return stmt
 
 
 def pandas_dataframe_factory(colnames: list[str], rows: list[tuple]) -> pandas.DataFrame:
