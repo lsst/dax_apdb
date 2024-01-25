@@ -27,7 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from contextlib import closing, suppress
 from typing import TYPE_CHECKING, Any, cast
 
@@ -39,8 +39,7 @@ from felis.simple import Table
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
-from sqlalchemy import func, inspection, sql
-from sqlalchemy.engine import Inspector
+from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
@@ -61,52 +60,6 @@ VERSION = VersionTuple(0, 1, 0)
 """Version for the code defined in this module. This needs to be updated
 (following compatibility rules) when schema produced by this code changes.
 """
-
-if pandas.__version__.partition(".")[0] == "1":
-
-    class _ConnectionHackSA2(sqlalchemy.engine.Connectable):
-        """Terrible hack to workaround Pandas 1 incomplete support for
-        sqlalchemy 2.
-
-        We need to pass a Connection instance to pandas method, but in SA 2 the
-        Connection class lost ``connect`` method which is used by Pandas.
-        """
-
-        def __init__(self, connection: sqlalchemy.engine.Connection):
-            self._connection = connection
-
-        def connect(self, **kwargs: Any) -> Any:
-            return self
-
-        @property
-        def execute(self) -> Callable:
-            return self._connection.execute
-
-        @property
-        def execution_options(self) -> Callable:
-            return self._connection.execution_options
-
-        @property
-        def connection(self) -> Any:
-            return self._connection.connection
-
-        def __enter__(self) -> sqlalchemy.engine.Connection:
-            return self._connection
-
-        def __exit__(self, type_: Any, value: Any, traceback: Any) -> None:
-            # Do not close connection here
-            pass
-
-    @inspection._inspects(_ConnectionHackSA2)
-    def _connection_insp(conn: _ConnectionHackSA2) -> Inspector:
-        return Inspector._construct(Inspector._init_connection, conn._connection)
-
-else:
-    # Pandas 2.0 supports SQLAlchemy 2 correctly.
-    def _ConnectionHackSA2(  # type: ignore[no-redef]
-        conn: sqlalchemy.engine.Connectable,
-    ) -> sqlalchemy.engine.Connectable:
-        return conn
 
 
 def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
@@ -419,7 +372,7 @@ class ApdbSql(Apdb):
         # execute select
         with Timer("DiaObject select", self.config.timer):
             with self._engine.begin() as conn:
-                objects = pandas.read_sql_query(query, _ConnectionHackSA2(conn))
+                objects = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
@@ -635,9 +588,7 @@ class ApdbSql(Apdb):
 
             # insert new records
             if len(toInsert) > 0:
-                toInsert.to_sql(
-                    table.name, _ConnectionHackSA2(conn), if_exists="append", index=False, schema=table.schema
-                )
+                toInsert.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
 
             # update existing records
             if len(toUpdate) > 0:
@@ -881,7 +832,7 @@ class ApdbSql(Apdb):
             with Timer("DiaObjectLast insert", self.config.timer):
                 last_objs.to_sql(
                     table.name,
-                    _ConnectionHackSA2(connection),
+                    connection,
                     if_exists="append",
                     index=False,
                     schema=table.schema,
@@ -943,13 +894,7 @@ class ApdbSql(Apdb):
 
         # insert new versions
         with Timer("DiaObject insert", self.config.timer):
-            objs.to_sql(
-                table.name,
-                _ConnectionHackSA2(connection),
-                if_exists="append",
-                index=False,
-                schema=table.schema,
-            )
+            objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
             if history_stmt is not None:
                 connection.execute(history_stmt, history_data)
 
@@ -982,13 +927,7 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            sources.to_sql(
-                table.name,
-                _ConnectionHackSA2(connection),
-                if_exists="append",
-                index=False,
-                schema=table.schema,
-            )
+            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
             if history_stmt is not None:
                 connection.execute(history_stmt, history)
 
@@ -1021,13 +960,7 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaForcedSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            sources.to_sql(
-                table.name,
-                _ConnectionHackSA2(connection),
-                if_exists="append",
-                index=False,
-                schema=table.schema,
-            )
+            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
             if history_stmt is not None:
                 connection.execute(history_stmt, history)
 
