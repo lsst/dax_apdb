@@ -37,7 +37,7 @@ try:
     import cassandra
     import cassandra.query
     from cassandra.auth import AuthProvider, PlainTextAuthProvider
-    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
+    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile, Session
     from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
 
     CASSANDRA_IMPORTED = True
@@ -237,23 +237,9 @@ class ApdbCassandra(Apdb):
             config.part_pixelization, config.part_pix_level, config.part_pix_max_ranges
         )
 
-        addressTranslator: AddressTranslator | None = None
-        if config.private_ips:
-            addressTranslator = _AddressTranslator(list(config.contact_points), list(config.private_ips))
-
         self._keyspace = config.keyspace
 
-        self._cluster = Cluster(
-            execution_profiles=self._makeProfiles(config),
-            contact_points=self.config.contact_points,
-            port=self.config.port,
-            address_translator=addressTranslator,
-            protocol_version=self.config.protocol_version,
-            auth_provider=self._make_auth_provider(config),
-        )
-        self._session = self._cluster.connect()
-        # Disable result paging
-        self._session.default_fetch_size = None
+        self._cluster, self._session = self._make_session(config)
 
         self._schema = ApdbCassandraSchema(
             session=self._session,
@@ -264,7 +250,7 @@ class ApdbCassandra(Apdb):
             time_partition_tables=self.config.time_partition_tables,
             use_insert_id=self.config.use_insert_id,
         )
-        self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+        self._partition_zero_epoch_mjd: float = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
         self._metadata: ApdbMetadataCassandra | None = None
         if not self._schema.empty():
@@ -278,7 +264,29 @@ class ApdbCassandra(Apdb):
         if hasattr(self, "_cluster"):
             self._cluster.shutdown()
 
-    def _make_auth_provider(self, config: ApdbCassandraConfig) -> AuthProvider | None:
+    @classmethod
+    def _make_session(cls, config: ApdbCassandraConfig) -> tuple[Cluster, Session]:
+        """Make Cassandra session."""
+        addressTranslator: AddressTranslator | None = None
+        if config.private_ips:
+            addressTranslator = _AddressTranslator(list(config.contact_points), list(config.private_ips))
+
+        cluster = Cluster(
+            execution_profiles=cls._makeProfiles(config),
+            contact_points=config.contact_points,
+            port=config.port,
+            address_translator=addressTranslator,
+            protocol_version=config.protocol_version,
+            auth_provider=cls._make_auth_provider(config),
+        )
+        session = cluster.connect()
+        # Disable result paging
+        session.default_fetch_size = None
+
+        return cluster, session
+
+    @classmethod
+    def _make_auth_provider(cls, config: ApdbCassandraConfig) -> AuthProvider | None:
         """Make Cassandra authentication provider instance."""
         try:
             dbauth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
@@ -355,29 +363,47 @@ class ApdbCassandra(Apdb):
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
-    def makeSchema(self, drop: bool = False) -> None:
+    @classmethod
+    def makeSchema(cls, config: ApdbConfig, *, drop: bool = False) -> None:
         # docstring is inherited from a base class
 
-        if self.config.time_partition_tables:
-            time_partition_start = dafBase.DateTime(self.config.time_partition_start, dafBase.DateTime.TAI)
-            time_partition_end = dafBase.DateTime(self.config.time_partition_end, dafBase.DateTime.TAI)
+        if not isinstance(config, ApdbCassandraConfig):
+            raise TypeError(f"Unexpected type of configuration object: {type(config)}")
+
+        cluster, session = cls._make_session(config)
+
+        schema = ApdbCassandraSchema(
+            session=session,
+            keyspace=config.keyspace,
+            schema_file=config.schema_file,
+            schema_name=config.schema_name,
+            prefix=config.prefix,
+            time_partition_tables=config.time_partition_tables,
+            use_insert_id=config.use_insert_id,
+        )
+
+        # Ask schema to create all tables.
+        if config.time_partition_tables:
+            time_partition_start = dafBase.DateTime(config.time_partition_start, dafBase.DateTime.TAI)
+            time_partition_end = dafBase.DateTime(config.time_partition_end, dafBase.DateTime.TAI)
+            part_epoch: float = cls.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+            part_days = config.time_partition_days
             part_range = (
-                self._time_partition(time_partition_start),
-                self._time_partition(time_partition_end) + 1,
+                cls._time_partition_cls(time_partition_start, part_epoch, part_days),
+                cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
             )
-            self._schema.makeSchema(drop=drop, part_range=part_range)
+            schema.makeSchema(drop=drop, part_range=part_range)
         else:
-            self._schema.makeSchema(drop=drop)
+            schema.makeSchema(drop=drop)
 
-        # Reset metadata after schema initialization.
-        self._metadata = ApdbMetadataCassandra(self._session, self._schema, self.config)
+        metadata = ApdbMetadataCassandra(session, schema, config)
 
-        # Fill version numbers, but only if they are not defined.
-        if self._metadata.table_exists():
-            if self._metadata.get(self.metadataSchemaVersionKey) is None:
-                self._metadata.set(self.metadataSchemaVersionKey, str(self._schema.schemaVersion()))
-            if self._metadata.get(self.metadataCodeVersionKey) is None:
-                self._metadata.set(self.metadataCodeVersionKey, str(self.apdbImplementationVersion()))
+        # Fill version numbers, overrides if they existed before.
+        if metadata.table_exists():
+            metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+            metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+        cluster.shutdown()
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -668,7 +694,8 @@ class ApdbCassandra(Apdb):
             raise RuntimeError("Database schema was not initialized.")
         return self._metadata
 
-    def _makeProfiles(self, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
+    @classmethod
+    def _makeProfiles(cls, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
         """Make all execution profiles used in the code."""
         if config.private_ips:
             loadBalancePolicy = WhiteListRoundRobinPolicy(hosts=config.contact_points)
@@ -1088,8 +1115,35 @@ class ApdbCassandra(Apdb):
         sources["apdb_part"] = apdb_part
         return sources
 
+    @classmethod
+    def _time_partition_cls(cls, time: float | dafBase.DateTime, epoch_mjd: float, part_days: int) -> int:
+        """Calculate time partition number for a given time.
+
+        Parameters
+        ----------
+        time : `float` or `lsst.daf.base.DateTime`
+            Time for which to calculate partition number. Can be float to mean
+            MJD or `lsst.daf.base.DateTime`
+        epoch_mjd : `float`
+            Epoch time for partition 0.
+        part_days : `int`
+            Number of days per partition.
+
+        Returns
+        -------
+        partition : `int`
+            Partition number for a given time.
+        """
+        if isinstance(time, dafBase.DateTime):
+            mjd = time.get(system=dafBase.DateTime.MJD)
+        else:
+            mjd = time
+        days_since_epoch = mjd - epoch_mjd
+        partition = int(days_since_epoch) // part_days
+        return partition
+
     def _time_partition(self, time: float | dafBase.DateTime) -> int:
-        """Calculate time partiton number for a given time.
+        """Calculate time partition number for a given time.
 
         Parameters
         ----------

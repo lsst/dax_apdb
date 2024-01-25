@@ -215,28 +215,7 @@ class ApdbSql(Apdb):
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
 
-        # engine is reused between multiple processes, make sure that we don't
-        # share connections by disabling pool (by using NullPool class)
-        kw: MutableMapping[str, Any] = dict(echo=self.config.sql_echo)
-        conn_args: dict[str, Any] = dict()
-        if not self.config.connection_pool:
-            kw.update(poolclass=NullPool)
-        if self.config.isolation_level is not None:
-            kw.update(isolation_level=self.config.isolation_level)
-        elif self.config.db_url.startswith("sqlite"):  # type: ignore
-            # Use READ_UNCOMMITTED as default value for sqlite.
-            kw.update(isolation_level="READ_UNCOMMITTED")
-        if self.config.connection_timeout is not None:
-            if self.config.db_url.startswith("sqlite"):
-                conn_args.update(timeout=self.config.connection_timeout)
-            elif self.config.db_url.startswith(("postgresql", "mysql")):
-                conn_args.update(connect_timeout=self.config.connection_timeout)
-        kw.update(connect_args=conn_args)
-        self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
-
-        if self._engine.dialect.name == "sqlite":
-            # Need to enable foreign keys on every new connection.
-            sqlalchemy.event.listen(self._engine, "connect", _onSqlite3Connect)
+        self._engine = self._makeEngine(config)
 
         self._schema = ApdbSqlSchema(
             engine=self._engine,
@@ -249,16 +228,49 @@ class ApdbSql(Apdb):
             use_insert_id=config.use_insert_id,
         )
 
-        self._metadata: ApdbMetadataSql | None = None
-        if not self._schema.empty():
-            table: sqlalchemy.schema.Table | None = None
-            with suppress(ValueError):
-                table = self._schema.get_table(ApdbTables.metadata)
-            self._metadata = ApdbMetadataSql(self._engine, table)
+        table: sqlalchemy.schema.Table | None = None
+        with suppress(ValueError):
+            table = self._schema.get_table(ApdbTables.metadata)
+        self._metadata = ApdbMetadataSql(self._engine, table)
+        if self._metadata.table_exists():
             self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
         self.use_insert_id = self._schema.has_insert_id
+
+    @classmethod
+    def _makeEngine(cls, config: ApdbSqlConfig) -> sqlalchemy.engine.Engine:
+        """Make SQLALchemy engine based on configured parameters.
+
+        Parameters
+        ----------
+        config : `ApdbSqlConfig`
+            Configuration object.
+        """
+        # engine is reused between multiple processes, make sure that we don't
+        # share connections by disabling pool (by using NullPool class)
+        kw: MutableMapping[str, Any] = dict(echo=config.sql_echo)
+        conn_args: dict[str, Any] = dict()
+        if not config.connection_pool:
+            kw.update(poolclass=NullPool)
+        if config.isolation_level is not None:
+            kw.update(isolation_level=config.isolation_level)
+        elif config.db_url.startswith("sqlite"):  # type: ignore
+            # Use READ_UNCOMMITTED as default value for sqlite.
+            kw.update(isolation_level="READ_UNCOMMITTED")
+        if config.connection_timeout is not None:
+            if config.db_url.startswith("sqlite"):
+                conn_args.update(timeout=config.connection_timeout)
+            elif config.db_url.startswith(("postgresql", "mysql")):
+                conn_args.update(connect_timeout=config.connection_timeout)
+        kw.update(connect_args=conn_args)
+        engine = sqlalchemy.create_engine(config.db_url, **kw)
+
+        if engine.dialect.name == "sqlite":
+            # Need to enable foreign keys on every new connection.
+            sqlalchemy.event.listen(engine, "connect", _onSqlite3Connect)
+
+        return engine
 
     def _versionCheck(self, metadata: ApdbMetadataSql) -> None:
         """Check schema version compatibility."""
@@ -329,21 +341,38 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
-    def makeSchema(self, drop: bool = False) -> None:
+    @classmethod
+    def makeSchema(cls, config: ApdbConfig, drop: bool = False) -> None:
         # docstring is inherited from a base class
-        self._schema.makeSchema(drop=drop)
-        # Need to reset metadata after table was created.
-        table: sqlalchemy.schema.Table | None = None
-        with suppress(ValueError):
-            table = self._schema.get_table(ApdbTables.metadata)
-        self._metadata = ApdbMetadataSql(self._engine, table)
 
-        if self._metadata.table_exists():
-            # Fill version numbers, but only if they are not defined.
-            if self._metadata.get(self.metadataSchemaVersionKey) is None:
-                self._metadata.set(self.metadataSchemaVersionKey, str(self._schema.schemaVersion()))
-            if self._metadata.get(self.metadataCodeVersionKey) is None:
-                self._metadata.set(self.metadataCodeVersionKey, str(self.apdbImplementationVersion()))
+        if not isinstance(config, ApdbSqlConfig):
+            raise TypeError(f"Unexpected type of configuration object: {type(config)}")
+
+        engine = cls._makeEngine(config)
+
+        # Ask schema class to create all tables.
+        schema = ApdbSqlSchema(
+            engine=engine,
+            dia_object_index=config.dia_object_index,
+            schema_file=config.schema_file,
+            schema_name=config.schema_name,
+            prefix=config.prefix,
+            namespace=config.namespace,
+            htm_index_column=config.htm_index_column,
+            use_insert_id=config.use_insert_id,
+        )
+        schema.makeSchema(drop=drop)
+
+        # Need metadata table to store few items in it, if table exists.
+        meta_table: sqlalchemy.schema.Table | None = None
+        with suppress(ValueError):
+            meta_table = schema.get_table(ApdbTables.metadata)
+
+        apdb_meta = ApdbMetadataSql(engine, meta_table)
+        if apdb_meta.table_exists():
+            # Fill version numbers, overwrite if they are already there.
+            apdb_meta.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+            apdb_meta.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class

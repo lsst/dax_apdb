@@ -313,7 +313,12 @@ class ApdbCassandraSchema(ApdbSchema):
         missing_tables = []
         for table_enum in self._apdb_tables:
             table_name = table_enum.table_name(self._prefix)
-            if table_name in table_names:
+            if self._time_partition_tables and table_enum in self._time_partitioned_tables:
+                # Check prefix for time-partitioned tables.
+                exists = any(table.startswith(f"{table_name}_") for table in table_names)
+            else:
+                exists = table_name in table_names
+            if exists:
                 existing_tables.append(table_name)
             else:
                 missing_tables.append(table_name)

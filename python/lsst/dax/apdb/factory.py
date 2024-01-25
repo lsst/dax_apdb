@@ -21,11 +21,36 @@
 
 from __future__ import annotations
 
-__all__ = ["make_apdb"]
+__all__ = ["apdb_type", "make_apdb"]
 
 from .apdb import Apdb, ApdbConfig
 from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
 from .apdbSql import ApdbSql, ApdbSqlConfig
+
+
+def apdb_type(config: ApdbConfig) -> type[ApdbSql | ApdbCassandra]:
+    """Return Apdb type on Apdb configuration.
+
+    Parameters
+    ----------
+    config : `ApdbConfig`
+        Configuration object, sub-class of ApdbConfig.
+
+    Returns
+    -------
+    type : `type` [`Apdb`]
+        Subclass of `Apdb` class.
+
+    Raises
+    ------
+    TypeError
+        Raised if type of ``config`` does not match any known types.
+    """
+    if type(config) is ApdbSqlConfig:
+        return ApdbSql
+    elif type(config) is ApdbCassandraConfig:
+        return ApdbCassandra
+    raise TypeError(f"Unknown type of config object: {type(config)}")
 
 
 def make_apdb(config: ApdbConfig) -> Apdb:

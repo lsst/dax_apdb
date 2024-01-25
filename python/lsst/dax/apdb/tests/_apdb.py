@@ -35,6 +35,7 @@ import pandas
 import yaml
 from lsst.daf.base import DateTime
 from lsst.dax.apdb import (
+    Apdb,
     ApdbConfig,
     ApdbInsertId,
     ApdbSql,
@@ -188,9 +189,9 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_makeSchema(self) -> None:
         """Test for making APDB schema."""
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
 
-        apdb.makeSchema()
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
@@ -205,8 +206,8 @@ class ApdbTest(TestCaseMixin, ABC):
         """
         # use non-zero months for Forced/Source fetching
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         visit_time = self.visit_time
@@ -264,8 +265,8 @@ class ApdbTest(TestCaseMixin, ABC):
         """
         # set read_sources_months to 0 so that Forced/Sources are None
         config = self.make_config(read_sources_months=0, read_forced_sources_months=0)
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         visit_time = self.visit_time
@@ -305,8 +306,8 @@ class ApdbTest(TestCaseMixin, ABC):
         """Store and retrieve DiaObjects."""
         # don't care about sources.
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         visit_time = self.visit_time
@@ -326,8 +327,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_storeSources(self) -> None:
         """Store and retrieve DiaSources."""
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         visit_time = self.visit_time
@@ -371,8 +372,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_storeForcedSources(self) -> None:
         """Store and retrieve DiaForcedSources."""
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         visit_time = self.visit_time
@@ -405,8 +406,8 @@ class ApdbTest(TestCaseMixin, ABC):
         """Store and retrieve catalog history."""
         # don't care about sources.
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
         visit_time = self.visit_time
 
         region1 = _make_region((1.0, 1.0, -1.0))
@@ -478,8 +479,8 @@ class ApdbTest(TestCaseMixin, ABC):
         """Store and retrieve SSObjects."""
         # don't care about sources.
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         # make catalog with SSObjects
         catalog = makeSSObjectCatalog(100, flags=1)
@@ -503,8 +504,8 @@ class ApdbTest(TestCaseMixin, ABC):
         """Reassign DiaObjects."""
         # don't care about sources.
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         visit_time = self.visit_time
@@ -536,8 +537,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_midpointMjdTai_src(self) -> None:
         """Test for time filtering of DiaSources."""
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         # 2021-01-01 plus 360 days is 2021-12-27
@@ -574,8 +575,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_midpointMjdTai_fsrc(self) -> None:
         """Test for time filtering of DiaForcedSources."""
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         region = _make_region()
         src_time1 = DateTime("2021-01-01T00:00:00", DateTime.TAI)
@@ -611,8 +612,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_metadata(self) -> None:
         """Simple test for writing/reading metadata table"""
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
         metadata = apdb.metadata
 
         # APDB should write two metadata items with version numbers.
@@ -644,8 +645,8 @@ class ApdbTest(TestCaseMixin, ABC):
         # We expect that schema includes metadata table, drop it.
         with update_schema_yaml(config.schema_file, drop_metadata=True) as schema_file:
             config = self.make_config(schema_file=schema_file)
+            Apdb.makeSchema(config)
             apdb = make_apdb(config)
-            apdb.makeSchema()
             metadata = apdb.metadata
 
             self.assertTrue(metadata.empty())
@@ -695,8 +696,8 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         """
         # Make schema without history tables.
         config = self.make_config(use_insert_id=False)
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
-        apdb.makeSchema()
 
         # Make APDB instance configured for history tables.
         config = self.make_config(use_insert_id=True)
@@ -719,10 +720,10 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
     def test_schemaVersionCheck(self) -> None:
         """Check version number compatibility."""
         config = self.make_config()
+        Apdb.makeSchema(config)
         apdb = make_apdb(config)
 
         self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
-        apdb.makeSchema()
 
         # Claim that schema version is now 99.0.0, must raise an exception.
         with update_schema_yaml(config.schema_file, version="99.0.0") as schema_file:
