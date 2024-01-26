@@ -616,9 +616,10 @@ class ApdbTest(TestCaseMixin, ABC):
         apdb = make_apdb(config)
         metadata = apdb.metadata
 
-        # APDB should write two metadata items with version numbers.
+        # APDB should write two metadata items with version numbers and a
+        # frozen JSON config.
         self.assertFalse(metadata.empty())
-        self.assertEqual(len(list(metadata.items())), 2)
+        self.assertEqual(len(list(metadata.items())), 3)
 
         metadata.set("meta", "data")
         metadata.set("data", "meta")
@@ -673,6 +674,18 @@ class ApdbTest(TestCaseMixin, ABC):
             config = self.make_config(schema_file=schema_file)
             apdb = make_apdb(config)
             self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(99, 0, 0))
+
+    def test_config_freeze(self) -> None:
+        """Test that some config fields are correctly frozen in database."""
+        config = self.make_config()
+        Apdb.makeSchema(config)
+
+        # `use_insert_id` is the only parameter that is frozen in all
+        # implementations.
+        config.use_insert_id = not self.use_insert_id
+        apdb = make_apdb(config)
+        frozen_config = apdb.config  # type: ignore[attr-defined]
+        self.assertEqual(frozen_config.use_insert_id, self.use_insert_id)
 
 
 class ApdbSchemaUpdateTest(TestCaseMixin, ABC):

@@ -24,15 +24,10 @@ from __future__ import annotations
 __all__ = ["ApdbMetadataCassandra"]
 
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .apdbMetadata import ApdbMetadata
-from .apdbSchema import ApdbTables
 from .cassandra_utils import PreparedStatementCache, quote_id
-
-if TYPE_CHECKING:
-    from .apdbCassandra import ApdbCassandraConfig
-    from .apdbCassandraSchema import ApdbCassandraSchema
 
 
 class ApdbMetadataCassandra(ApdbMetadata):
@@ -46,20 +41,20 @@ class ApdbMetadataCassandra(ApdbMetadata):
         Object providing access to schema details.
     """
 
-    def __init__(self, session: Any, schema: ApdbCassandraSchema, config: ApdbCassandraConfig):
+    def __init__(self, session: Any, table_name: str, keyspace: str, read_profile: str, write_profile: str):
         self._session = session
-        self._config = config
+        self._read_profile = read_profile
+        self._write_profile = write_profile
         self._part = 0  # Partition for all rows
         self._preparer = PreparedStatementCache(session)
         # _table_clause will be None when metadata table is not configured
         self._table_clause: str | None = None
-        if ApdbTables.metadata in schema.tableSchemas:
-            table_name = schema.tableName(ApdbTables.metadata)
-            keyspace = schema.keyspace()
-            if not keyspace:
-                self._table_clause = quote_id(table_name)
-            else:
-                self._table_clause = f"{quote_id(keyspace)}.{quote_id(table_name)}"
+
+        query = "SELECT count(*) FROM system_schema.tables WHERE keyspace_name = %s and table_name = %s"
+        result = self._session.execute(query, (keyspace, table_name), execution_profile=read_profile)
+        exists = bool(result.one()[0])
+        if exists:
+            self._table_clause = f"{quote_id(keyspace)}.{quote_id(table_name)}"
 
     def get(self, key: str, default: str | None = None) -> str | None:
         # Docstring is inherited.
@@ -67,10 +62,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
             return default
         query = f"SELECT value FROM {self._table_clause} WHERE meta_part = ? AND name = ?"
         result = self._session.execute(
-            self._preparer.prepare(query),
-            (self._part, key),
-            timeout=self._config.read_timeout,
-            execution_profile="read_tuples",
+            self._preparer.prepare(query), (self._part, key), execution_profile=self._read_profile
         )
         if (row := result.one()) is not None:
             return row[0]
@@ -88,10 +80,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
             raise KeyError(f"Metadata key {key!r} already exists")
         # Race is still possible between check and insert.
         self._session.execute(
-            self._preparer.prepare(query),
-            (self._part, key, value),
-            timeout=self._config.write_timeout,
-            execution_profile="write",
+            self._preparer.prepare(query), (self._part, key, value), execution_profile=self._write_profile
         )
 
     def delete(self, key: str) -> bool:
@@ -107,10 +96,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
         exists = self.get(key) is not None
         # Race is still possible between check and remove.
         self._session.execute(
-            self._preparer.prepare(query),
-            (self._part, key),
-            timeout=self._config.write_timeout,
-            execution_profile="write",
+            self._preparer.prepare(query), (self._part, key), execution_profile=self._write_profile
         )
         return exists
 
@@ -121,10 +107,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
             return
         query = f"SELECT name, value FROM {self._table_clause} WHERE meta_part = ?"
         result = self._session.execute(
-            self._preparer.prepare(query),
-            (self._part,),
-            timeout=self._config.read_timeout,
-            execution_profile="read_tuples",
+            self._preparer.prepare(query), (self._part,), execution_profile=self._read_profile
         )
         for row in result:
             yield tuple(row)
@@ -136,10 +119,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
             return True
         query = f"SELECT count(*) FROM {self._table_clause} WHERE meta_part = ?"
         result = self._session.execute(
-            self._preparer.prepare(query),
-            (self._part,),
-            timeout=self._config.read_timeout,
-            execution_profile="read_tuples",
+            self._preparer.prepare(query), (self._part,), execution_profile=self._read_profile
         )
         row = result.one()
         return row[0] == 0

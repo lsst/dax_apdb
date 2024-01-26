@@ -23,6 +23,8 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
+import dataclasses
+import json
 import logging
 import uuid
 from collections.abc import Iterable, Iterator, Mapping, Set
@@ -54,6 +56,7 @@ from lsst.utils.iteration import chunk_iterable
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
+from .apdbConfigFreezer import ApdbConfigFreezer
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .apdbSchema import ApdbTables
 from .cassandra_utils import (
@@ -177,6 +180,57 @@ class ApdbCassandraConfig(ApdbConfig):
     )
 
 
+@dataclasses.dataclass
+class _FrozenApdbCassandraConfig:
+    """Part of the configuration that is saved in metadata table and read back.
+
+    The attributes are a subset of attributes in `ApdbCassandraConfig` class.
+
+    Parameters
+    ----------
+    config : `ApdbSqlConfig`
+        Configuration used to copy initial values of attributes.
+    """
+
+    use_insert_id: bool
+    part_pixelization: str
+    part_pix_level: int
+    ra_dec_columns: list[str]
+    time_partition_tables: bool
+    time_partition_days: int
+    use_insert_id_skips_diaobjects: bool
+
+    def __init__(self, config: ApdbCassandraConfig):
+        self.use_insert_id = config.use_insert_id
+        self.part_pixelization = config.part_pixelization
+        self.part_pix_level = config.part_pix_level
+        self.ra_dec_columns = list(config.ra_dec_columns)
+        self.time_partition_tables = config.time_partition_tables
+        self.time_partition_days = config.time_partition_days
+        self.use_insert_id_skips_diaobjects = config.use_insert_id_skips_diaobjects
+
+    def to_json(self) -> str:
+        """Convert this instance to JSON representation."""
+        return json.dumps(dataclasses.asdict(self))
+
+    def update(self, json_str: str) -> None:
+        """Update attribute values from a JSON string.
+
+        Parameters
+        ----------
+        json_str : str
+            String containing JSON representation of configuration.
+        """
+        data = json.loads(json_str)
+        if not isinstance(data, dict):
+            raise TypeError(f"JSON string must be convertible to object: {json_str!r}")
+        allowed_names = {field.name for field in dataclasses.fields(self)}
+        for key, value in data.items():
+            if key not in allowed_names:
+                raise ValueError(f"JSON object contains unknown key: {key}")
+            setattr(self, key, value)
+
+
 if CASSANDRA_IMPORTED:
 
     class _AddressTranslator(AddressTranslator):
@@ -190,14 +244,6 @@ if CASSANDRA_IMPORTED:
 
         def translate(self, private_ip: str) -> str:
             return self._map.get(private_ip, private_ip)
-
-
-def _quote_column(name: str) -> str:
-    """Quote column name"""
-    if name.islower():
-        return name
-    else:
-        return f'"{name}"'
 
 
 class ApdbCassandra(Apdb):
@@ -219,6 +265,20 @@ class ApdbCassandra(Apdb):
     metadataCodeVersionKey = "version:ApdbCassandra"
     """Name of the metadata key to store code version number."""
 
+    metadataConfigKey = "config:apdb-cassandra.json"
+    """Name of the metadata key to store code version number."""
+
+    _frozen_parameters = (
+        "use_insert_id",
+        "part_pixelization",
+        "part_pix_level",
+        "ra_dec_columns",
+        "time_partition_tables",
+        "time_partition_days",
+        "use_insert_id_skips_diaobjects",
+    )
+    """Names of the config parameters to be frozen in metadata table."""
+
     partition_zero_epoch = dafBase.DateTime(1970, 1, 1, 0, 0, 0, dafBase.DateTime.TAI)
     """Start time for partition 0, this should never be changed."""
 
@@ -226,20 +286,30 @@ class ApdbCassandra(Apdb):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
-        config.validate()
-        self.config = config
-
-        _LOG.debug("ApdbCassandra Configuration:")
-        for key, value in self.config.items():
-            _LOG.debug("    %s: %s", key, value)
-
-        self._pixelization = Pixelization(
-            config.part_pixelization, config.part_pix_level, config.part_pix_max_ranges
-        )
-
         self._keyspace = config.keyspace
 
         self._cluster, self._session = self._make_session(config)
+
+        meta_table_name = ApdbTables.metadata.table_name(config.prefix)
+        self._metadata = ApdbMetadataCassandra(
+            self._session, meta_table_name, config.keyspace, "read_tuples", "write"
+        )
+
+        # Read frozen config from metadata.
+        config_json = self._metadata.get(self.metadataConfigKey)
+        if config_json is not None:
+            # Update config from metadata.
+            freezer = ApdbConfigFreezer[ApdbCassandraConfig](self._frozen_parameters)
+            self.config = freezer.update(config, config_json)
+        else:
+            self.config = config
+        self.config.validate()
+
+        self._pixelization = Pixelization(
+            self.config.part_pixelization,
+            self.config.part_pix_level,
+            config.part_pix_max_ranges,
+        )
 
         self._schema = ApdbCassandraSchema(
             session=self._session,
@@ -252,13 +322,15 @@ class ApdbCassandra(Apdb):
         )
         self._partition_zero_epoch_mjd: float = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
-        self._metadata: ApdbMetadataCassandra | None = None
-        if not self._schema.empty():
-            self._metadata = ApdbMetadataCassandra(self._session, self._schema, self.config)
+        if self._metadata.table_exists():
             self._versionCheck(self._metadata)
 
         # Cache for prepared statements
         self._preparer = PreparedStatementCache(self._session)
+
+        _LOG.debug("ApdbCassandra Configuration:")
+        for key, value in self.config.items():
+            _LOG.debug("    %s: %s", key, value)
 
     def __del__(self) -> None:
         if hasattr(self, "_cluster"):
@@ -396,12 +468,17 @@ class ApdbCassandra(Apdb):
         else:
             schema.makeSchema(drop=drop)
 
-        metadata = ApdbMetadataCassandra(session, schema, config)
+        meta_table_name = ApdbTables.metadata.table_name(config.prefix)
+        metadata = ApdbMetadataCassandra(session, meta_table_name, config.keyspace, "read_tuples", "write")
 
         # Fill version numbers, overrides if they existed before.
         if metadata.table_exists():
             metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
             metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+            # Store frozen part of a configuration in metadata.
+            freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
+            metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
 
         cluster.shutdown()
 
@@ -413,7 +490,7 @@ class ApdbCassandra(Apdb):
 
         # We need to exclude extra partitioning columns from result.
         column_names = self._schema.apdbColumnNames(ApdbTables.DiaObjectLast)
-        what = ",".join(_quote_column(column) for column in column_names)
+        what = ",".join(quote_id(column) for column in column_names)
 
         table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
         query = f'SELECT {what} from "{self._keyspace}"."{table_name}"'
@@ -794,7 +871,7 @@ class ApdbCassandra(Apdb):
 
         # We need to exclude extra partitioning columns from result.
         column_names = self._schema.apdbColumnNames(table_name)
-        what = ",".join(_quote_column(column) for column in column_names)
+        what = ",".join(quote_id(column) for column in column_names)
 
         # Build all queries
         statements: list[tuple] = []

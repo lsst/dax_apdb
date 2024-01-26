@@ -43,6 +43,7 @@ from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
+from .apdbConfigFreezer import ApdbConfigFreezer
 from .apdbMetadataSql import ApdbMetadataSql
 from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
@@ -202,20 +203,38 @@ class ApdbSql(Apdb):
     metadataCodeVersionKey = "version:ApdbSql"
     """Name of the metadata key to store code version number."""
 
+    metadataConfigKey = "config:apdb-sql.json"
+    """Name of the metadata key to store code version number."""
+
+    _frozen_parameters = (
+        "use_insert_id",
+        "dia_object_index",
+        "htm_level",
+        "htm_index_column",
+        "ra_dec_columns",
+    )
+    """Names of the config parameters to be frozen in metadata table."""
+
     def __init__(self, config: ApdbSqlConfig):
-        config.validate()
-        self.config = config
-
-        _LOG.debug("APDB Configuration:")
-        _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
-        _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
-        _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
-        _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
-        _LOG.debug("    schema_file: %s", self.config.schema_file)
-        _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
-        _LOG.debug("    schema prefix: %s", self.config.prefix)
-
         self._engine = self._makeEngine(config)
+
+        sa_metadata = sqlalchemy.MetaData(schema=config.namespace)
+        meta_table_name = ApdbTables.metadata.table_name(prefix=config.prefix)
+        meta_table: sqlalchemy.schema.Table | None = None
+        with suppress(sqlalchemy.exc.NoSuchTableError):
+            meta_table = sqlalchemy.schema.Table(meta_table_name, sa_metadata, autoload_with=self._engine)
+
+        self._metadata = ApdbMetadataSql(self._engine, meta_table)
+
+        # Read frozen config from metadata.
+        config_json = self._metadata.get(self.metadataConfigKey)
+        if config_json is not None:
+            # Update config from metadata.
+            freezer = ApdbConfigFreezer[ApdbSqlConfig](self._frozen_parameters)
+            self.config = freezer.update(config, config_json)
+        else:
+            self.config = config
+        self.config.validate()
 
         self._schema = ApdbSqlSchema(
             engine=self._engine,
@@ -225,18 +244,23 @@ class ApdbSql(Apdb):
             prefix=self.config.prefix,
             namespace=self.config.namespace,
             htm_index_column=self.config.htm_index_column,
-            use_insert_id=config.use_insert_id,
+            use_insert_id=self.config.use_insert_id,
         )
 
-        table: sqlalchemy.schema.Table | None = None
-        with suppress(ValueError):
-            table = self._schema.get_table(ApdbTables.metadata)
-        self._metadata = ApdbMetadataSql(self._engine, table)
         if self._metadata.table_exists():
             self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
         self.use_insert_id = self._schema.has_insert_id
+
+        _LOG.debug("APDB Configuration:")
+        _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
+        _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
+        _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
+        _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
+        _LOG.debug("    schema_file: %s", self.config.schema_file)
+        _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
+        _LOG.debug("    schema prefix: %s", self.config.prefix)
 
     @classmethod
     def _makeEngine(cls, config: ApdbSqlConfig) -> sqlalchemy.engine.Engine:
@@ -373,6 +397,10 @@ class ApdbSql(Apdb):
             # Fill version numbers, overwrite if they are already there.
             apdb_meta.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
             apdb_meta.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+            # Store frozen part of a configuration in metadata.
+            freezer = ApdbConfigFreezer[ApdbSqlConfig](cls._frozen_parameters)
+            apdb_meta.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
