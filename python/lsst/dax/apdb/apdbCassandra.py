@@ -137,7 +137,7 @@ class ApdbCassandraConfig(ApdbConfig):
     ra_dec_columns = ListField[str](default=["ra", "dec"], doc="Names of ra/dec columns in DiaObject table")
     timer = Field[bool](doc="If True then print/log timing information", default=False)
     time_partition_tables = Field[bool](
-        doc="Use per-partition tables for sources instead of partitioning by time", default=True
+        doc="Use per-partition tables for sources instead of partitioning by time", default=False
     )
     time_partition_days = Field[int](
         doc=(
