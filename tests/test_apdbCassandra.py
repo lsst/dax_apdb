@@ -106,8 +106,7 @@ class ApdbCassandraMixin:
 
     if TYPE_CHECKING:
         # For mypy.
-        def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
-            ...
+        def make_config(self, **kwargs: Any) -> ApdbCassandraConfig: ...
 
 
 class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
