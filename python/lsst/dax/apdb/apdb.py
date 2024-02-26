@@ -169,16 +169,23 @@ class Apdb(ABC):
         """
         raise NotImplementedError()
 
-    @abstractmethod
-    def makeSchema(self, drop: bool = False) -> None:
+    @classmethod
+    def makeSchema(cls, config: ApdbConfig, *, drop: bool = False) -> None:
         """Create or re-create whole database schema.
 
         Parameters
         ----------
+        config : `ApdbConfig`
+            Instance of configuration class, the type has to match the type of
+            the actual implementation class of this interface.
         drop : `bool`
             If True then drop all tables before creating new ones.
         """
-        raise NotImplementedError()
+        # Dispatch to actual implementation class based on config type.
+        from .factory import apdb_type
+
+        klass = apdb_type(config)
+        klass.makeSchema(config, drop=drop)
 
     @abstractmethod
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:

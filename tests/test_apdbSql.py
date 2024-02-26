@@ -48,10 +48,14 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
     dia_object_index = "baseline"
     allow_visit_query = False
 
+    def setUp(self) -> None:
+        self.tempdir = tempfile.mkdtemp()
+        self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
+
     def make_config(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
-            "db_url": "sqlite://",
+            "db_url": self.db_url,
             "schema_file": TEST_SCHEMA,
             "dia_object_index": self.dia_object_index,
             "use_insert_id": self.use_insert_id,

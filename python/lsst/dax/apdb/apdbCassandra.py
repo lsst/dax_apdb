@@ -23,6 +23,8 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
+import dataclasses
+import json
 import logging
 import uuid
 from collections.abc import Iterable, Iterator, Mapping, Set
@@ -37,7 +39,7 @@ try:
     import cassandra
     import cassandra.query
     from cassandra.auth import AuthProvider, PlainTextAuthProvider
-    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
+    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile, Session
     from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
 
     CASSANDRA_IMPORTED = True
@@ -54,6 +56,7 @@ from lsst.utils.iteration import chunk_iterable
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
+from .apdbConfigFreezer import ApdbConfigFreezer
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .apdbSchema import ApdbTables
 from .cassandra_utils import (
@@ -134,7 +137,7 @@ class ApdbCassandraConfig(ApdbConfig):
     ra_dec_columns = ListField[str](default=["ra", "dec"], doc="Names of ra/dec columns in DiaObject table")
     timer = Field[bool](doc="If True then print/log timing information", default=False)
     time_partition_tables = Field[bool](
-        doc="Use per-partition tables for sources instead of partitioning by time", default=True
+        doc="Use per-partition tables for sources instead of partitioning by time", default=False
     )
     time_partition_days = Field[int](
         doc=(
@@ -177,6 +180,57 @@ class ApdbCassandraConfig(ApdbConfig):
     )
 
 
+@dataclasses.dataclass
+class _FrozenApdbCassandraConfig:
+    """Part of the configuration that is saved in metadata table and read back.
+
+    The attributes are a subset of attributes in `ApdbCassandraConfig` class.
+
+    Parameters
+    ----------
+    config : `ApdbSqlConfig`
+        Configuration used to copy initial values of attributes.
+    """
+
+    use_insert_id: bool
+    part_pixelization: str
+    part_pix_level: int
+    ra_dec_columns: list[str]
+    time_partition_tables: bool
+    time_partition_days: int
+    use_insert_id_skips_diaobjects: bool
+
+    def __init__(self, config: ApdbCassandraConfig):
+        self.use_insert_id = config.use_insert_id
+        self.part_pixelization = config.part_pixelization
+        self.part_pix_level = config.part_pix_level
+        self.ra_dec_columns = list(config.ra_dec_columns)
+        self.time_partition_tables = config.time_partition_tables
+        self.time_partition_days = config.time_partition_days
+        self.use_insert_id_skips_diaobjects = config.use_insert_id_skips_diaobjects
+
+    def to_json(self) -> str:
+        """Convert this instance to JSON representation."""
+        return json.dumps(dataclasses.asdict(self))
+
+    def update(self, json_str: str) -> None:
+        """Update attribute values from a JSON string.
+
+        Parameters
+        ----------
+        json_str : str
+            String containing JSON representation of configuration.
+        """
+        data = json.loads(json_str)
+        if not isinstance(data, dict):
+            raise TypeError(f"JSON string must be convertible to object: {json_str!r}")
+        allowed_names = {field.name for field in dataclasses.fields(self)}
+        for key, value in data.items():
+            if key not in allowed_names:
+                raise ValueError(f"JSON object contains unknown key: {key}")
+            setattr(self, key, value)
+
+
 if CASSANDRA_IMPORTED:
 
     class _AddressTranslator(AddressTranslator):
@@ -190,14 +244,6 @@ if CASSANDRA_IMPORTED:
 
         def translate(self, private_ip: str) -> str:
             return self._map.get(private_ip, private_ip)
-
-
-def _quote_column(name: str) -> str:
-    """Quote column name"""
-    if name.islower():
-        return name
-    else:
-        return f'"{name}"'
 
 
 class ApdbCassandra(Apdb):
@@ -219,6 +265,20 @@ class ApdbCassandra(Apdb):
     metadataCodeVersionKey = "version:ApdbCassandra"
     """Name of the metadata key to store code version number."""
 
+    metadataConfigKey = "config:apdb-cassandra.json"
+    """Name of the metadata key to store code version number."""
+
+    _frozen_parameters = (
+        "use_insert_id",
+        "part_pixelization",
+        "part_pix_level",
+        "ra_dec_columns",
+        "time_partition_tables",
+        "time_partition_days",
+        "use_insert_id_skips_diaobjects",
+    )
+    """Names of the config parameters to be frozen in metadata table."""
+
     partition_zero_epoch = dafBase.DateTime(1970, 1, 1, 0, 0, 0, dafBase.DateTime.TAI)
     """Start time for partition 0, this should never be changed."""
 
@@ -226,34 +286,30 @@ class ApdbCassandra(Apdb):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
-        config.validate()
-        self.config = config
-
-        _LOG.debug("ApdbCassandra Configuration:")
-        for key, value in self.config.items():
-            _LOG.debug("    %s: %s", key, value)
-
-        self._pixelization = Pixelization(
-            config.part_pixelization, config.part_pix_level, config.part_pix_max_ranges
-        )
-
-        addressTranslator: AddressTranslator | None = None
-        if config.private_ips:
-            addressTranslator = _AddressTranslator(list(config.contact_points), list(config.private_ips))
-
         self._keyspace = config.keyspace
 
-        self._cluster = Cluster(
-            execution_profiles=self._makeProfiles(config),
-            contact_points=self.config.contact_points,
-            port=self.config.port,
-            address_translator=addressTranslator,
-            protocol_version=self.config.protocol_version,
-            auth_provider=self._make_auth_provider(config),
+        self._cluster, self._session = self._make_session(config)
+
+        meta_table_name = ApdbTables.metadata.table_name(config.prefix)
+        self._metadata = ApdbMetadataCassandra(
+            self._session, meta_table_name, config.keyspace, "read_tuples", "write"
         )
-        self._session = self._cluster.connect()
-        # Disable result paging
-        self._session.default_fetch_size = None
+
+        # Read frozen config from metadata.
+        config_json = self._metadata.get(self.metadataConfigKey)
+        if config_json is not None:
+            # Update config from metadata.
+            freezer = ApdbConfigFreezer[ApdbCassandraConfig](self._frozen_parameters)
+            self.config = freezer.update(config, config_json)
+        else:
+            self.config = config
+        self.config.validate()
+
+        self._pixelization = Pixelization(
+            self.config.part_pixelization,
+            self.config.part_pix_level,
+            config.part_pix_max_ranges,
+        )
 
         self._schema = ApdbCassandraSchema(
             session=self._session,
@@ -264,21 +320,45 @@ class ApdbCassandra(Apdb):
             time_partition_tables=self.config.time_partition_tables,
             use_insert_id=self.config.use_insert_id,
         )
-        self._partition_zero_epoch_mjd = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+        self._partition_zero_epoch_mjd: float = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
 
-        self._metadata: ApdbMetadataCassandra | None = None
-        if not self._schema.empty():
-            self._metadata = ApdbMetadataCassandra(self._session, self._schema, self.config)
+        if self._metadata.table_exists():
             self._versionCheck(self._metadata)
 
         # Cache for prepared statements
         self._preparer = PreparedStatementCache(self._session)
 
+        _LOG.debug("ApdbCassandra Configuration:")
+        for key, value in self.config.items():
+            _LOG.debug("    %s: %s", key, value)
+
     def __del__(self) -> None:
         if hasattr(self, "_cluster"):
             self._cluster.shutdown()
 
-    def _make_auth_provider(self, config: ApdbCassandraConfig) -> AuthProvider | None:
+    @classmethod
+    def _make_session(cls, config: ApdbCassandraConfig) -> tuple[Cluster, Session]:
+        """Make Cassandra session."""
+        addressTranslator: AddressTranslator | None = None
+        if config.private_ips:
+            addressTranslator = _AddressTranslator(list(config.contact_points), list(config.private_ips))
+
+        cluster = Cluster(
+            execution_profiles=cls._makeProfiles(config),
+            contact_points=config.contact_points,
+            port=config.port,
+            address_translator=addressTranslator,
+            protocol_version=config.protocol_version,
+            auth_provider=cls._make_auth_provider(config),
+        )
+        session = cluster.connect()
+        # Disable result paging
+        session.default_fetch_size = None
+
+        return cluster, session
+
+    @classmethod
+    def _make_auth_provider(cls, config: ApdbCassandraConfig) -> AuthProvider | None:
         """Make Cassandra authentication provider instance."""
         try:
             dbauth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
@@ -355,29 +435,52 @@ class ApdbCassandra(Apdb):
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
-    def makeSchema(self, drop: bool = False) -> None:
+    @classmethod
+    def makeSchema(cls, config: ApdbConfig, *, drop: bool = False) -> None:
         # docstring is inherited from a base class
 
-        if self.config.time_partition_tables:
-            time_partition_start = dafBase.DateTime(self.config.time_partition_start, dafBase.DateTime.TAI)
-            time_partition_end = dafBase.DateTime(self.config.time_partition_end, dafBase.DateTime.TAI)
+        if not isinstance(config, ApdbCassandraConfig):
+            raise TypeError(f"Unexpected type of configuration object: {type(config)}")
+
+        cluster, session = cls._make_session(config)
+
+        schema = ApdbCassandraSchema(
+            session=session,
+            keyspace=config.keyspace,
+            schema_file=config.schema_file,
+            schema_name=config.schema_name,
+            prefix=config.prefix,
+            time_partition_tables=config.time_partition_tables,
+            use_insert_id=config.use_insert_id,
+        )
+
+        # Ask schema to create all tables.
+        if config.time_partition_tables:
+            time_partition_start = dafBase.DateTime(config.time_partition_start, dafBase.DateTime.TAI)
+            time_partition_end = dafBase.DateTime(config.time_partition_end, dafBase.DateTime.TAI)
+            part_epoch: float = cls.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+            part_days = config.time_partition_days
             part_range = (
-                self._time_partition(time_partition_start),
-                self._time_partition(time_partition_end) + 1,
+                cls._time_partition_cls(time_partition_start, part_epoch, part_days),
+                cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
             )
-            self._schema.makeSchema(drop=drop, part_range=part_range)
+            schema.makeSchema(drop=drop, part_range=part_range)
         else:
-            self._schema.makeSchema(drop=drop)
+            schema.makeSchema(drop=drop)
 
-        # Reset metadata after schema initialization.
-        self._metadata = ApdbMetadataCassandra(self._session, self._schema, self.config)
+        meta_table_name = ApdbTables.metadata.table_name(config.prefix)
+        metadata = ApdbMetadataCassandra(session, meta_table_name, config.keyspace, "read_tuples", "write")
 
-        # Fill version numbers, but only if they are not defined.
-        if self._metadata.table_exists():
-            if self._metadata.get(self.metadataSchemaVersionKey) is None:
-                self._metadata.set(self.metadataSchemaVersionKey, str(self._schema.schemaVersion()))
-            if self._metadata.get(self.metadataCodeVersionKey) is None:
-                self._metadata.set(self.metadataCodeVersionKey, str(self.apdbImplementationVersion()))
+        # Fill version numbers, overrides if they existed before.
+        if metadata.table_exists():
+            metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+            metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+            # Store frozen part of a configuration in metadata.
+            freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
+            metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
+
+        cluster.shutdown()
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -387,7 +490,7 @@ class ApdbCassandra(Apdb):
 
         # We need to exclude extra partitioning columns from result.
         column_names = self._schema.apdbColumnNames(ApdbTables.DiaObjectLast)
-        what = ",".join(_quote_column(column) for column in column_names)
+        what = ",".join(quote_id(column) for column in column_names)
 
         table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
         query = f'SELECT {what} from "{self._keyspace}"."{table_name}"'
@@ -668,7 +771,8 @@ class ApdbCassandra(Apdb):
             raise RuntimeError("Database schema was not initialized.")
         return self._metadata
 
-    def _makeProfiles(self, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
+    @classmethod
+    def _makeProfiles(cls, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
         """Make all execution profiles used in the code."""
         if config.private_ips:
             loadBalancePolicy = WhiteListRoundRobinPolicy(hosts=config.contact_points)
@@ -767,7 +871,7 @@ class ApdbCassandra(Apdb):
 
         # We need to exclude extra partitioning columns from result.
         column_names = self._schema.apdbColumnNames(table_name)
-        what = ",".join(_quote_column(column) for column in column_names)
+        what = ",".join(quote_id(column) for column in column_names)
 
         # Build all queries
         statements: list[tuple] = []
@@ -1088,8 +1192,35 @@ class ApdbCassandra(Apdb):
         sources["apdb_part"] = apdb_part
         return sources
 
+    @classmethod
+    def _time_partition_cls(cls, time: float | dafBase.DateTime, epoch_mjd: float, part_days: int) -> int:
+        """Calculate time partition number for a given time.
+
+        Parameters
+        ----------
+        time : `float` or `lsst.daf.base.DateTime`
+            Time for which to calculate partition number. Can be float to mean
+            MJD or `lsst.daf.base.DateTime`
+        epoch_mjd : `float`
+            Epoch time for partition 0.
+        part_days : `int`
+            Number of days per partition.
+
+        Returns
+        -------
+        partition : `int`
+            Partition number for a given time.
+        """
+        if isinstance(time, dafBase.DateTime):
+            mjd = time.get(system=dafBase.DateTime.MJD)
+        else:
+            mjd = time
+        days_since_epoch = mjd - epoch_mjd
+        partition = int(days_since_epoch) // part_days
+        return partition
+
     def _time_partition(self, time: float | dafBase.DateTime) -> int:
-        """Calculate time partiton number for a given time.
+        """Calculate time partition number for a given time.
 
         Parameters
         ----------

@@ -158,15 +158,14 @@ class ApdbSchema:
         else:
             return self._schemaVersion
 
+    @classmethod
     def _buildSchemas(
-        self,
-        schema_file: str,
-        schema_name: str = "ApdbSchema",
+        cls, schema_file: str, schema_name: str = "ApdbSchema"
     ) -> tuple[Mapping[ApdbTables, Table], VersionTuple | None]:
         """Create schema definitions for all tables.
 
-        Reads YAML schemas and builds dictionary containing `TableDef`
-        instances for each table.
+        Reads YAML schema and builds a dictionary containing
+        `felis.simple.Table` instances for each table.
 
         Parameters
         ----------
@@ -177,8 +176,8 @@ class ApdbSchema:
 
         Returns
         -------
-        schemas : `dict`
-            Mapping of table names to `TableDef` instances.
+        tables : `dict`
+            Mapping of table names to `felis.simple.Table` instances.
         version : `VersionTuple` or `None`
             Schema version defined in schema file, `None` if version is not
             defined.
@@ -197,7 +196,7 @@ class ApdbSchema:
             schema = visitor.visit_schema(schema_dict)
 
         # convert all dicts into classes
-        schemas: MutableMapping[ApdbTables, Table] = {}
+        tables: MutableMapping[ApdbTables, Table] = {}
         for table in schema.tables:
             try:
                 table_enum = ApdbTables(table.name)
@@ -206,10 +205,10 @@ class ApdbSchema:
                 # to APDB.
                 continue
             else:
-                schemas[table_enum] = table
+                tables[table_enum] = table
 
         version: VersionTuple | None = None
         if schema.version is not None:
             version = VersionTuple.fromString(schema.version.current)
 
-        return schemas, version
+        return tables, version

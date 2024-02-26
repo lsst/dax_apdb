@@ -248,11 +248,15 @@ def select_concurrent(
             else:
                 _LOG.error("error returned by query: %s", result)
                 raise result
-        # concatenate all frames
-        if len(dataframes) == 1:
+        # Concatenate all frames, but skip empty ones.
+        non_empty = [df for df in dataframes if not df.empty]
+        if not non_empty:
+            # If all frames are empty, return the first one.
             catalog = dataframes[0]
+        elif len(non_empty) == 1:
+            catalog = non_empty[0]
         else:
-            catalog = pandas.concat(dataframes)
+            catalog = pandas.concat(non_empty)
         _LOG.debug("pandas catalog shape: %s", catalog.shape)
         return catalog
 

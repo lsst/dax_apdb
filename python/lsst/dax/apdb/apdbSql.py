@@ -27,7 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
-from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from contextlib import closing, suppress
 from typing import TYPE_CHECKING, Any, cast
 
@@ -39,11 +39,11 @@ from felis.simple import Table
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
-from sqlalchemy import func, inspection, sql
-from sqlalchemy.engine import Inspector
+from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
 
 from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
+from .apdbConfigFreezer import ApdbConfigFreezer
 from .apdbMetadataSql import ApdbMetadataSql
 from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
@@ -61,52 +61,6 @@ VERSION = VersionTuple(0, 1, 0)
 """Version for the code defined in this module. This needs to be updated
 (following compatibility rules) when schema produced by this code changes.
 """
-
-if pandas.__version__.partition(".")[0] == "1":
-
-    class _ConnectionHackSA2(sqlalchemy.engine.Connectable):
-        """Terrible hack to workaround Pandas 1 incomplete support for
-        sqlalchemy 2.
-
-        We need to pass a Connection instance to pandas method, but in SA 2 the
-        Connection class lost ``connect`` method which is used by Pandas.
-        """
-
-        def __init__(self, connection: sqlalchemy.engine.Connection):
-            self._connection = connection
-
-        def connect(self, **kwargs: Any) -> Any:
-            return self
-
-        @property
-        def execute(self) -> Callable:
-            return self._connection.execute
-
-        @property
-        def execution_options(self) -> Callable:
-            return self._connection.execution_options
-
-        @property
-        def connection(self) -> Any:
-            return self._connection.connection
-
-        def __enter__(self) -> sqlalchemy.engine.Connection:
-            return self._connection
-
-        def __exit__(self, type_: Any, value: Any, traceback: Any) -> None:
-            # Do not close connection here
-            pass
-
-    @inspection._inspects(_ConnectionHackSA2)
-    def _connection_insp(conn: _ConnectionHackSA2) -> Inspector:
-        return Inspector._construct(Inspector._init_connection, conn._connection)
-
-else:
-    # Pandas 2.0 supports SQLAlchemy 2 correctly.
-    def _ConnectionHackSA2(  # type: ignore[no-redef]
-        conn: sqlalchemy.engine.Connectable,
-    ) -> sqlalchemy.engine.Connectable:
-        return conn
 
 
 def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
@@ -249,9 +203,55 @@ class ApdbSql(Apdb):
     metadataCodeVersionKey = "version:ApdbSql"
     """Name of the metadata key to store code version number."""
 
+    metadataConfigKey = "config:apdb-sql.json"
+    """Name of the metadata key to store code version number."""
+
+    _frozen_parameters = (
+        "use_insert_id",
+        "dia_object_index",
+        "htm_level",
+        "htm_index_column",
+        "ra_dec_columns",
+    )
+    """Names of the config parameters to be frozen in metadata table."""
+
     def __init__(self, config: ApdbSqlConfig):
-        config.validate()
-        self.config = config
+        self._engine = self._makeEngine(config)
+
+        sa_metadata = sqlalchemy.MetaData(schema=config.namespace)
+        meta_table_name = ApdbTables.metadata.table_name(prefix=config.prefix)
+        meta_table: sqlalchemy.schema.Table | None = None
+        with suppress(sqlalchemy.exc.NoSuchTableError):
+            meta_table = sqlalchemy.schema.Table(meta_table_name, sa_metadata, autoload_with=self._engine)
+
+        self._metadata = ApdbMetadataSql(self._engine, meta_table)
+
+        # Read frozen config from metadata.
+        config_json = self._metadata.get(self.metadataConfigKey)
+        if config_json is not None:
+            # Update config from metadata.
+            freezer = ApdbConfigFreezer[ApdbSqlConfig](self._frozen_parameters)
+            self.config = freezer.update(config, config_json)
+        else:
+            self.config = config
+        self.config.validate()
+
+        self._schema = ApdbSqlSchema(
+            engine=self._engine,
+            dia_object_index=self.config.dia_object_index,
+            schema_file=self.config.schema_file,
+            schema_name=self.config.schema_name,
+            prefix=self.config.prefix,
+            namespace=self.config.namespace,
+            htm_index_column=self.config.htm_index_column,
+            use_insert_id=self.config.use_insert_id,
+        )
+
+        if self._metadata.table_exists():
+            self._versionCheck(self._metadata)
+
+        self.pixelator = HtmPixelization(self.config.htm_level)
+        self.use_insert_id = self._schema.has_insert_id
 
         _LOG.debug("APDB Configuration:")
         _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
@@ -262,50 +262,39 @@ class ApdbSql(Apdb):
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
 
+    @classmethod
+    def _makeEngine(cls, config: ApdbSqlConfig) -> sqlalchemy.engine.Engine:
+        """Make SQLALchemy engine based on configured parameters.
+
+        Parameters
+        ----------
+        config : `ApdbSqlConfig`
+            Configuration object.
+        """
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
-        kw: MutableMapping[str, Any] = dict(echo=self.config.sql_echo)
+        kw: MutableMapping[str, Any] = dict(echo=config.sql_echo)
         conn_args: dict[str, Any] = dict()
-        if not self.config.connection_pool:
+        if not config.connection_pool:
             kw.update(poolclass=NullPool)
-        if self.config.isolation_level is not None:
-            kw.update(isolation_level=self.config.isolation_level)
-        elif self.config.db_url.startswith("sqlite"):  # type: ignore
+        if config.isolation_level is not None:
+            kw.update(isolation_level=config.isolation_level)
+        elif config.db_url.startswith("sqlite"):  # type: ignore
             # Use READ_UNCOMMITTED as default value for sqlite.
             kw.update(isolation_level="READ_UNCOMMITTED")
-        if self.config.connection_timeout is not None:
-            if self.config.db_url.startswith("sqlite"):
-                conn_args.update(timeout=self.config.connection_timeout)
-            elif self.config.db_url.startswith(("postgresql", "mysql")):
-                conn_args.update(connect_timeout=self.config.connection_timeout)
+        if config.connection_timeout is not None:
+            if config.db_url.startswith("sqlite"):
+                conn_args.update(timeout=config.connection_timeout)
+            elif config.db_url.startswith(("postgresql", "mysql")):
+                conn_args.update(connect_timeout=config.connection_timeout)
         kw.update(connect_args=conn_args)
-        self._engine = sqlalchemy.create_engine(self.config.db_url, **kw)
+        engine = sqlalchemy.create_engine(config.db_url, **kw)
 
-        if self._engine.dialect.name == "sqlite":
+        if engine.dialect.name == "sqlite":
             # Need to enable foreign keys on every new connection.
-            sqlalchemy.event.listen(self._engine, "connect", _onSqlite3Connect)
+            sqlalchemy.event.listen(engine, "connect", _onSqlite3Connect)
 
-        self._schema = ApdbSqlSchema(
-            engine=self._engine,
-            dia_object_index=self.config.dia_object_index,
-            schema_file=self.config.schema_file,
-            schema_name=self.config.schema_name,
-            prefix=self.config.prefix,
-            namespace=self.config.namespace,
-            htm_index_column=self.config.htm_index_column,
-            use_insert_id=config.use_insert_id,
-        )
-
-        self._metadata: ApdbMetadataSql | None = None
-        if not self._schema.empty():
-            table: sqlalchemy.schema.Table | None = None
-            with suppress(ValueError):
-                table = self._schema.get_table(ApdbTables.metadata)
-            self._metadata = ApdbMetadataSql(self._engine, table)
-            self._versionCheck(self._metadata)
-
-        self.pixelator = HtmPixelization(self.config.htm_level)
-        self.use_insert_id = self._schema.has_insert_id
+        return engine
 
     def _versionCheck(self, metadata: ApdbMetadataSql) -> None:
         """Check schema version compatibility."""
@@ -376,21 +365,42 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
 
-    def makeSchema(self, drop: bool = False) -> None:
+    @classmethod
+    def makeSchema(cls, config: ApdbConfig, drop: bool = False) -> None:
         # docstring is inherited from a base class
-        self._schema.makeSchema(drop=drop)
-        # Need to reset metadata after table was created.
-        table: sqlalchemy.schema.Table | None = None
-        with suppress(ValueError):
-            table = self._schema.get_table(ApdbTables.metadata)
-        self._metadata = ApdbMetadataSql(self._engine, table)
 
-        if self._metadata.table_exists():
-            # Fill version numbers, but only if they are not defined.
-            if self._metadata.get(self.metadataSchemaVersionKey) is None:
-                self._metadata.set(self.metadataSchemaVersionKey, str(self._schema.schemaVersion()))
-            if self._metadata.get(self.metadataCodeVersionKey) is None:
-                self._metadata.set(self.metadataCodeVersionKey, str(self.apdbImplementationVersion()))
+        if not isinstance(config, ApdbSqlConfig):
+            raise TypeError(f"Unexpected type of configuration object: {type(config)}")
+
+        engine = cls._makeEngine(config)
+
+        # Ask schema class to create all tables.
+        schema = ApdbSqlSchema(
+            engine=engine,
+            dia_object_index=config.dia_object_index,
+            schema_file=config.schema_file,
+            schema_name=config.schema_name,
+            prefix=config.prefix,
+            namespace=config.namespace,
+            htm_index_column=config.htm_index_column,
+            use_insert_id=config.use_insert_id,
+        )
+        schema.makeSchema(drop=drop)
+
+        # Need metadata table to store few items in it, if table exists.
+        meta_table: sqlalchemy.schema.Table | None = None
+        with suppress(ValueError):
+            meta_table = schema.get_table(ApdbTables.metadata)
+
+        apdb_meta = ApdbMetadataSql(engine, meta_table)
+        if apdb_meta.table_exists():
+            # Fill version numbers, overwrite if they are already there.
+            apdb_meta.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+            apdb_meta.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+            # Store frozen part of a configuration in metadata.
+            freezer = ApdbConfigFreezer[ApdbSqlConfig](cls._frozen_parameters)
+            apdb_meta.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -419,7 +429,7 @@ class ApdbSql(Apdb):
         # execute select
         with Timer("DiaObject select", self.config.timer):
             with self._engine.begin() as conn:
-                objects = pandas.read_sql_query(query, _ConnectionHackSA2(conn))
+                objects = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
@@ -635,9 +645,7 @@ class ApdbSql(Apdb):
 
             # insert new records
             if len(toInsert) > 0:
-                toInsert.to_sql(
-                    table.name, _ConnectionHackSA2(conn), if_exists="append", index=False, schema=table.schema
-                )
+                toInsert.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
 
             # update existing records
             if len(toUpdate) > 0:
@@ -881,7 +889,7 @@ class ApdbSql(Apdb):
             with Timer("DiaObjectLast insert", self.config.timer):
                 last_objs.to_sql(
                     table.name,
-                    _ConnectionHackSA2(connection),
+                    connection,
                     if_exists="append",
                     index=False,
                     schema=table.schema,
@@ -943,13 +951,7 @@ class ApdbSql(Apdb):
 
         # insert new versions
         with Timer("DiaObject insert", self.config.timer):
-            objs.to_sql(
-                table.name,
-                _ConnectionHackSA2(connection),
-                if_exists="append",
-                index=False,
-                schema=table.schema,
-            )
+            objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
             if history_stmt is not None:
                 connection.execute(history_stmt, history_data)
 
@@ -982,13 +984,7 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            sources.to_sql(
-                table.name,
-                _ConnectionHackSA2(connection),
-                if_exists="append",
-                index=False,
-                schema=table.schema,
-            )
+            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
             if history_stmt is not None:
                 connection.execute(history_stmt, history)
 
@@ -1021,13 +1017,7 @@ class ApdbSql(Apdb):
         # everything to be done in single transaction
         with Timer("DiaForcedSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
-            sources.to_sql(
-                table.name,
-                _ConnectionHackSA2(connection),
-                if_exists="append",
-                index=False,
-                schema=table.schema,
-            )
+            sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
             if history_stmt is not None:
                 connection.execute(history_stmt, history)
 
