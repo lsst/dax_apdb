@@ -645,9 +645,9 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_config()
         # We expect that schema includes metadata table, drop it.
         with update_schema_yaml(config.schema_file, drop_metadata=True) as schema_file:
-            config = self.make_config(schema_file=schema_file)
-            Apdb.makeSchema(config)
-            apdb = make_apdb(config)
+            config_nometa = self.make_config(schema_file=schema_file)
+            Apdb.makeSchema(config_nometa)
+            apdb = make_apdb(config_nometa)
             metadata = apdb.metadata
 
             self.assertTrue(metadata.empty())
@@ -657,6 +657,14 @@ class ApdbTest(TestCaseMixin, ABC):
 
             self.assertTrue(metadata.empty())
             self.assertIsNone(metadata.get("meta"))
+
+        # Also check what happens when configured schema has metadata, but
+        # database is missing it. Database was initialized inside above context
+        # without metadata table, here we use schema config which includes
+        # metadata table.
+        apdb = make_apdb(config)
+        metadata = apdb.metadata
+        self.assertTrue(metadata.empty())
 
     def test_schemaVersionFromYaml(self) -> None:
         """Check version number handling for reading schema from YAML."""
