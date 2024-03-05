@@ -85,7 +85,8 @@ class ApdbCassandraMixin:
             protocol_version=config.protocol_version,
         )
         session = cluster.connect()
-        session.execute(query, timeout=120)
+        # Deleting many tables can take long time, use long timeout.
+        session.execute(query, timeout=600)
         del session
         cluster.shutdown()
 

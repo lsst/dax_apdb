@@ -28,7 +28,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
-from uuid import UUID, uuid4
 
 import astropy.time
 import pandas
@@ -78,6 +77,10 @@ class ApdbConfig(Config):
         ),
         default=False,
     )
+    insert_id_period_seconds = Field[int](
+        default=600,
+        doc="Time granularity for an insert_id, it will incrememnt every specified number of seconds.",
+    )
 
 
 class ApdbTableData(ABC):
@@ -115,16 +118,18 @@ class ApdbInsertId:
     `store` method.
     """
 
-    id: UUID
+    id: int
     insert_time: astropy.time.Time
     """Time of this insert, usually corresponds to visit time
     (`astropy.time.Time`).
     """
 
     @classmethod
-    def new_insert_id(cls, insert_time: astropy.time.Time) -> ApdbInsertId:
+    def new_insert_id(cls, insert_time: astropy.time.Time, insert_id_period_seconds: int) -> ApdbInsertId:
         """Generate new unique insert identifier."""
-        return ApdbInsertId(id=uuid4(), insert_time=insert_time)
+        seconds = int(insert_time.unix_tai)
+        seconds = (seconds // insert_id_period_seconds) * insert_id_period_seconds
+        return ApdbInsertId(id=seconds, insert_time=insert_time)
 
 
 class Apdb(ABC):

@@ -225,7 +225,7 @@ class ApdbCassandraSchema(ApdbSchema):
                 simple.Column(
                     id="#apdb_time_part", name="apdb_time_part", datatype=felis.types.Int, nullable=False
                 ),
-                simple.Column(id="#insert_id", name="insert_id", datatype=_FelisUUID, nullable=True),
+                simple.Column(id="#insert_id", name="insert_id", datatype=felis.types.Long, nullable=True),
             ],
             primary_key=[],
             indexes=[],
@@ -234,7 +234,7 @@ class ApdbCassandraSchema(ApdbSchema):
         )
 
         insert_id_column = simple.Column(
-            id="#insert_id", name="insert_id", datatype=_FelisUUID, nullable=False
+            id="#insert_id", name="insert_id", datatype=felis.types.Long, nullable=False
         )
 
         if not self._use_insert_id:

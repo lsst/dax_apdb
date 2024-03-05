@@ -776,7 +776,7 @@ class ApdbCassandra(Apdb):
 
         insert_id: ApdbInsertId | None = None
         if self._schema.has_insert_id:
-            insert_id = ApdbInsertId.new_insert_id(visit_time)
+            insert_id = ApdbInsertId.new_insert_id(visit_time, self.config.insert_id_period_seconds)
             self._storeInsertId(insert_id, visit_time)
 
         # fill region partition column for DiaObjects
