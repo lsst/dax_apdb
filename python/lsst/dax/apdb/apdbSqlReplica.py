@@ -27,7 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlReplica"]
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Sequence
 from typing import TYPE_CHECKING, cast
 
 import astropy.time
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = VersionTuple(0, 1, 0)
+VERSION = VersionTuple(1, 0, 0)
 """Version for the code controlling replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -60,10 +60,10 @@ class ApdbSqlTableData(ApdbTableData):
         self._keys = list(result.keys())
         self._rows: list[tuple] = cast(list[tuple], list(result.fetchall()))
 
-    def column_names(self) -> list[str]:
+    def column_names(self) -> Sequence[str]:
         return self._keys
 
-    def rows(self) -> Iterable[tuple]:
+    def rows(self) -> Collection[tuple]:
         return self._rows
 
 
@@ -97,16 +97,16 @@ class ApdbSqlReplica(ApdbReplica):
 
         table = self._schema.get_table(ExtraTables.DiaInsertId)
         assert table is not None, "has_insert_id=True means it must be defined"
-        query = sql.select(table.columns["insert_id"], table.columns["insert_time"]).order_by(
-            table.columns["insert_time"]
-        )
+        query = sql.select(
+            table.columns["insert_id"], table.columns["insert_time"], table.columns["unique_id"]
+        ).order_by(table.columns["insert_time"])
         with Timer("DiaObject insert id select", self._timer):
             with self._engine.connect() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 ids = []
                 for row in result:
                     insert_time = astropy.time.Time(row[1].timestamp(), format="unix_tai")
-                    ids.append(ApdbInsertId(id=row[0], insert_time=insert_time))
+                    ids.append(ApdbInsertId(id=row[0], insert_time=insert_time, unique_id=row[2]))
                 return ids
 
     def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:

@@ -23,11 +23,11 @@ from __future__ import annotations
 
 __all__ = ["ApdbReplica", "ApdbInsertId", "ApdbTableData"]
 
+import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
-from uuid import UUID, uuid4
 
 import astropy.time
 from lsst.pex.config import Config
@@ -45,24 +45,24 @@ class ApdbTableData(ABC):
     """Abstract class for representing table data."""
 
     @abstractmethod
-    def column_names(self) -> list[str]:
+    def column_names(self) -> Sequence[str]:
         """Return ordered sequence of column names in the table.
 
         Returns
         -------
-        names : `list` [`str`]
+        names : `~collections.abc.Sequence` [`str`]
             Column names.
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def rows(self) -> Iterable[tuple]:
+    def rows(self) -> Collection[tuple]:
         """Return table rows, each row is a tuple of values.
 
         Returns
         -------
-        rows : `iterable` [`tuple`]
-            Iterable of tuples.
+        rows : `~collections.abc.Collection` [`tuple`]
+            Collection of tuples.
         """
         raise NotImplementedError()
 
@@ -72,20 +72,33 @@ class ApdbInsertId:
     """Class used to identify single insert operation.
 
     Instances of this class are used to identify the units of transfer from
-    APDB to PPDB. Usually single `ApdbInsertId` corresponds to a single call to
-    `store` method.
+    APDB to PPDB. Usually single `ApdbInsertId` corresponds to multiple
+    consecutive calls to `Apdb.store` method.
+
+    Every ``store`` with the same ``id`` value will update ``unique_id`` with
+    some unique value so that it can be verified on PPDB side.
     """
 
-    id: UUID
+    id: int
     insert_time: astropy.time.Time
     """Time of this insert, usually corresponds to visit time
     (`astropy.time.Time`).
     """
+    unique_id: uuid.UUID
+    """Unique value updated on each new store (`uuid.UUID`)."""
 
     @classmethod
-    def new_insert_id(cls, insert_time: astropy.time.Time) -> ApdbInsertId:
+    def new_insert_id(cls, insert_time: astropy.time.Time, insert_id_period_seconds: int) -> ApdbInsertId:
         """Generate new unique insert identifier."""
-        return ApdbInsertId(id=uuid4(), insert_time=insert_time)
+        seconds = int(insert_time.unix_tai)
+        seconds = (seconds // insert_id_period_seconds) * insert_id_period_seconds
+        unique_id = uuid.uuid4()
+        return ApdbInsertId(id=seconds, insert_time=insert_time, unique_id=unique_id)
+
+    def __str__(self) -> str:
+        class_name = self.__class__.__name__
+        time_str = str(self.insert_time.tai.isot)
+        return f"{class_name}(id={self.id:10d}, insert_time={time_str}/tai, unique_id={self.unique_id})"
 
 
 class ApdbReplica(ABC):

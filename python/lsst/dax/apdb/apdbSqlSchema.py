@@ -437,9 +437,10 @@ class ApdbSqlSchema(ApdbSchema):
             return tables
 
         # Parent table needs to be defined first
-        column_defs = [
-            Column("insert_id", GUID, primary_key=True),
+        column_defs: list[Column] = [
+            Column("insert_id", sqlalchemy.types.BigInteger, primary_key=True),
             Column("insert_time", sqlalchemy.types.TIMESTAMP, nullable=False),
+            Column("unique_id", GUID, nullable=False),
         ]
         parent_table = Table(
             ExtraTables.DiaInsertId.table_name(self._prefix),
@@ -531,7 +532,7 @@ class ApdbSqlSchema(ApdbSchema):
 
     def _insertIdColumns(self, table_enum: ExtraTables) -> list[Column]:
         """Return list of columns for insert ID tables."""
-        column_defs: list[Column] = [Column("insert_id", GUID, nullable=False)]
+        column_defs: list[Column] = [Column("insert_id", sqlalchemy.types.BigInteger, nullable=False)]
         insert_id_tables = ExtraTables.insert_id_tables()
         if table_enum in insert_id_tables:
             column_defs += self._tablePkColumns(insert_id_tables[table_enum])

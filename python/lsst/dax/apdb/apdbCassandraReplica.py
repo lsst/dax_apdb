@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 _LOG = logging.getLogger(__name__)
 
-VERSION = VersionTuple(0, 1, 0)
+VERSION = VersionTuple(1, 0, 0)
 """Version for the code controlling replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -86,8 +86,10 @@ class ApdbCassandraReplica(ApdbReplica):
         partition = 0
 
         table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+        # We want to avoid timezone mess so return timestamps as milliseconds.
         query = (
-            f'SELECT insert_time, insert_id FROM "{self._config.keyspace}"."{table_name}" WHERE partition = ?'
+            "SELECT toUnixTimestamp(insert_time), insert_id, unique_id "
+            f'FROM "{self._config.keyspace}"."{table_name}" WHERE partition = ?'
         )
 
         result = self._session.execute(
@@ -99,7 +101,11 @@ class ApdbCassandraReplica(ApdbReplica):
         # order by insert_time
         rows = sorted(result)
         return [
-            ApdbInsertId(id=row[1], insert_time=astropy.time.Time(row[0].timestamp(), format="unix_tai"))
+            ApdbInsertId(
+                id=row[1],
+                insert_time=astropy.time.Time(row[0] / 1000, format="unix_tai"),
+                unique_id=row[2],
+            )
             for row in rows
         ]
 

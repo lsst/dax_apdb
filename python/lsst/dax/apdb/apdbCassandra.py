@@ -746,7 +746,7 @@ class ApdbCassandra(Apdb):
 
         insert_id: ApdbInsertId | None = None
         if self._schema.has_insert_id:
-            insert_id = ApdbInsertId.new_insert_id(visit_time)
+            insert_id = ApdbInsertId.new_insert_id(visit_time, self.config.replica_chunk_seconds)
             self._storeInsertId(insert_id, visit_time)
 
         # fill region partition column for DiaObjects
@@ -1001,20 +1001,20 @@ class ApdbCassandra(Apdb):
 
     def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: astropy.time.Time) -> None:
         # Cassandra timestamp uses milliseconds since epoch
-        timestamp = int(insert_id.insert_time.unix_tai / 1_000_000)
+        timestamp = int(insert_id.insert_time.unix_tai * 1000)
 
         # everything goes into a single partition
         partition = 0
 
         table_name = self._schema.tableName(ExtraTables.DiaInsertId)
         query = (
-            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time) '
-            "VALUES (?, ?, ?)"
+            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time, unique_id) '
+            "VALUES (?, ?, ?, ?)"
         )
 
         self._session.execute(
             self._preparer.prepare(query),
-            (partition, insert_id.id, timestamp),
+            (partition, insert_id.id, timestamp, insert_id.unique_id),
             timeout=self.config.write_timeout,
             execution_profile="write",
         )

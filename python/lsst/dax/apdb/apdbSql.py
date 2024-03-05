@@ -643,7 +643,7 @@ class ApdbSql(Apdb):
         with self._engine.begin() as connection:
             insert_id: ApdbInsertId | None = None
             if self._schema.has_insert_id:
-                insert_id = ApdbInsertId.new_insert_id(visit_time)
+                insert_id = ApdbInsertId.new_insert_id(visit_time, self.config.replica_chunk_seconds)
                 self._storeInsertId(insert_id, visit_time, connection)
 
             # fill pixelId column for DiaObjects
@@ -865,8 +865,19 @@ class ApdbSql(Apdb):
 
         table = self._schema.get_table(ExtraTables.DiaInsertId)
 
-        stmt = table.insert().values(insert_id=insert_id.id, insert_time=dt)
-        connection.execute(stmt)
+        # We need UPSERT which is dialect-specific construct
+        values = {"insert_time": dt, "unique_id": insert_id.unique_id}
+        row = {"insert_id": insert_id.id} | values
+        if connection.dialect.name == "sqlite":
+            insert_sqlite = sqlalchemy.dialects.sqlite.insert(table)
+            insert_sqlite = insert_sqlite.on_conflict_do_update(index_elements=table.primary_key, set_=values)
+            connection.execute(insert_sqlite, row)
+        elif connection.dialect.name == "postgresql":
+            insert_pg = sqlalchemy.dialects.postgresql.dml.insert(table)
+            insert_pg = insert_pg.on_conflict_do_update(constraint=table.primary_key, set_=values)
+            connection.execute(insert_pg, row)
+        else:
+            raise TypeError(f"Unsupported dialect {connection.dialect.name} for upsert.")
 
     def _storeDiaObjects(
         self,
