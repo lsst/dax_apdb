@@ -178,6 +178,10 @@ class ApdbCassandraConfig(ApdbConfig):
             "(DiaObjectsInsertId has the same data)."
         ),
     )
+    insert_id_period_seconds = Field[int](
+        default=600,
+        doc="Time granularity for an insert_id, it will incrememnt every specified number of seconds.",
+    )
 
 
 @dataclasses.dataclass
@@ -645,7 +649,7 @@ class ApdbCassandra(Apdb):
 
         insert_id: ApdbInsertId | None = None
         if self._schema.has_insert_id:
-            insert_id = ApdbInsertId.new_insert_id(visit_time)
+            insert_id = ApdbInsertId.new_insert_id(visit_time, self.config.insert_id_period_seconds)
             self._storeInsertId(insert_id, visit_time)
 
         # fill region partition column for DiaObjects

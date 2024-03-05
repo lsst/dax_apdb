@@ -28,7 +28,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from uuid import UUID, uuid4
 
 import lsst.daf.base as dafBase
 import pandas
@@ -112,16 +111,18 @@ class ApdbInsertId:
     `store` method.
     """
 
-    id: UUID
+    id: int
     insert_time: dafBase.DateTime
     """Time of this insert, usually corresponds to visit time
     (`dafBase.DateTime`).
     """
 
     @classmethod
-    def new_insert_id(cls, insert_time: dafBase.DateTime) -> ApdbInsertId:
+    def new_insert_id(cls, insert_time: dafBase.DateTime, insert_id_period_seconds: int) -> ApdbInsertId:
         """Generate new unique insert identifier."""
-        return ApdbInsertId(id=uuid4(), insert_time=insert_time)
+        seconds = insert_time.nsecs() // 1_000_000_000
+        seconds = (seconds // insert_id_period_seconds) * insert_id_period_seconds
+        return ApdbInsertId(id=seconds, insert_time=insert_time)
 
 
 class Apdb(ABC):
