@@ -1,6 +1,7 @@
 setupRequired(felis)
 setupRequired(geom)
 setupRequired(pex_config)
+setupRequired(resources)
 setupRequired(sconsUtils)
 setupRequired(sdm_schemas)
 setupRequired(sphgeom)

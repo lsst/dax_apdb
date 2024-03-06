@@ -27,16 +27,18 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 import astropy.time
 import pandas
 from felis.simple import Table
 from lsst.pex.config import Config, ConfigurableField, Field
+from lsst.resources import ResourcePath, ResourcePathExpression
 from lsst.sphgeom import Region
 
 from .apdbSchema import ApdbTables
+from .factory import apdb_type, make_apdb
 
 if TYPE_CHECKING:
     from .apdbMetadata import ApdbMetadata
@@ -130,6 +132,43 @@ class Apdb(ABC):
     ConfigClass = ApdbConfig
 
     @classmethod
+    def from_config(cls, config: ApdbConfig) -> Apdb:
+        """Create Ppdb instance from configuration object.
+
+        Parameters
+        ----------
+        config : `ApdbConfig`
+            Configuration object, type of this object determines type of the
+            Apdb implementation.
+
+        Returns
+        -------
+        apdb : `apdb`
+            Instance of `Apdb` class.
+        """
+        return make_apdb(config)
+
+    @classmethod
+    def from_uri(cls, uri: ResourcePathExpression) -> Apdb:
+        """Make Apdb instance from a serialized configuration.
+
+        Parameters
+        ----------
+        uri : `~lsst.resources.ResourcePathExpression`
+            URI pointing to a file with serialized configuration.
+
+        Returns
+        -------
+        apdb : `apdb`
+            Instance of `Apdb` class.
+        """
+        path = ResourcePath(uri)
+        config_str = path.read().decode()
+        # Assume that this is ApdbConfig, make_apdb will raise if not.
+        config = cast(ApdbConfig, Config._fromPython(config_str))
+        return make_apdb(config)
+
+    @classmethod
     @abstractmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
         """Return version number for current APDB implementation.
@@ -182,8 +221,6 @@ class Apdb(ABC):
             If True then drop all tables before creating new ones.
         """
         # Dispatch to actual implementation class based on config type.
-        from .factory import apdb_type
-
         klass = apdb_type(config)
         klass.makeSchema(config, drop=drop)
 
