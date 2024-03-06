@@ -74,6 +74,10 @@ class ApdbConfig(Config):
         ),
         default=False,
     )
+    insert_id_period_seconds = Field[int](
+        default=600,
+        doc="Time granularity for an insert_id, it will incrememnt every specified number of seconds.",
+    )
 
 
 class ApdbTableData(ABC):

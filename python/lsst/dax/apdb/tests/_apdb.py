@@ -416,13 +416,14 @@ class ApdbTest(TestCaseMixin, ABC):
         objects1 = makeObjectCatalog(region1, nobj, visit_time)
         objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
 
+        # With default 10 minutes insert_id window we should have 4 records.
         visits = [
             (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
             (DateTime("2021-01-01T00:02:00", DateTime.TAI), objects2),
-            (DateTime("2021-01-01T00:03:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:04:00", DateTime.TAI), objects2),
-            (DateTime("2021-01-01T00:05:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:06:00", DateTime.TAI), objects2),
+            (DateTime("2021-01-01T00:11:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:12:00", DateTime.TAI), objects2),
+            (DateTime("2021-01-01T00:45:00", DateTime.TAI), objects1),
+            (DateTime("2021-01-01T00:46:00", DateTime.TAI), objects2),
             (DateTime("2021-03-01T00:01:00", DateTime.TAI), objects1),
             (DateTime("2021-03-01T00:02:00", DateTime.TAI), objects2),
         ]
@@ -443,7 +444,7 @@ class ApdbTest(TestCaseMixin, ABC):
 
         else:
             assert insert_ids is not None
-            self.assertEqual(len(insert_ids), 8)
+            self.assertEqual(len(insert_ids), 4)
 
             def _check_history(insert_ids: list[ApdbInsertId], n_records: int | None = None) -> None:
                 if n_records is None:
@@ -456,14 +457,14 @@ class ApdbTest(TestCaseMixin, ABC):
                 self.assert_table_data(res, n_records, ApdbTables.DiaForcedSource)
 
             # read it back and check sizes
-            _check_history(insert_ids)
-            _check_history(insert_ids[1:])
-            _check_history(insert_ids[1:-1])
-            _check_history(insert_ids[3:4])
+            _check_history(insert_ids, 800)
+            _check_history(insert_ids[1:], 600)
+            _check_history(insert_ids[1:-1], 400)
+            _check_history(insert_ids[2:3], 200)
             _check_history([])
 
             # try to remove some of those
-            deleted_ids = insert_ids[:2]
+            deleted_ids = insert_ids[:1]
             apdb.deleteInsertIds(deleted_ids)
 
             # All queries on deleted ids should return empty set.
@@ -471,9 +472,9 @@ class ApdbTest(TestCaseMixin, ABC):
 
             insert_ids = apdb.getInsertIds()
             assert insert_ids is not None
-            self.assertEqual(len(insert_ids), 6)
+            self.assertEqual(len(insert_ids), 3)
 
-            _check_history(insert_ids)
+            _check_history(insert_ids, 600)
 
     def test_storeSSObjects(self) -> None:
         """Store and retrieve SSObjects."""
