@@ -655,6 +655,14 @@ class ApdbSql(Apdb):
                 values = toUpdate.to_dict("records")
                 result = conn.execute(update, values)
 
+    def storeProcessingSummary(self, summary: pandas.DataFrame) -> None:
+        idColumn = "ccdVisitId"
+        table = self._schema.get_table(ApdbTables.ProcessingSummary)
+
+        # everything to be done in single transaction
+        with self._engine.begin() as conn:
+            do_stuff()
+
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
 

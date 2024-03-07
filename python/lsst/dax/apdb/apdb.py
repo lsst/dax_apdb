@@ -423,6 +423,7 @@ class Apdb(ABC):
         objects: pandas.DataFrame,
         sources: pandas.DataFrame | None = None,
         forced_sources: pandas.DataFrame | None = None,
+        processing_summary: pandas.DataFrame | None = None
     ) -> None:
         """Store all three types of catalogs in the database.
 
@@ -436,6 +437,8 @@ class Apdb(ABC):
             Catalog with DiaSource records.
         forced_sources : `pandas.DataFrame`, optional
             Catalog with DiaForcedSource records.
+        processing_summary : optional
+            Summary statistics computed on the exposure.
 
         Notes
         -----
