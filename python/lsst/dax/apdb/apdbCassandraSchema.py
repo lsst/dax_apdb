@@ -251,6 +251,7 @@ class ApdbCassandraSchema(ApdbSchema):
                 simple.Column(
                     id="#insert_time", name="insert_time", datatype=felis.types.Timestamp, nullable=False
                 ),
+                simple.Column(id="#unique_id", name="unique_id", datatype=_FelisUUID, nullable=False),
             ],
             primary_key=[insert_id_column],
             indexes=[],

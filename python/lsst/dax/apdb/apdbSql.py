@@ -600,16 +600,16 @@ class ApdbSql(Apdb):
 
         table = self._schema.get_table(ExtraTables.DiaInsertId)
         assert table is not None, "has_insert_id=True means it must be defined"
-        query = sql.select(table.columns["insert_id"], table.columns["insert_time"]).order_by(
-            table.columns["insert_time"]
-        )
+        query = sql.select(
+            table.columns["insert_id"], table.columns["insert_time"], table.columns["unique_id"]
+        ).order_by(table.columns["insert_time"])
         with Timer("DiaObject insert id select", self.config.timer):
             with self._engine.connect() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 ids = []
                 for row in result:
                     insert_time = astropy.time.Time(row[1].timestamp(), format="unix_tai")
-                    ids.append(ApdbInsertId(id=row[0], insert_time=insert_time))
+                    ids.append(ApdbInsertId(id=row[0], insert_time=insert_time, unique_id=row[2]))
                 return ids
 
     def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
@@ -914,14 +914,16 @@ class ApdbSql(Apdb):
         table = self._schema.get_table(ExtraTables.DiaInsertId)
 
         # We need UPSERT which is dialect-specific construct
+        values = {"insert_time": dt, "unique_id": insert_id.unique_id}
+        row = {"insert_id": insert_id.id} | values
         if connection.dialect.name == "sqlite":
             insert_sqlite = sqlalchemy.dialects.sqlite.insert(table)
-            insert_sqlite = insert_sqlite.on_conflict_do_nothing(index_elements=table.primary_key)
-            connection.execute(insert_sqlite, {"insert_id": insert_id.id, "insert_time": dt})
+            insert_sqlite = insert_sqlite.on_conflict_do_update(index_elements=table.primary_key, set_=values)
+            connection.execute(insert_sqlite, row)
         elif connection.dialect.name == "postgresql":
             insert_pg = sqlalchemy.dialects.postgresql.dml.insert(table)
-            insert_pg = insert_pg.on_conflict_do_nothing(constraint=table.primary_key)
-            connection.execute(insert_pg, {"insert_id": insert_id.id, "insert_time": dt})
+            insert_pg = insert_pg.on_conflict_do_update(constraint=table.primary_key, set_=values)
+            connection.execute(insert_pg, row)
         else:
             raise TypeError(f"Unsupported dialect {connection.dialect.name} for upsert.")
 

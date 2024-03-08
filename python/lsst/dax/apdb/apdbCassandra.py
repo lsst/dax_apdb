@@ -686,7 +686,11 @@ class ApdbCassandra(Apdb):
         partition = 0
 
         table_name = self._schema.tableName(ExtraTables.DiaInsertId)
-        query = f'SELECT insert_time, insert_id FROM "{self._keyspace}"."{table_name}" WHERE partition = ?'
+        # We want to avoid timezone mess so return timestamps as milliseconds.
+        query = (
+            "SELECT toUnixTimestamp(insert_time), insert_id, unique_id "
+            f'FROM "{self._keyspace}"."{table_name}" WHERE partition = ?'
+        )
 
         result = self._session.execute(
             self._preparer.prepare(query),
@@ -697,7 +701,11 @@ class ApdbCassandra(Apdb):
         # order by insert_time
         rows = sorted(result)
         return [
-            ApdbInsertId(id=row[1], insert_time=astropy.time.Time(row[0].timestamp(), format="unix_tai"))
+            ApdbInsertId(
+                id=row[1],
+                insert_time=astropy.time.Time(row[0] / 1000, format="unix_tai"),
+                unique_id=row[2],
+            )
             for row in rows
         ]
 
@@ -1051,20 +1059,20 @@ class ApdbCassandra(Apdb):
 
     def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: astropy.time.Time) -> None:
         # Cassandra timestamp uses milliseconds since epoch
-        timestamp = int(insert_id.insert_time.unix_tai / 1_000_000)
+        timestamp = int(insert_id.insert_time.unix_tai * 1000)
 
         # everything goes into a single partition
         partition = 0
 
         table_name = self._schema.tableName(ExtraTables.DiaInsertId)
         query = (
-            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time) '
-            "VALUES (?, ?, ?)"
+            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time, unique_id) '
+            "VALUES (?, ?, ?, ?)"
         )
 
         self._session.execute(
             self._preparer.prepare(query),
-            (partition, insert_id.id, timestamp),
+            (partition, insert_id.id, timestamp, insert_id.unique_id),
             timeout=self.config.write_timeout,
             execution_profile="write",
         )
