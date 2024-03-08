@@ -555,7 +555,10 @@ class ApdbCassandra(Apdb):
         partition = 0
 
         table_name = self._schema.tableName(ExtraTables.DiaInsertId)
-        query = f'SELECT insert_time, insert_id FROM "{self._keyspace}"."{table_name}" WHERE partition = ?'
+        query = (
+            "SELECT insert_time, insert_id, unique_id "
+            f'FROM "{self._keyspace}"."{table_name}" WHERE partition = ?'
+        )
 
         result = self._session.execute(
             self._preparer.prepare(query),
@@ -566,7 +569,9 @@ class ApdbCassandra(Apdb):
         # order by insert_time
         rows = sorted(result)
         return [
-            ApdbInsertId(id=row[1], insert_time=dafBase.DateTime(int(row[0].timestamp() * 1e9)))
+            ApdbInsertId(
+                id=row[1], insert_time=dafBase.DateTime(int(row[0].timestamp() * 1e9)), unique_id=row[2]
+            )
             for row in rows
         ]
 
@@ -927,13 +932,13 @@ class ApdbCassandra(Apdb):
 
         table_name = self._schema.tableName(ExtraTables.DiaInsertId)
         query = (
-            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time) '
-            "VALUES (?, ?, ?)"
+            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time, unique_id) '
+            "VALUES (?, ?, ?, ?)"
         )
 
         self._session.execute(
             self._preparer.prepare(query),
-            (partition, insert_id.id, timestamp),
+            (partition, insert_id.id, timestamp, insert_id.unique_id),
             timeout=self.config.write_timeout,
             execution_profile="write",
         )

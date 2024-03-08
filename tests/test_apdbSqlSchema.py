@@ -210,8 +210,8 @@ class ApdbSchemaTestCase(unittest.TestCase):
             use_insert_id=True,
         )
         schema.makeSchema(drop=True)
-        self._assertTable(schema.get_table(ExtraTables.DiaInsertId), "DiaInsertId", 2)
-        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaInsertId)), 2)
+        self._assertTable(schema.get_table(ExtraTables.DiaInsertId), "DiaInsertId", 3)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaInsertId)), 3)
         self._assertTable(schema.get_table(ExtraTables.DiaObjectInsertId), "DiaObjectInsertId", 3)
         self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaObjectInsertId)), 3)
         self._assertTable(schema.get_table(ExtraTables.DiaSourceInsertId), "DiaSourceInsertId", 2)

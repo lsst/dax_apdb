@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbConfig", "Apdb", "ApdbInsertId", "ApdbTableData"]
 
 import os
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -76,7 +77,7 @@ class ApdbConfig(Config):
     )
     insert_id_period_seconds = Field[int](
         default=600,
-        doc="Time granularity for an insert_id, it will incrememnt every specified number of seconds.",
+        doc="Time granularity for an insert_id, it will increment every specified number of seconds.",
     )
 
 
@@ -111,8 +112,11 @@ class ApdbInsertId:
     """Class used to identify single insert operation.
 
     Instances of this class are used to identify the units of transfer from
-    APDB to PPDB. Usually single `ApdbInsertId` corresponds to a single call to
-    `store` method.
+    APDB to PPDB. Usually single `ApdbInsertId` corresponds to multiple
+    consecutive calls to `Apdb.store` method.
+
+    Every ``store`` with the same ``id`` value will update ``unique_id`` with
+    some unique value so that it can be verified on PPDB side.
     """
 
     id: int
@@ -120,13 +124,21 @@ class ApdbInsertId:
     """Time of this insert, usually corresponds to visit time
     (`dafBase.DateTime`).
     """
+    unique_id: uuid.UUID
+    """Unique value updated on each new store (`uuid.UUID`)."""
 
     @classmethod
     def new_insert_id(cls, insert_time: dafBase.DateTime, insert_id_period_seconds: int) -> ApdbInsertId:
         """Generate new unique insert identifier."""
         seconds = insert_time.nsecs() // 1_000_000_000
         seconds = (seconds // insert_id_period_seconds) * insert_id_period_seconds
-        return ApdbInsertId(id=seconds, insert_time=insert_time)
+        unique_id = uuid.uuid4()
+        return ApdbInsertId(id=seconds, insert_time=insert_time, unique_id=unique_id)
+
+    def __str__(self) -> str:
+        class_name = self.__class__.__name__
+        time_str = self.insert_time.toString(self.insert_time.TAI)
+        return f"{class_name}(id={self.id:10d}, insert_time={time_str}/tai, unique_id={self.unique_id})"
 
 
 class Apdb(ABC):

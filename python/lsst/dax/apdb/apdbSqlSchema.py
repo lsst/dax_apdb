@@ -440,6 +440,7 @@ class ApdbSqlSchema(ApdbSchema):
         column_defs: list[Column] = [
             Column("insert_id", sqlalchemy.types.BigInteger, primary_key=True),
             Column("insert_time", sqlalchemy.types.TIMESTAMP, nullable=False),
+            Column("unique_id", GUID, nullable=False),
         ]
         parent_table = Table(
             ExtraTables.DiaInsertId.table_name(self._prefix),
