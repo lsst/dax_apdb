@@ -324,6 +324,20 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # TODO: test apdb.contains with generic implementation from DM-41671
 
+    def test_storeObjects_empty(self) -> None:
+        """Test calling storeObject when there are no objects: see DM-43270."""
+        config = self.make_config()
+        Apdb.makeSchema(config)
+        apdb = make_apdb(config)
+        region = _make_region()
+        visit_time = self.visit_time
+        # make catalog with no Objects
+        catalog = makeObjectCatalog(region, 0, visit_time)
+
+        with self.assertLogs("lsst.dax.apdb.apdbSql", level="INFO") as cm:
+            apdb.store(visit_time, catalog)
+        self.assertIn("No objects", "\n".join(cm.output))
+
     def test_storeSources(self) -> None:
         """Store and retrieve DiaSources."""
         config = self.make_config()
