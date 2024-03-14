@@ -851,6 +851,10 @@ class ApdbSql(Apdb):
         insert_id : `ApdbInsertId`
             Insert identifier.
         """
+        if len(objs) == 0:
+            _LOG.debug("No objects to write to database.")
+            return
+
         # Some types like np.int64 can cause issues with sqlalchemy, convert
         # them to int.
         ids = sorted(int(oid) for oid in objs["diaObjectId"])
