@@ -334,7 +334,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # make catalog with no Objects
         catalog = makeObjectCatalog(region, 0, visit_time)
 
-        with self.assertLogs("lsst.dax.apdb.apdbSql", level="INFO") as cm:
+        with self.assertLogs("lsst.dax.apdb.apdbSql", level="DEBUG") as cm:
             apdb.store(visit_time, catalog)
         self.assertIn("No objects", "\n".join(cm.output))
 
