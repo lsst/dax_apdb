@@ -30,7 +30,7 @@ import unittest
 from typing import Any
 
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
+from lsst.dax.apdb import ApdbConfig, ApdbSql, ApdbTables
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 try:
@@ -47,12 +47,13 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
     fsrc_requires_id_list = True
     dia_object_index = "baseline"
     allow_visit_query = False
+    schema_path = TEST_SCHEMA
 
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
         self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
             "db_url": self.db_url,
@@ -61,7 +62,7 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
             "use_insert_id": self.use_insert_id,
         }
         kw.update(kwargs)
-        return ApdbSqlConfig(**kw)
+        return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
@@ -103,6 +104,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     postgresql: Any
     use_insert_id = True
     allow_visit_query = False
+    schema_path = TEST_SCHEMA
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -124,7 +126,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     def tearDown(self) -> None:
         self.server = self.postgresql()
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
             "db_url": self.server.url(),
@@ -133,7 +135,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
             "use_insert_id": self.use_insert_id,
         }
         kw.update(kwargs)
-        return ApdbSqlConfig(**kw)
+        return ApdbSql.init_database(**kw)
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
@@ -147,9 +149,9 @@ class ApdbPostgresNamespaceTestCase(ApdbPostgresTestCase):
     # use mixed case to trigger quoting
     namespace = "ApdbSchema"
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
-        return super().make_config(namespace=self.namespace, **kwargs)
+        return super().make_instance(namespace=self.namespace, **kwargs)
 
 
 class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
@@ -162,14 +164,14 @@ class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.tempdir, ignore_errors=True)
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
             "db_url": self.db_url,
             "schema_file": TEST_SCHEMA,
         }
         kw.update(kwargs)
-        return ApdbSqlConfig(**kw)
+        return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

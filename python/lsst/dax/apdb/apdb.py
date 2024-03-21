@@ -38,7 +38,7 @@ from lsst.resources import ResourcePath, ResourcePathExpression
 from lsst.sphgeom import Region
 
 from .apdbSchema import ApdbTables
-from .factory import apdb_type, make_apdb
+from .factory import make_apdb
 
 if TYPE_CHECKING:
     from .apdbMetadata import ApdbMetadata
@@ -207,22 +207,6 @@ class Apdb(ABC):
             defined by this implementation.
         """
         raise NotImplementedError()
-
-    @classmethod
-    def makeSchema(cls, config: ApdbConfig, *, drop: bool = False) -> None:
-        """Create or re-create whole database schema.
-
-        Parameters
-        ----------
-        config : `ApdbConfig`
-            Instance of configuration class, the type has to match the type of
-            the actual implementation class of this interface.
-        drop : `bool`
-            If True then drop all tables before creating new ones.
-        """
-        # Dispatch to actual implementation class based on config type.
-        klass = apdb_type(config)
-        klass.makeSchema(config, drop=drop)
 
     @abstractmethod
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:

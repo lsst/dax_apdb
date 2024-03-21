@@ -412,7 +412,7 @@ class ApdbSql(Apdb):
         if namespace is not None:
             config.namespace = namespace
 
-        cls.makeSchema(config, drop=drop)
+        cls._makeSchema(config, drop=drop)
 
         return config
 
@@ -449,7 +449,7 @@ class ApdbSql(Apdb):
         return self._schema.tableSchemas.get(table)
 
     @classmethod
-    def makeSchema(cls, config: ApdbConfig, drop: bool = False) -> None:
+    def _makeSchema(cls, config: ApdbConfig, drop: bool = False) -> None:
         # docstring is inherited from a base class
 
         if not isinstance(config, ApdbSqlConfig):

@@ -560,12 +560,12 @@ class ApdbCassandra(Apdb):
         if ra_dec_columns is not None:
             config.ra_dec_columns = ra_dec_columns
 
-        cls.makeSchema(config, drop=drop, replication_factor=replication_factor)
+        cls._makeSchema(config, drop=drop, replication_factor=replication_factor)
 
         return config
 
     @classmethod
-    def makeSchema(
+    def _makeSchema(
         cls, config: ApdbConfig, *, drop: bool = False, replication_factor: int | None = None
     ) -> None:
         # docstring is inherited from a base class
