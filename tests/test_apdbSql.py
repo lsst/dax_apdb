@@ -28,9 +28,10 @@ import shutil
 import tempfile
 import unittest
 from typing import Any
+from unittest.mock import patch
 
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbConfig, ApdbSql, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbSql, ApdbTables
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 try:
@@ -52,6 +53,9 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
         self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tempdir, ignore_errors=True)
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
@@ -172,6 +176,42 @@ class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
         }
         kw.update(kwargs)
         return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
+
+
+class ApdbSQLiteFromUriTestCase(unittest.TestCase):
+    """A test case for for instantiating ApdbSql via URI."""
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.mkdtemp()
+        self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
+        config = ApdbSql.init_database(db_url=self.db_url, schema_file=TEST_SCHEMA)
+        # This will need update when we switch to pydantic configs.
+        self.config_path = os.path.join(self.tempdir, "apdb-config.py")
+        config.save(self.config_path)
+        self.index_path = os.path.join(self.tempdir, "apdb-index.yaml")
+        with open(self.index_path, "w") as index_file:
+            print(f'label1: "{self.config_path}"', file=index_file)
+            print(f'label2/pex_config: "{self.config_path}"', file=index_file)
+        self.bad_config_path = os.path.join(self.tempdir, "not-config.py")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tempdir, ignore_errors=True)
+
+    def test_make_apdb_from_path(self) -> None:
+        """Check that we can make APDB instance from config URI."""
+        Apdb.from_uri(self.config_path)
+        with self.assertRaises(FileNotFoundError):
+            Apdb.from_uri(self.bad_config_path)
+
+    def test_make_apdb_from_labels(self) -> None:
+        """Check that we can make APDB instance from config URI."""
+        # Replace DAX_APDB_INDEX_URI value
+        new_env = {"DAX_APDB_INDEX_URI": self.index_path}
+        with patch.dict(os.environ, new_env, clear=True):
+            Apdb.from_uri("label:label1")
+            Apdb.from_uri("label:label2")
+            with self.assertRaises(ValueError):
+                Apdb.from_uri("label:bad-label")
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

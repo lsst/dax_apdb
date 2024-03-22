@@ -37,6 +37,7 @@ from lsst.pex.config import Config, ConfigurableField, Field
 from lsst.resources import ResourcePath, ResourcePathExpression
 from lsst.sphgeom import Region
 
+from .apdbIndex import ApdbIndex
 from .apdbSchema import ApdbTables
 from .factory import make_apdb
 
@@ -155,13 +156,26 @@ class Apdb(ABC):
         Parameters
         ----------
         uri : `~lsst.resources.ResourcePathExpression`
-            URI pointing to a file with serialized configuration.
+            URI pointing to a file with serialized configuration. IF ``uri`` is
+            a string with "label:" prefix then the label name which follows the
+            prefix will be searched in APDB index file whose location is
+            determined by ``DAX_APDB_INDEX_URI`` environment variable.
 
         Returns
         -------
         apdb : `apdb`
             Instance of `Apdb` class.
         """
+        if isinstance(uri, str) and uri.startswith("label:"):
+            tag, _, label = uri.partition(":")
+            index = ApdbIndex()
+            # Current format for config files is "pex_config"
+            format = "pex_config"
+            try:
+                uri = index.get_apdb_uri(label, format)
+            except KeyError as exc:
+                labels = index.get_known_labels()
+                raise ValueError(f"Unknown index label {uri}, labels known to index: {labels}") from exc
         path = ResourcePath(uri)
         config_str = path.read().decode()
         # Assume that this is ApdbConfig, make_apdb will raise if not.

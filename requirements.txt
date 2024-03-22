@@ -1,6 +1,7 @@
 astropy
 numpy
 pandas
+pydantic
 pyyaml >= 5.1
 sqlalchemy
 git+https://github.com/lsst/felis@main#egg=lsst-felis
