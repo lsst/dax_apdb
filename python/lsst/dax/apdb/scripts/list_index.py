@@ -19,6 +19,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from .create_cassandra import create_cassandra
-from .create_sql import create_sql
-from .list_index import list_index
+from __future__ import annotations
+
+__all__ = ["list_index"]
+
+from ..apdbIndex import ApdbIndex
+
+
+def list_index(index_path: str | None) -> None:
+    """List contents of APDB index file.
+
+    Parameters
+    ----------
+    index_path : `str`, optional
+        Location of index file, if missing then $DAX_APDB_INDEX_URI is used.
+    """
+    index = ApdbIndex(index_path)
+    entries = index.get_entries()
+    for label, uri in sorted(entries.items()):
+        print(f"{label}: {uri}")

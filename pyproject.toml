@@ -28,6 +28,7 @@ dependencies = [
     "lsst-utils",
     "numpy",
     "pandas",
+    "pydantic",
     "pyyaml >= 5.1",
     "sqlalchemy"
 ]
