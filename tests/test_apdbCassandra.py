@@ -83,7 +83,7 @@ class ApdbCassandraMixin:
             protocol_version=config.protocol_version,
         )
         session = cluster.connect()
-        session.execute(query)
+        session.execute(query, timeout=120)
         del session
         cluster.shutdown()
 

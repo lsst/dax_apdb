@@ -24,11 +24,11 @@ import unittest.mock
 from collections.abc import Mapping
 from typing import Any
 
+import astropy.time
 import lsst.geom as geom
 import lsst.utils.tests
 import numpy
 import pandas
-from lsst.daf.base import DateTime
 from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
@@ -89,8 +89,7 @@ class TestApVerifyQueries(unittest.TestCase):
         objects = createTestObjects(n_created, "diaObjectId", {"nDiaSources": int})
         objects.at[n_created - 1, "nDiaSources"] = 2
 
-        # nsecs must be an integer, not 1.4e18
-        dateTime = DateTime(nsecs=1400000000 * 10**9)
+        dateTime = astropy.time.Time(1400000000, format="unix_tai")
         self.apdb.store(dateTime, objects)
 
         value = self.apdb.countUnassociatedObjects()

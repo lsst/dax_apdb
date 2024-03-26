@@ -21,8 +21,8 @@ classifiers = [
 ]
 keywords = ["lsst"]
 dependencies = [
+    "astropy",
     "felis",
-    "lsst-daf-base",
     "lsst-pex-config",
     "lsst-sphgeom",
     "lsst-utils",
