@@ -950,6 +950,10 @@ class ApdbCassandra(Apdb):
         visit_time : `astropy.time.Time`
             Time of the current visit.
         """
+        if len(objs) == 0:
+            _LOG.debug("No objects to write to database.")
+            return
+
         visit_time_dt = visit_time.datetime
         extra_columns = dict(lastNonForcedSource=visit_time_dt)
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
