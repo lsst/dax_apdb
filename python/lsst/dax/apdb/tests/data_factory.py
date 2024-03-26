@@ -28,11 +28,10 @@ from typing import Any
 import astropy.time
 import numpy
 import pandas
-from lsst.geom import SpherePoint
 from lsst.sphgeom import LonLat, Region, UnitVector3d
 
 
-def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
+def _genPointsInRegion(region: Region, count: int) -> Iterator[LonLat]:
     """Generate bunch of SpherePoints inside given region.
 
     Parameters
@@ -58,7 +57,7 @@ def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
         lonlat = LonLat.fromRadians(lon, lat)
         uv3d = UnitVector3d(lonlat)
         if region.contains(uv3d):
-            yield SpherePoint(lonlat)
+            yield lonlat
             count -= 1
 
 
@@ -94,8 +93,8 @@ def makeObjectCatalog(
     # diaObjectId=0 may be used in some code for DiaSource foreign key to mean
     # the same as ``None``.
     ids = numpy.arange(start_id, len(points) + start_id, dtype=numpy.int64)
-    ras = numpy.array([sp.getRa().asDegrees() for sp in points], dtype=numpy.float64)
-    decs = numpy.array([sp.getDec().asDegrees() for sp in points], dtype=numpy.float64)
+    ras = numpy.array([lonlat.getLon().asDegrees() for lonlat in points], dtype=numpy.float64)
+    decs = numpy.array([lonlat.getLat().asDegrees() for lonlat in points], dtype=numpy.float64)
     nDiaSources = numpy.ones(len(points), dtype=numpy.int32)
     dt = visit_time.datetime
     data = dict(

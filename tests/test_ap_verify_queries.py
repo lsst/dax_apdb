@@ -25,7 +25,6 @@ from collections.abc import Mapping
 from typing import Any
 
 import astropy.time
-import lsst.geom as geom
 import lsst.utils.tests
 import numpy
 import pandas
@@ -53,10 +52,11 @@ def createTestObjects(
     sources : `pandas.DataFrame`
         Tests sources with filled values.
     """
+    one_degree = numpy.pi / 180
     data = {
         id_column_name: numpy.arange(n_objects, dtype=numpy.int64),
-        "ra": numpy.full(n_objects, 1 * geom.degrees, dtype=numpy.float64),
-        "dec": numpy.full(n_objects, 1 * geom.degrees, dtype=numpy.float64),
+        "ra": numpy.full(n_objects, one_degree, dtype=numpy.float64),
+        "dec": numpy.full(n_objects, one_degree, dtype=numpy.float64),
     }
     for field, type in extra_fields.items():
         data[field] = numpy.ones(n_objects, dtype=type)
