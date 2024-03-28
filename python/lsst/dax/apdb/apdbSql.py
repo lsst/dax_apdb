@@ -27,7 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
-from collections.abc import Iterable, Mapping, MutableMapping
+from collections.abc import Collection, Iterable, Mapping, MutableMapping, Sequence
 from contextlib import closing, suppress
 from typing import TYPE_CHECKING, Any, cast
 
@@ -175,10 +175,10 @@ class ApdbSqlTableData(ApdbTableData):
         self._keys = list(result.keys())
         self._rows: list[tuple] = cast(list[tuple], list(result.fetchall()))
 
-    def column_names(self) -> list[str]:
+    def column_names(self) -> Sequence[str]:
         return self._keys
 
-    def rows(self) -> Iterable[tuple]:
+    def rows(self) -> Collection[tuple]:
         return self._rows
 
 

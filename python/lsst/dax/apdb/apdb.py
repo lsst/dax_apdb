@@ -26,7 +26,7 @@ __all__ = ["ApdbConfig", "Apdb", "ApdbInsertId", "ApdbTableData"]
 import os
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -88,23 +88,23 @@ class ApdbTableData(ABC):
     """Abstract class for representing table data."""
 
     @abstractmethod
-    def column_names(self) -> list[str]:
+    def column_names(self) -> Sequence[str]:
         """Return ordered sequence of column names in the table.
 
         Returns
         -------
-        names : `list` [`str`]
+        names : `~collections.abc.Sequence` [`str`]
             Column names.
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def rows(self) -> Iterable[tuple]:
+    def rows(self) -> Collection[tuple]:
         """Return table rows, each row is a tuple of values.
 
         Returns
         -------
-        rows : `iterable` [`tuple`]
+        rows : `~collections.abc.Collection` [`tuple`]
             Iterable of tuples.
         """
         raise NotImplementedError()
