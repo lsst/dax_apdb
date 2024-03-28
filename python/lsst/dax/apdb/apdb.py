@@ -27,16 +27,19 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 import astropy.time
 import pandas
 from felis.simple import Table
 from lsst.pex.config import Config, ConfigurableField, Field
+from lsst.resources import ResourcePath, ResourcePathExpression
 from lsst.sphgeom import Region
 
+from .apdbIndex import ApdbIndex
 from .apdbSchema import ApdbTables
+from .factory import make_apdb
 
 if TYPE_CHECKING:
     from .apdbMetadata import ApdbMetadata
@@ -130,6 +133,56 @@ class Apdb(ABC):
     ConfigClass = ApdbConfig
 
     @classmethod
+    def from_config(cls, config: ApdbConfig) -> Apdb:
+        """Create Ppdb instance from configuration object.
+
+        Parameters
+        ----------
+        config : `ApdbConfig`
+            Configuration object, type of this object determines type of the
+            Apdb implementation.
+
+        Returns
+        -------
+        apdb : `apdb`
+            Instance of `Apdb` class.
+        """
+        return make_apdb(config)
+
+    @classmethod
+    def from_uri(cls, uri: ResourcePathExpression) -> Apdb:
+        """Make Apdb instance from a serialized configuration.
+
+        Parameters
+        ----------
+        uri : `~lsst.resources.ResourcePathExpression`
+            URI pointing to a file with serialized configuration. IF ``uri`` is
+            a string with "label:" prefix then the label name which follows the
+            prefix will be searched in APDB index file whose location is
+            determined by ``DAX_APDB_INDEX_URI`` environment variable.
+
+        Returns
+        -------
+        apdb : `apdb`
+            Instance of `Apdb` class.
+        """
+        if isinstance(uri, str) and uri.startswith("label:"):
+            tag, _, label = uri.partition(":")
+            index = ApdbIndex()
+            # Current format for config files is "pex_config"
+            format = "pex_config"
+            try:
+                uri = index.get_apdb_uri(label, format)
+            except KeyError as exc:
+                labels = index.get_known_labels()
+                raise ValueError(f"Unknown index label {uri}, labels known to index: {labels}") from exc
+        path = ResourcePath(uri)
+        config_str = path.read().decode()
+        # Assume that this is ApdbConfig, make_apdb will raise if not.
+        config = cast(ApdbConfig, Config._fromPython(config_str))
+        return make_apdb(config)
+
+    @classmethod
     @abstractmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
         """Return version number for current APDB implementation.
@@ -168,24 +221,6 @@ class Apdb(ABC):
             defined by this implementation.
         """
         raise NotImplementedError()
-
-    @classmethod
-    def makeSchema(cls, config: ApdbConfig, *, drop: bool = False) -> None:
-        """Create or re-create whole database schema.
-
-        Parameters
-        ----------
-        config : `ApdbConfig`
-            Instance of configuration class, the type has to match the type of
-            the actual implementation class of this interface.
-        drop : `bool`
-            If True then drop all tables before creating new ones.
-        """
-        # Dispatch to actual implementation class based on config type.
-        from .factory import apdb_type
-
-        klass = apdb_type(config)
-        klass.makeSchema(config, drop=drop)
 
     @abstractmethod
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:

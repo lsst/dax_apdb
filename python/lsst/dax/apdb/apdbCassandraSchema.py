@@ -406,7 +406,13 @@ class ApdbCassandraSchema(ApdbSchema):
         table_schema = self._table_schema(table_name)
         return [column.name for column in table_schema.primary_key]
 
-    def makeSchema(self, drop: bool = False, part_range: tuple[int, int] | None = None) -> None:
+    def makeSchema(
+        self,
+        *,
+        drop: bool = False,
+        part_range: tuple[int, int] | None = None,
+        replication_factor: int | None = None,
+    ) -> None:
         """Create or re-create all tables.
 
         Parameters
@@ -420,9 +426,13 @@ class ApdbCassandraSchema(ApdbSchema):
             not created.
         """
         # Try to create keyspace if it does not exist
+        if replication_factor is None:
+            replication_factor = 1
         query = (
             f'CREATE KEYSPACE IF NOT EXISTS "{self._keyspace}"'
-            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor' : 3}"
+            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': "
+            f"{replication_factor}"
+            "}"
         )
         self._session.execute(query)
 

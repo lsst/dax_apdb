@@ -23,9 +23,12 @@ from __future__ import annotations
 
 __all__ = ["apdb_type", "make_apdb"]
 
-from .apdb import Apdb, ApdbConfig
-from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
-from .apdbSql import ApdbSql, ApdbSqlConfig
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .apdb import Apdb, ApdbConfig
+    from .apdbCassandra import ApdbCassandra
+    from .apdbSql import ApdbSql
 
 
 def apdb_type(config: ApdbConfig) -> type[ApdbSql | ApdbCassandra]:
@@ -46,6 +49,9 @@ def apdb_type(config: ApdbConfig) -> type[ApdbSql | ApdbCassandra]:
     TypeError
         Raised if type of ``config`` does not match any known types.
     """
+    from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
+    from .apdbSql import ApdbSql, ApdbSqlConfig
+
     if type(config) is ApdbSqlConfig:
         return ApdbSql
     elif type(config) is ApdbCassandraConfig:
@@ -71,6 +77,9 @@ def make_apdb(config: ApdbConfig) -> Apdb:
     TypeError
         Raised if type of ``config`` does not match any known types.
     """
+    from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
+    from .apdbSql import ApdbSql, ApdbSqlConfig
+
     if type(config) is ApdbSqlConfig:
         return ApdbSql(config)
     elif type(config) is ApdbCassandraConfig:

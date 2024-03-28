@@ -49,7 +49,7 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbCassandraConfig, ApdbTables
+from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbConfig, ApdbTables
 from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
@@ -60,6 +60,8 @@ logging.basicConfig(level=logging.INFO)
 
 class ApdbCassandraMixin:
     """Mixin class which defines common methods for unit tests."""
+
+    schema_path = TEST_SCHEMA
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -90,23 +92,19 @@ class ApdbCassandraMixin:
     def setUp(self) -> None:
         """Prepare config for server connection."""
         self.cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
-
-        # create dedicated keyspace for each test
+        # Use dedicated keyspace for each test, keyspace is created by
+        # init_database if it does not exist.
         key = uuid.uuid4()
         self.keyspace = f"apdb_{key.hex}"
-        query = (
-            f"CREATE KEYSPACE {self.keyspace}"
-            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-        )
-        self._run_query(query)
 
     def tearDown(self) -> None:
+        # Delete per-test keyspace.
         query = f"DROP KEYSPACE {self.keyspace}"
         self._run_query(query)
 
     if TYPE_CHECKING:
         # For mypy.
-        def make_config(self, **kwargs: Any) -> ApdbCassandraConfig: ...
+        def make_instance(self, **kwargs: Any) -> ApdbConfig: ...
 
 
 class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
@@ -117,10 +115,10 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     time_partition_start: str | None = None
     time_partition_end: str | None = None
 
-    def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
-            "contact_points": [self.cluster_host],
+            "hosts": [self.cluster_host],
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
             "time_partition_tables": self.time_partition_tables,
@@ -131,7 +129,7 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
         if self.time_partition_end:
             kw["time_partition_end"] = self.time_partition_end
         kw.update(kwargs)
-        return ApdbCassandraConfig(**kw)
+        return ApdbCassandra.init_database(**kw)  # type: ignore[arg-type]
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
@@ -155,16 +153,16 @@ class ApdbCassandraTestCaseInsertIds(ApdbCassandraTestCase):
 class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):
     """A test case for schema updates using Cassandra backend."""
 
-    def make_config(self, **kwargs: Any) -> ApdbCassandraConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
-            "contact_points": [self.cluster_host],
+            "hosts": [self.cluster_host],
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
             "time_partition_tables": False,
         }
         kw.update(kwargs)
-        return ApdbCassandraConfig(**kw)
+        return ApdbCassandra.init_database(**kw)  # type: ignore[arg-type]
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
