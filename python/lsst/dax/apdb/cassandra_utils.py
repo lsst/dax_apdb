@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterator, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -96,11 +96,11 @@ class ApdbCassandraTableData(ApdbTableData):
         self._columns = columns
         self._rows = rows
 
-    def column_names(self) -> list[str]:
+    def column_names(self) -> Sequence[str]:
         # docstring inherited
         return self._columns
 
-    def rows(self) -> Iterable[tuple]:
+    def rows(self) -> Collection[tuple]:
         # docstring inherited
         return self._rows
 
