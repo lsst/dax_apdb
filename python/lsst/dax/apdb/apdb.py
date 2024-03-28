@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-import lsst.daf.base as dafBase
+import astropy.time
 import pandas
 from felis.simple import Table
 from lsst.pex.config import Config, ConfigurableField, Field
@@ -113,13 +113,13 @@ class ApdbInsertId:
     """
 
     id: UUID
-    insert_time: dafBase.DateTime
+    insert_time: astropy.time.Time
     """Time of this insert, usually corresponds to visit time
-    (`dafBase.DateTime`).
+    (`astropy.time.Time`).
     """
 
     @classmethod
-    def new_insert_id(cls, insert_time: dafBase.DateTime) -> ApdbInsertId:
+    def new_insert_id(cls, insert_time: astropy.time.Time) -> ApdbInsertId:
         """Generate new unique insert identifier."""
         return ApdbInsertId(id=uuid4(), insert_time=insert_time)
 
@@ -211,7 +211,7 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         """Return catalog of DiaSource instances from a given region.
 
@@ -224,7 +224,7 @@ class Apdb(ABC):
             sources. If `None` then returned sources are not constrained. If
             list is empty then empty catalog is returned with a correct
             schema.
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the current visit.
 
         Returns
@@ -247,7 +247,7 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaForcedSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         """Return catalog of DiaForcedSource instances from a given region.
 
@@ -260,7 +260,7 @@ class Apdb(ABC):
             sources. If list is empty then empty catalog is returned with a
             correct schema. If `None` then returned sources are not
             constrained. Some implementations may not support latter case.
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the current visit.
 
         Returns
@@ -419,7 +419,7 @@ class Apdb(ABC):
     @abstractmethod
     def store(
         self,
-        visit_time: dafBase.DateTime,
+        visit_time: astropy.time.Time,
         objects: pandas.DataFrame,
         sources: pandas.DataFrame | None = None,
         forced_sources: pandas.DataFrame | None = None,
@@ -428,7 +428,7 @@ class Apdb(ABC):
 
         Parameters
         ----------
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the visit.
         objects : `pandas.DataFrame`
             Catalog with DiaObject records.

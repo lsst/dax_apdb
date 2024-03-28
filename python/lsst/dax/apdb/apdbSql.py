@@ -31,7 +31,7 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from contextlib import closing, suppress
 from typing import TYPE_CHECKING, Any, cast
 
-import lsst.daf.base as dafBase
+import astropy.time
 import numpy as np
 import pandas
 import sqlalchemy
@@ -71,12 +71,12 @@ def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
     return df.astype({name: np.int64 for name in names})
 
 
-def _make_midpointMjdTai_start(visit_time: dafBase.DateTime, months: int) -> float:
+def _make_midpointMjdTai_start(visit_time: astropy.time.Time, months: int) -> float:
     """Calculate starting point for time-based source search.
 
     Parameters
     ----------
-    visit_time : `lsst.daf.base.DateTime`
+    visit_time : `astropy.time.Time`
         Time of current visit.
     months : `int`
         Number of months in the sources history.
@@ -86,9 +86,9 @@ def _make_midpointMjdTai_start(visit_time: dafBase.DateTime, months: int) -> flo
     time : `float`
         A ``midpointMjdTai`` starting point, MJD time.
     """
-    # TODO: `system` must be consistent with the code in ap_association
+    # TODO: Use of MJD must be consistent with the code in ap_association
     # (see DM-31996)
-    return visit_time.get(system=dafBase.DateTime.MJD) - months * 30
+    return visit_time.mjd - months * 30
 
 
 def _onSqlite3Connect(
@@ -434,7 +434,7 @@ class ApdbSql(Apdb):
         return objects
 
     def getDiaSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         if self.config.read_sources_months == 0:
@@ -448,7 +448,7 @@ class ApdbSql(Apdb):
             return self._getDiaSourcesByIDs(list(object_ids), visit_time)
 
     def getDiaForcedSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         if self.config.read_forced_sources_months == 0:
@@ -525,7 +525,7 @@ class ApdbSql(Apdb):
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 ids = []
                 for row in result:
-                    insert_time = dafBase.DateTime(int(row[1].timestamp() * 1e9))
+                    insert_time = astropy.time.Time(row[1].timestamp(), format="unix_tai")
                     ids.append(ApdbInsertId(id=row[0], insert_time=insert_time))
                 return ids
 
@@ -597,7 +597,7 @@ class ApdbSql(Apdb):
 
     def store(
         self,
-        visit_time: dafBase.DateTime,
+        visit_time: astropy.time.Time,
         objects: pandas.DataFrame,
         sources: pandas.DataFrame | None = None,
         forced_sources: pandas.DataFrame | None = None,
@@ -702,14 +702,14 @@ class ApdbSql(Apdb):
             raise RuntimeError("Database schema was not initialized.")
         return self._metadata
 
-    def _getDiaSourcesInRegion(self, region: Region, visit_time: dafBase.DateTime) -> pandas.DataFrame:
+    def _getDiaSourcesInRegion(self, region: Region, visit_time: astropy.time.Time) -> pandas.DataFrame:
         """Return catalog of DiaSource instances from given region.
 
         Parameters
         ----------
         region : `lsst.sphgeom.Region`
             Region to search for DIASources.
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the current visit.
 
         Returns
@@ -738,14 +738,14 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
-    def _getDiaSourcesByIDs(self, object_ids: list[int], visit_time: dafBase.DateTime) -> pandas.DataFrame:
+    def _getDiaSourcesByIDs(self, object_ids: list[int], visit_time: astropy.time.Time) -> pandas.DataFrame:
         """Return catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
         ----------
         object_ids :
             Collection of DiaObject IDs
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the current visit.
 
         Returns
@@ -824,9 +824,9 @@ class ApdbSql(Apdb):
         return sources
 
     def _storeInsertId(
-        self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime, connection: sqlalchemy.engine.Connection
+        self, insert_id: ApdbInsertId, visit_time: astropy.time.Time, connection: sqlalchemy.engine.Connection
     ) -> None:
-        dt = visit_time.toPython()
+        dt = visit_time.datetime
 
         table = self._schema.get_table(ExtraTables.DiaInsertId)
 
@@ -836,7 +836,7 @@ class ApdbSql(Apdb):
     def _storeDiaObjects(
         self,
         objs: pandas.DataFrame,
-        visit_time: dafBase.DateTime,
+        visit_time: astropy.time.Time,
         insert_id: ApdbInsertId | None,
         connection: sqlalchemy.engine.Connection,
     ) -> None:
@@ -846,7 +846,7 @@ class ApdbSql(Apdb):
         ----------
         objs : `pandas.DataFrame`
             Catalog with DiaObject records.
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the visit.
         insert_id : `ApdbInsertId`
             Insert identifier.
@@ -862,7 +862,7 @@ class ApdbSql(Apdb):
 
         # TODO: Need to verify that we are using correct scale here for
         # DATETIME representation (see DM-31996).
-        dt = visit_time.toPython()
+        dt = visit_time.datetime
 
         # everything to be done in single transaction
         if self.config.dia_object_index == "last_object_table":

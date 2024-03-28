@@ -46,8 +46,8 @@ try:
 except ImportError:
     CASSANDRA_IMPORTED = False
 
+import astropy.time
 import felis.types
-import lsst.daf.base as dafBase
 from felis.simple import Table
 from lsst import sphgeom
 from lsst.pex.config import ChoiceField, Field, ListField
@@ -279,7 +279,7 @@ class ApdbCassandra(Apdb):
     )
     """Names of the config parameters to be frozen in metadata table."""
 
-    partition_zero_epoch = dafBase.DateTime(1970, 1, 1, 0, 0, 0, dafBase.DateTime.TAI)
+    partition_zero_epoch = astropy.time.Time(0, format="unix_tai")
     """Start time for partition 0, this should never be changed."""
 
     def __init__(self, config: ApdbCassandraConfig):
@@ -320,7 +320,7 @@ class ApdbCassandra(Apdb):
             time_partition_tables=self.config.time_partition_tables,
             use_insert_id=self.config.use_insert_id,
         )
-        self._partition_zero_epoch_mjd: float = self.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+        self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
         if self._metadata.table_exists():
             self._versionCheck(self._metadata)
@@ -456,9 +456,9 @@ class ApdbCassandra(Apdb):
 
         # Ask schema to create all tables.
         if config.time_partition_tables:
-            time_partition_start = dafBase.DateTime(config.time_partition_start, dafBase.DateTime.TAI)
-            time_partition_end = dafBase.DateTime(config.time_partition_end, dafBase.DateTime.TAI)
-            part_epoch: float = cls.partition_zero_epoch.get(system=dafBase.DateTime.MJD)
+            time_partition_start = astropy.time.Time(config.time_partition_start, format="isot", scale="tai")
+            time_partition_end = astropy.time.Time(config.time_partition_end, format="isot", scale="tai")
+            part_epoch = float(cls.partition_zero_epoch.mjd)
             part_days = config.time_partition_days
             part_range = (
                 cls._time_partition_cls(time_partition_start, part_epoch, part_days),
@@ -519,25 +519,25 @@ class ApdbCassandra(Apdb):
         return objects
 
     def getDiaSources(
-        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         months = self.config.read_sources_months
         if months == 0:
             return None
-        mjd_end = visit_time.get(system=dafBase.DateTime.MJD)
+        mjd_end = visit_time.mjd
         mjd_start = mjd_end - months * 30
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaSource)
 
     def getDiaForcedSources(
-        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: dafBase.DateTime
+        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         months = self.config.read_forced_sources_months
         if months == 0:
             return None
-        mjd_end = visit_time.get(system=dafBase.DateTime.MJD)
+        mjd_end = visit_time.mjd
         mjd_start = mjd_end - months * 30
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
@@ -566,7 +566,7 @@ class ApdbCassandra(Apdb):
         # order by insert_time
         rows = sorted(result)
         return [
-            ApdbInsertId(id=row[1], insert_time=dafBase.DateTime(int(row[0].timestamp() * 1e9)))
+            ApdbInsertId(id=row[1], insert_time=astropy.time.Time(row[0].timestamp(), format="unix_tai"))
             for row in rows
         ]
 
@@ -636,7 +636,7 @@ class ApdbCassandra(Apdb):
 
     def store(
         self,
-        visit_time: dafBase.DateTime,
+        visit_time: astropy.time.Time,
         objects: pandas.DataFrame,
         sources: pandas.DataFrame | None = None,
         forced_sources: pandas.DataFrame | None = None,
@@ -918,9 +918,9 @@ class ApdbCassandra(Apdb):
             table_data = cast(ApdbCassandraTableData, result._current_rows)
         return table_data
 
-    def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: dafBase.DateTime) -> None:
+    def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: astropy.time.Time) -> None:
         # Cassandra timestamp uses milliseconds since epoch
-        timestamp = insert_id.insert_time.nsecs() // 1_000_000
+        timestamp = int(insert_id.insert_time.unix_tai / 1_000_000)
 
         # everything goes into a single partition
         partition = 0
@@ -939,7 +939,7 @@ class ApdbCassandra(Apdb):
         )
 
     def _storeDiaObjects(
-        self, objs: pandas.DataFrame, visit_time: dafBase.DateTime, insert_id: ApdbInsertId | None
+        self, objs: pandas.DataFrame, visit_time: astropy.time.Time, insert_id: ApdbInsertId | None
     ) -> None:
         """Store catalog of DiaObjects from current visit.
 
@@ -947,10 +947,14 @@ class ApdbCassandra(Apdb):
         ----------
         objs : `pandas.DataFrame`
             Catalog with DiaObject records
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the current visit.
         """
-        visit_time_dt = visit_time.toPython()
+        if len(objs) == 0:
+            _LOG.debug("No objects to write to database.")
+            return
+
+        visit_time_dt = visit_time.datetime
         extra_columns = dict(lastNonForcedSource=visit_time_dt)
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
@@ -975,7 +979,7 @@ class ApdbCassandra(Apdb):
         self,
         table_name: ApdbTables,
         sources: pandas.DataFrame,
-        visit_time: dafBase.DateTime,
+        visit_time: astropy.time.Time,
         insert_id: ApdbInsertId | None,
     ) -> None:
         """Store catalog of DIASources or DIAForcedSources from current visit.
@@ -984,7 +988,7 @@ class ApdbCassandra(Apdb):
         ----------
         sources : `pandas.DataFrame`
             Catalog containing DiaSource records
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the current visit.
         """
         time_part: int | None = self._time_partition(visit_time)
@@ -1004,7 +1008,7 @@ class ApdbCassandra(Apdb):
             self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns)
 
     def _storeDiaSourcesPartitions(
-        self, sources: pandas.DataFrame, visit_time: dafBase.DateTime, insert_id: ApdbInsertId | None
+        self, sources: pandas.DataFrame, visit_time: astropy.time.Time, insert_id: ApdbInsertId | None
     ) -> None:
         """Store mapping of diaSourceId to its partitioning values.
 
@@ -1012,7 +1016,7 @@ class ApdbCassandra(Apdb):
         ----------
         sources : `pandas.DataFrame`
             Catalog containing DiaSource records
-        visit_time : `lsst.daf.base.DateTime`
+        visit_time : `astropy.time.Time`
             Time of the current visit.
         """
         id_map = cast(pandas.DataFrame, sources[["diaSourceId", "apdb_part"]])
@@ -1193,14 +1197,14 @@ class ApdbCassandra(Apdb):
         return sources
 
     @classmethod
-    def _time_partition_cls(cls, time: float | dafBase.DateTime, epoch_mjd: float, part_days: int) -> int:
+    def _time_partition_cls(cls, time: float | astropy.time.Time, epoch_mjd: float, part_days: int) -> int:
         """Calculate time partition number for a given time.
 
         Parameters
         ----------
-        time : `float` or `lsst.daf.base.DateTime`
+        time : `float` or `astropy.time.Time`
             Time for which to calculate partition number. Can be float to mean
-            MJD or `lsst.daf.base.DateTime`
+            MJD or `astropy.time.Time`
         epoch_mjd : `float`
             Epoch time for partition 0.
         part_days : `int`
@@ -1211,30 +1215,30 @@ class ApdbCassandra(Apdb):
         partition : `int`
             Partition number for a given time.
         """
-        if isinstance(time, dafBase.DateTime):
-            mjd = time.get(system=dafBase.DateTime.MJD)
+        if isinstance(time, astropy.time.Time):
+            mjd = float(time.mjd)
         else:
             mjd = time
         days_since_epoch = mjd - epoch_mjd
         partition = int(days_since_epoch) // part_days
         return partition
 
-    def _time_partition(self, time: float | dafBase.DateTime) -> int:
+    def _time_partition(self, time: float | astropy.time.Time) -> int:
         """Calculate time partition number for a given time.
 
         Parameters
         ----------
-        time : `float` or `lsst.daf.base.DateTime`
+        time : `float` or `astropy.time.Time`
             Time for which to calculate partition number. Can be float to mean
-            MJD or `lsst.daf.base.DateTime`
+            MJD or `astropy.time.Time`
 
         Returns
         -------
         partition : `int`
             Partition number for a given time.
         """
-        if isinstance(time, dafBase.DateTime):
-            mjd = time.get(system=dafBase.DateTime.MJD)
+        if isinstance(time, astropy.time.Time):
+            mjd = float(time.mjd)
         else:
             mjd = time
         days_since_epoch = mjd - self._partition_zero_epoch_mjd
@@ -1349,8 +1353,8 @@ class ApdbCassandra(Apdb):
     def _temporal_where(
         self,
         table: ApdbTables,
-        start_time: float | dafBase.DateTime,
-        end_time: float | dafBase.DateTime,
+        start_time: float | astropy.time.Time,
+        end_time: float | astropy.time.Time,
         query_per_time_part: bool | None = None,
     ) -> tuple[list[str], list[tuple[str, tuple]]]:
         """Generate table names and expressions for temporal part of WHERE
@@ -1360,9 +1364,9 @@ class ApdbCassandra(Apdb):
         ----------
         table : `ApdbTables`
             Table to select from.
-        start_time : `dafBase.DateTime` or `float`
+        start_time : `astropy.time.Time` or `float`
             Starting Datetime of MJD value of the time range.
-        start_time : `dafBase.DateTime` or `float`
+        end_time : `astropy.time.Time` or `float`
             Starting Datetime of MJD value of the time range.
         query_per_time_part : `bool`, optional
             If None then use ``query_per_time_part`` from configuration.

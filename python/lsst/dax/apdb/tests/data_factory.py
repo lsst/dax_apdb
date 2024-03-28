@@ -25,14 +25,13 @@ import random
 from collections.abc import Iterator
 from typing import Any
 
+import astropy.time
 import numpy
 import pandas
-from lsst.daf.base import DateTime
-from lsst.geom import SpherePoint
 from lsst.sphgeom import LonLat, Region, UnitVector3d
 
 
-def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
+def _genPointsInRegion(region: Region, count: int) -> Iterator[LonLat]:
     """Generate bunch of SpherePoints inside given region.
 
     Parameters
@@ -58,12 +57,12 @@ def _genPointsInRegion(region: Region, count: int) -> Iterator[SpherePoint]:
         lonlat = LonLat.fromRadians(lon, lat)
         uv3d = UnitVector3d(lonlat)
         if region.contains(uv3d):
-            yield SpherePoint(lonlat)
+            yield lonlat
             count -= 1
 
 
 def makeObjectCatalog(
-    region: Region, count: int, visit_time: DateTime, *, start_id: int = 1, **kwargs: Any
+    region: Region, count: int, visit_time: astropy.time.Time, *, start_id: int = 1, **kwargs: Any
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaObjects inside a region.
 
@@ -73,7 +72,7 @@ def makeObjectCatalog(
         Spherical region.
     count : `int`
         Number of records to generate.
-    visit_time : `lsst.daf.base.DateTime`
+    visit_time : `astropy.time.Time`
         Time of the visit.
     start_id : `int`
         Starting diaObjectId.
@@ -94,10 +93,10 @@ def makeObjectCatalog(
     # diaObjectId=0 may be used in some code for DiaSource foreign key to mean
     # the same as ``None``.
     ids = numpy.arange(start_id, len(points) + start_id, dtype=numpy.int64)
-    ras = numpy.array([sp.getRa().asDegrees() for sp in points], dtype=numpy.float64)
-    decs = numpy.array([sp.getDec().asDegrees() for sp in points], dtype=numpy.float64)
+    ras = numpy.array([lonlat.getLon().asDegrees() for lonlat in points], dtype=numpy.float64)
+    decs = numpy.array([lonlat.getLat().asDegrees() for lonlat in points], dtype=numpy.float64)
     nDiaSources = numpy.ones(len(points), dtype=numpy.int32)
-    dt = visit_time.toPython()
+    dt = visit_time.datetime
     data = dict(
         kwargs,
         diaObjectId=ids,
@@ -111,7 +110,7 @@ def makeObjectCatalog(
 
 
 def makeSourceCatalog(
-    objects: pandas.DataFrame, visit_time: DateTime, start_id: int = 0, ccdVisitId: int = 1
+    objects: pandas.DataFrame, visit_time: astropy.time.Time, start_id: int = 0, ccdVisitId: int = 1
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaSources associated with the
     input DiaObjects.
@@ -120,7 +119,7 @@ def makeSourceCatalog(
     ----------
     objects : `pandas.DataFrame`
         Catalog of DiaObject records.
-    visit_time : `lsst.daf.base.DateTime`
+    visit_time : `astropy.time.Time`
         Time of the visit.
     start_id : `int`
         Starting value for ``diaObjectId``.
@@ -137,7 +136,7 @@ def makeSourceCatalog(
     Returned catalog only contains small number of columns needed for tests.
     """
     nrows = len(objects)
-    midpointMjdTai = visit_time.get(system=DateTime.MJD)
+    midpointMjdTai = visit_time.mjd
     df = pandas.DataFrame(
         {
             "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
@@ -154,7 +153,7 @@ def makeSourceCatalog(
 
 
 def makeForcedSourceCatalog(
-    objects: pandas.DataFrame, visit_time: DateTime, ccdVisitId: int = 1
+    objects: pandas.DataFrame, visit_time: astropy.time.Time, ccdVisitId: int = 1
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaForcedSources associated with
     the input DiaObjects.
@@ -163,7 +162,7 @@ def makeForcedSourceCatalog(
     ----------
     objects : `pandas.DataFrame`
         Catalog of DiaObject records.
-    visit_time : `lsst.daf.base.DateTime`
+    visit_time : `astropy.time.Time`
         Time of the visit.
     ccdVisitId : `int`
         Value for ``ccdVisitId`` field.
@@ -178,7 +177,7 @@ def makeForcedSourceCatalog(
     Returned catalog only contains small number of columns needed for tests.
     """
     nrows = len(objects)
-    midpointMjdTai = visit_time.get(system=DateTime.MJD)
+    midpointMjdTai = visit_time.mjd
     df = pandas.DataFrame(
         {
             "diaObjectId": objects["diaObjectId"],

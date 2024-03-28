@@ -31,9 +31,9 @@ from collections.abc import Iterator
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
+import astropy.time
 import pandas
 import yaml
-from lsst.daf.base import DateTime
 from lsst.dax.apdb import (
     Apdb,
     ApdbConfig,
@@ -120,7 +120,7 @@ class ApdbTest(TestCaseMixin, ABC):
     """
 
     time_partition_tables = False
-    visit_time = DateTime("2021-01-01T00:00:00", DateTime.TAI)
+    visit_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
 
     fsrc_requires_id_list = False
     """Should be set to True if getDiaForcedSources requires object IDs"""
@@ -431,14 +431,14 @@ class ApdbTest(TestCaseMixin, ABC):
         objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
 
         visits = [
-            (DateTime("2021-01-01T00:01:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:02:00", DateTime.TAI), objects2),
-            (DateTime("2021-01-01T00:03:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:04:00", DateTime.TAI), objects2),
-            (DateTime("2021-01-01T00:05:00", DateTime.TAI), objects1),
-            (DateTime("2021-01-01T00:06:00", DateTime.TAI), objects2),
-            (DateTime("2021-03-01T00:01:00", DateTime.TAI), objects1),
-            (DateTime("2021-03-01T00:02:00", DateTime.TAI), objects2),
+            (astropy.time.Time("2021-01-01T00:01:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:02:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:03:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:04:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:05:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:06:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-03-01T00:01:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-03-01T00:02:00", format="isot", scale="tai"), objects2),
         ]
 
         start_id = 0
@@ -556,11 +556,11 @@ class ApdbTest(TestCaseMixin, ABC):
 
         region = _make_region()
         # 2021-01-01 plus 360 days is 2021-12-27
-        src_time1 = DateTime("2021-01-01T00:00:00", DateTime.TAI)
-        src_time2 = DateTime("2021-01-01T00:00:02", DateTime.TAI)
-        visit_time0 = DateTime("2021-12-26T23:59:59", DateTime.TAI)
-        visit_time1 = DateTime("2021-12-27T00:00:01", DateTime.TAI)
-        visit_time2 = DateTime("2021-12-27T00:00:03", DateTime.TAI)
+        src_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+        src_time2 = astropy.time.Time("2021-01-01T00:00:02", format="isot", scale="tai")
+        visit_time0 = astropy.time.Time("2021-12-26T23:59:59", format="isot", scale="tai")
+        visit_time1 = astropy.time.Time("2021-12-27T00:00:01", format="isot", scale="tai")
+        visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
 
         objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
@@ -593,11 +593,11 @@ class ApdbTest(TestCaseMixin, ABC):
         apdb = make_apdb(config)
 
         region = _make_region()
-        src_time1 = DateTime("2021-01-01T00:00:00", DateTime.TAI)
-        src_time2 = DateTime("2021-01-01T00:00:02", DateTime.TAI)
-        visit_time0 = DateTime("2021-12-26T23:59:59", DateTime.TAI)
-        visit_time1 = DateTime("2021-12-27T00:00:01", DateTime.TAI)
-        visit_time2 = DateTime("2021-12-27T00:00:03", DateTime.TAI)
+        src_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+        src_time2 = astropy.time.Time("2021-01-01T00:00:02", format="isot", scale="tai")
+        visit_time0 = astropy.time.Time("2021-12-26T23:59:59", format="isot", scale="tai")
+        visit_time1 = astropy.time.Time("2021-12-27T00:00:01", format="isot", scale="tai")
+        visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
 
         objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
@@ -713,7 +713,7 @@ class ApdbTest(TestCaseMixin, ABC):
 class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
     """Base class for unit tests that verify how schema changes work."""
 
-    visit_time = DateTime("2021-01-01T00:00:00", DateTime.TAI)
+    visit_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
 
     @abstractmethod
     def make_config(self, **kwargs: Any) -> ApdbConfig:
