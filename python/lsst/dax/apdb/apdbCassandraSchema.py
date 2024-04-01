@@ -418,12 +418,16 @@ class ApdbCassandraSchema(ApdbSchema):
         Parameters
         ----------
         drop : `bool`
-            If True then drop tables before creating new ones.
+            If True then drop tables before creating new ones. Note that
+            only tables are dropped and not the whole keyspace.
         part_range : `tuple` [ `int` ] or `None`
             Start and end partition number for time partitions, end is not
             inclusive. Used to create per-partition DiaObject, DiaSource, and
             DiaForcedSource tables. If `None` then per-partition tables are
             not created.
+        replication_factor : `int`, optional
+            Replication factor used when creating new keyspace, if keyspace
+            already exists its replication factor is not changed.
         """
         # Try to create keyspace if it does not exist
         if replication_factor is None:

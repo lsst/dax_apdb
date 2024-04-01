@@ -470,7 +470,7 @@ class ApdbCassandra(Apdb):
         hosts : `list` [`str`]
             List of host names or IP addresses for Cassandra cluster.
         keyspace : `str`
-            NAme of the keyspace for APDB tables.
+            Name of the keyspace for APDB tables.
         schema_file : `str`, optional
             Location of (YAML) configuration file with APDB schema. If not
             specified then default location will be used.
@@ -484,7 +484,7 @@ class ApdbCassandra(Apdb):
         use_insert_id : `bool`, optional
             If True, make additional tables used for replication to PPDB.
         use_insert_id_skips_diaobjects : `bool`, optional
-            If `True` then do not fill regular `ApdbObject` table when
+            If `True` then do not fill regular ``DiaObject`` table when
             ``use_insert_id`` is `True`.
         port : `int`, optional
             Port number to use for Cassandra connections.
@@ -518,7 +518,12 @@ class ApdbCassandra(Apdb):
             Replication factor used when creating new keyspace, if keyspace
             already exists its replication factor is not changed.
         drop : `bool`, optional
-            If `True then drop existing tables before re-creating the schema.
+            If `True` then drop existing tables before re-creating the schema.
+
+        Returns
+        -------
+        config : `ApdbCassandraConfig`
+            Resulting configuration object for a created APDB instance.
         """
         config = ApdbCassandraConfig(
             contact_points=hosts,

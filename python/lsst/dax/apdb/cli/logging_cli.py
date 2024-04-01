@@ -59,7 +59,7 @@ class LoggingCli:
                 logger_name, sep, level_name = spec.rpartition("=")
                 level = logging.getLevelNamesMapping().get(level_name.upper())
                 if level is None:
-                    self._parser.error(f"Unknown logging level in {level_str!r}")
+                    self._parser.error(f"Unknown logging level {level_name!r} in {level_str!r}")
                 if logger_name:
                     logger_levels[logger_name] = level
                 else:
@@ -69,5 +69,6 @@ class LoggingCli:
         for logger_name, level in logger_levels.items():
             logging.getLogger(logger_name).setLevel(level)
 
-        # Remove namespace attribute.
+        # We want to remove `log_level` so that namespace can be converted to
+        # a dict and passed as kwargs to scripts.
         del args.log_level

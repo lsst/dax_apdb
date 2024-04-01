@@ -25,6 +25,7 @@ __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
 import os
+import tempfile
 import unittest
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -192,6 +193,17 @@ class ApdbTest(TestCaseMixin, ABC):
         """Test for making APDB schema."""
         config = self.make_instance()
         apdb = Apdb.from_config(config)
+
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.metadata))
+
+        # Test from_uri factory method with the same config.
+        with tempfile.NamedTemporaryFile() as tmpfile:
+            config.save(tmpfile.name)
+            apdb = Apdb.from_uri(tmpfile.name)
 
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))

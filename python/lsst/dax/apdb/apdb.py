@@ -156,15 +156,18 @@ class Apdb(ABC):
         Parameters
         ----------
         uri : `~lsst.resources.ResourcePathExpression`
-            URI pointing to a file with serialized configuration. IF ``uri`` is
-            a string with "label:" prefix then the label name which follows the
-            prefix will be searched in APDB index file whose location is
-            determined by ``DAX_APDB_INDEX_URI`` environment variable.
+            URI or local file path pointing to a file with serialized
+            configuration, or a string with a "label:" prefix. In the latter
+            case, the configuration will be looked up from an APDB index file
+            using the label name that follows the prefix. The APDB index file's
+            location is determined by the ``DAX_APDB_INDEX_URI`` environment
+            variable.
 
         Returns
         -------
         apdb : `apdb`
-            Instance of `Apdb` class.
+            Instance of `Apdb` class, the type of the returned instance is
+            determined by configuration.
         """
         if isinstance(uri, str) and uri.startswith("label:"):
             tag, _, label = uri.partition(":")

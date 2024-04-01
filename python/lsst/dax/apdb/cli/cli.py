@@ -31,7 +31,7 @@ from . import options
 from .logging_cli import LoggingCli
 
 
-def cli(args: Sequence | None = None) -> None:
+def cli(args: Sequence[str] | None = None) -> None:
     """APDB command line tools."""
     parser = argparse.ArgumentParser(description="APDB command line tools")
     log_cli = LoggingCli(parser)

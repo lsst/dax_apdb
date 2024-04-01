@@ -183,19 +183,23 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tempdir, ignore_errors=True)
         self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
         config = ApdbSql.init_database(db_url=self.db_url, schema_file=TEST_SCHEMA)
-        # This will need update when we switch to pydantic configs.
+        # TODO: This will need update when we switch to pydantic configs.
         self.config_path = os.path.join(self.tempdir, "apdb-config.py")
         config.save(self.config_path)
+        self.bad_config_path = os.path.join(self.tempdir, "not-config.py")
         self.index_path = os.path.join(self.tempdir, "apdb-index.yaml")
         with open(self.index_path, "w") as index_file:
             print(f'label1: "{self.config_path}"', file=index_file)
-            print(f'label2/pex_config: "{self.config_path}"', file=index_file)
-        self.bad_config_path = os.path.join(self.tempdir, "not-config.py")
-
-    def tearDown(self) -> None:
-        shutil.rmtree(self.tempdir, ignore_errors=True)
+            print(f'"label2/pex_config": "{self.config_path}"', file=index_file)
+            print(f'bad-label: "{self.bad_config_path}"', file=index_file)
+        # File with incorrect format.
+        self.bad_index_path = os.path.join(self.tempdir, "apdb-index-bad.yaml")
+        with open(self.bad_index_path, "w") as index_file:
+            print(f'label1: ["{self.config_path}"]', file=index_file)
+        self.missing_index_path = os.path.join(self.tempdir, "no-apdb-index.yaml")
 
     def test_make_apdb_from_path(self) -> None:
         """Check that we can make APDB instance from config URI."""
@@ -210,8 +214,32 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
         with patch.dict(os.environ, new_env, clear=True):
             Apdb.from_uri("label:label1")
             Apdb.from_uri("label:label2")
+            # Label does not exist.
             with self.assertRaises(ValueError):
+                Apdb.from_uri("label:not-a-label")
+            # Label exists but points to a missing config.
+            with self.assertRaises(FileNotFoundError):
                 Apdb.from_uri("label:bad-label")
+
+    def test_make_apdb_bad_index(self) -> None:
+        """Check what happens when DAX_APDB_INDEX_URI is broken."""
+        # envvar is set but empty.
+        new_env = {"DAX_APDB_INDEX_URI": ""}
+        with patch.dict(os.environ, new_env, clear=True):
+            with self.assertRaises(RuntimeError):
+                Apdb.from_uri("label:label")
+
+        # envvar is set to something non-existing.
+        new_env = {"DAX_APDB_INDEX_URI": self.missing_index_path}
+        with patch.dict(os.environ, new_env, clear=True):
+            with self.assertRaises(FileNotFoundError):
+                Apdb.from_uri("label:label")
+
+        # envvar points to an incorrect file.
+        new_env = {"DAX_APDB_INDEX_URI": self.bad_index_path}
+        with patch.dict(os.environ, new_env, clear=True):
+            with self.assertRaises(TypeError):
+                Apdb.from_uri("label:label")
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

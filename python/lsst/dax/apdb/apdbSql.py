@@ -386,7 +386,12 @@ class ApdbSql(Apdb):
             Name of the database schema for all APDB tables. If not specified
             then default schema is used.
         drop : `bool`, optional
-            If `True then drop existing tables before re-creating the schema.
+            If `True` then drop existing tables before re-creating the schema.
+
+        Returns
+        -------
+        config : `ApdbSqlConfig`
+            Resulting configuration object for a created APDB instance.
         """
         config = ApdbSqlConfig(db_url=db_url, use_insert_id=use_insert_id)
         if schema_file is not None:

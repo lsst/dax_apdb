@@ -117,7 +117,7 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
-        kw = {
+        kw: dict[str, Any] = {
             "hosts": [self.cluster_host],
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
@@ -129,7 +129,7 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
         if self.time_partition_end:
             kw["time_partition_end"] = self.time_partition_end
         kw.update(kwargs)
-        return ApdbCassandra.init_database(**kw)  # type: ignore[arg-type]
+        return ApdbCassandra.init_database(**kw)
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
