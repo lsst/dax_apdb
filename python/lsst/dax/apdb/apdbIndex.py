@@ -56,6 +56,11 @@ class ApdbIndex:
        "prod/pex_config": "s3://bucket/apdb-prod.py"
        "prod/yaml": "s3://bucket/apdb-prod.yaml"
 
+    The labels in the index file consists of the label name and an option
+    format name separated from label by slash. `get_apdb_uri` method can
+    use its ``format`` argument to return either a format-specific
+    configuration or a label-only configuration if format-specific is not
+    defined.
     """
 
     index_env_var: ClassVar[str] = "DAX_APDB_INDEX_URI"
@@ -69,25 +74,51 @@ class ApdbIndex:
     def __init__(self, index_path: str | None = None):
         self._index_path = index_path
 
-    @classmethod
-    def _read_index(cls, index_path: str | None = None) -> Mapping[str, str]:
+    def _read_index(self, index_path: str | None = None) -> Mapping[str, str]:
+        """Return contents of the index file.
+
+        Parameters
+        ----------
+        index_path : `str`, optional
+            Location of the index file, if not provided then default location
+            is used.
+
+        Returns
+        -------
+        entries : `~collections.abc.Mapping` [`str`, `str`]
+            All known entries. Can be empty if no index can be found.
+
+        Raises
+        ------
+        RuntimeError
+            Raised if ``index_path`` is not provided and environment variable
+            is not set.
+        TypeError
+            Raised if content of the configuration file is incorrect.
+        """
+        if self._cache is not None:
+            return self._cache
         if index_path is None:
-            index_path = os.getenv(cls.index_env_var)
-            if index_path is None:
+            index_path = os.getenv(self.index_env_var)
+            if not index_path:
                 raise RuntimeError(
-                    f"No repository index defined, environment variable {cls.index_env_var} is not set."
+                    f"No repository index defined, environment variable {self.index_env_var} is not set."
                 )
         index_uri = ResourcePath(index_path)
         _LOG.debug("Opening YAML index file: %s", index_uri.geturl())
-        content = index_uri.read()
-        # Use a stream so we can name it
+        try:
+            content = index_uri.read()
+        except IsADirectoryError as exc:
+            raise FileNotFoundError(f"Index file {index_uri.geturl()} is a directory") from exc
         stream = io.BytesIO(content)
         if index_data := yaml.load(stream, Loader=yaml.SafeLoader):
             try:
-                return TypeAdapter(dict[str, str]).validate_python(index_data)
+                self._cache = TypeAdapter(dict[str, str]).validate_python(index_data)
             except ValidationError as e:
                 raise TypeError(f"Repository index {index_uri.geturl()} not in expected format") from e
-        return {}
+        else:
+            self._cache = {}
+        return self._cache
 
     def get_apdb_uri(self, label: str, format: str | None = None) -> ResourcePath:
         """Return URI for APDB configuration file given its label.
@@ -114,40 +145,28 @@ class ApdbIndex:
         FileNotFoundError
             Raised if an index is defined in the environment but it
             can not be found.
-        KeyError
+        ValueError
             Raised if the label is not found in the index.
+        RuntimeError
+            Raised if ``index_path`` is not provided and environment variable
+            is not set.
         TypeError
             Raised if the format of the index file is incorrect.
         """
-        if self._cache is None:
-            self._cache = self._read_index(self._index_path)
+        index = self._read_index(self._index_path)
         labels: list[str] = [label]
         if format:
             labels.insert(0, f"{label}/{format}")
         for label in labels:
-            if (uri_str := self._cache.get(label)) is not None:
+            if (uri_str := index.get(label)) is not None:
                 return ResourcePath(uri_str)
         if len(labels) == 1:
-            raise KeyError(f"Label {labels[0]} is not defined in index file.")
+            message = f"Label {labels[0]} is not defined in index file"
         else:
             labels_str = ", ".join(labels)
-            raise KeyError(f"None of labels {labels_str} is defined in index file.")
-
-    def get_known_labels(self) -> set[str]:
-        """Retrieve the set of labels defined in index.
-
-        Returns
-        -------
-        repos : `set` of `str`
-            All known labels. Can be empty if no index can be found.
-        """
-        if self._cache is not None:
-            return set(self._cache)
-        # If have not read yet then try to read but ignore any errors.
-        try:
-            return set(self._read_index(self._index_path))
-        except Exception:
-            return set()
+            message = f"None of labels {labels_str} is defined in index file"
+        all_labels = set(index)
+        raise ValueError(f"{message}, labels known to index: {all_labels}")
 
     def get_entries(self) -> Mapping[str, str]:
         """Retrieve all entries defined in index.
@@ -156,11 +175,13 @@ class ApdbIndex:
         -------
         entries : `~collections.abc.Mapping` [`str`, `str`]
             All known entries. Can be empty if no index can be found.
+
+        Raises
+        ------
+        RuntimeError
+            Raised if ``index_path`` is not provided and environment variable
+            is not set.
+        TypeError
+            Raised if content of the configuration file is incorrect.
         """
-        if self._cache is not None:
-            return self._cache
-        # If have not read yet then try to read but ignore any errors.
-        try:
-            return self._read_index(self._index_path)
-        except Exception:
-            return {}
+        return self._read_index(self._index_path)

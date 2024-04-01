@@ -34,7 +34,6 @@ dev: "/path/to/config-file.yaml"
 """
 
 BAD_INDEX = """\
-dev: ["/path/to/config-file.yaml"]
 prod:
     pex_config: "s3://bucket/apdb-prod.py"
     yaml: "s3://bucket/apdb-prod.yaml"
@@ -65,11 +64,11 @@ class ApdbIndexTestCase(unittest.TestCase):
         self.assertEqual(index.get_apdb_uri("dev", "anything"), ResourcePath("/path/to/config-file.yaml"))
         self.assertEqual(index.get_apdb_uri("prod/yaml"), ResourcePath("s3://bucket/apdb-prod.yaml"))
         self.assertEqual(index.get_apdb_uri("prod/pex_config"), ResourcePath("s3://bucket/apdb-prod.py"))
-        with self.assertRaises(KeyError):
+        with self.assertRaises(ValueError):
             index.get_apdb_uri("prod")
-        with self.assertRaises(KeyError):
+        with self.assertRaises(ValueError):
             index.get_apdb_uri("prod", "anything")
-        with self.assertRaises(KeyError):
+        with self.assertRaises(ValueError):
             index.get_apdb_uri("anything")
 
     def test_missing_config(self) -> None:
@@ -80,20 +79,11 @@ class ApdbIndexTestCase(unittest.TestCase):
 
     def test_bad_config(self) -> None:
         """Check get_apdb_uri when badly formatted YAML file."""
+        # Constructor does not read index, all errors happen in get_apdb_uri
+        # during delayed initialization.
         index = ApdbIndex(self.bad_index_path)
         with self.assertRaises(TypeError):
             index.get_apdb_uri("prod")
-
-    def test_get_known_labels(self) -> None:
-        """Check get_known_labels."""
-        index = ApdbIndex(self.valid_index_path)
-        self.assertEqual(index.get_known_labels(), {"dev", "prod/yaml", "prod/pex_config"})
-
-        index = ApdbIndex(self.bad_index_path)
-        self.assertEqual(index.get_known_labels(), set())
-
-        index = ApdbIndex(self.missing_index_path)
-        self.assertEqual(index.get_known_labels(), set())
 
     def test_get_entries(self) -> None:
         """Check get_entries."""
@@ -108,10 +98,12 @@ class ApdbIndexTestCase(unittest.TestCase):
         )
 
         index = ApdbIndex(self.bad_index_path)
-        self.assertEqual(index.get_entries(), {})
+        with self.assertRaises(TypeError):
+            index.get_entries()
 
         index = ApdbIndex(self.missing_index_path)
-        self.assertEqual(index.get_entries(), {})
+        with self.assertRaises(FileNotFoundError):
+            index.get_entries()
 
 
 if __name__ == "__main__":

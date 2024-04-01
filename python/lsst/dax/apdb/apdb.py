@@ -171,11 +171,7 @@ class Apdb(ABC):
             index = ApdbIndex()
             # Current format for config files is "pex_config"
             format = "pex_config"
-            try:
-                uri = index.get_apdb_uri(label, format)
-            except KeyError as exc:
-                labels = index.get_known_labels()
-                raise ValueError(f"Unknown index label {uri}, labels known to index: {labels}") from exc
+            uri = index.get_apdb_uri(label, format)
         path = ResourcePath(uri)
         config_str = path.read().decode()
         # Assume that this is ApdbConfig, make_apdb will raise if not.
