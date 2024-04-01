@@ -21,11 +21,8 @@
 
 from .apdb import *
 from .apdbCassandra import *
-from .apdbCassandraSchema import *
 from .apdbMetadata import *
-from .apdbSchema import *
+from .apdbSchema import ApdbTables
 from .apdbSql import *
-from .apdbSqlSchema import *
-from .factory import *
 from .version import *
 from .versionTuple import *
