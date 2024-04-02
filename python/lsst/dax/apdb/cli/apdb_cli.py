@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["cli"]
+__all__ = ["main"]
 
 import argparse
 from collections.abc import Sequence
@@ -31,7 +31,7 @@ from . import options
 from .logging_cli import LoggingCli
 
 
-def cli(args: Sequence[str] | None = None) -> None:
+def main(args: Sequence[str] | None = None) -> None:
     """APDB command line tools."""
     parser = argparse.ArgumentParser(description="APDB command line tools")
     log_cli = LoggingCli(parser)

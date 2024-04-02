@@ -27,7 +27,7 @@ import tempfile
 import unittest
 
 from lsst.dax.apdb import Apdb
-from lsst.dax.apdb.cli import cli
+from lsst.dax.apdb.cli import apdb_cli
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
@@ -46,7 +46,7 @@ class CreateSqlTestCase(unittest.TestCase):
     def test_create_sql(self) -> None:
         """Create SQLite APDB instance and config file for it."""
         args = ["create-sql", "--schema-file", TEST_SCHEMA, self.db_url, self.config_path]
-        cli.cli(args)
+        apdb_cli.main(args)
         self.assertTrue(os.path.exists(f"{self.tempdir}/apdb.sqlite3"))
         self.assertTrue(os.path.exists(self.config_path))
 
