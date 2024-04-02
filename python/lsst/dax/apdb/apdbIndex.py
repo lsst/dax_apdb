@@ -56,7 +56,7 @@ class ApdbIndex:
        "prod/pex_config": "s3://bucket/apdb-prod.py"
        "prod/yaml": "s3://bucket/apdb-prod.yaml"
 
-    The labels in the index file consists of the label name and an option
+    The labels in the index file consists of the label name and an optional
     format name separated from label by slash. `get_apdb_uri` method can
     use its ``format`` argument to return either a format-specific
     configuration or a label-only configuration if format-specific is not
@@ -174,7 +174,7 @@ class ApdbIndex:
         Returns
         -------
         entries : `~collections.abc.Mapping` [`str`, `str`]
-            All known entries. Can be empty if no index can be found.
+            All known index entries.
 
         Raises
         ------
