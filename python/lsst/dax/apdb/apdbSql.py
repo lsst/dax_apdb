@@ -333,6 +333,94 @@ class ApdbSql(Apdb):
         # Docstring inherited from base class.
         return VERSION
 
+    @classmethod
+    def init_database(
+        cls,
+        db_url: str,
+        *,
+        schema_file: str | None = None,
+        schema_name: str | None = None,
+        read_sources_months: int | None = None,
+        read_forced_sources_months: int | None = None,
+        use_insert_id: bool = False,
+        connection_timeout: int | None = None,
+        dia_object_index: str | None = None,
+        htm_level: int | None = None,
+        htm_index_column: str | None = None,
+        ra_dec_columns: list[str] | None = None,
+        prefix: str | None = None,
+        namespace: str | None = None,
+        drop: bool = False,
+    ) -> ApdbSqlConfig:
+        """Initialize new APDB instance and make configuration object for it.
+
+        Parameters
+        ----------
+        db_url : `str`
+            SQLAlchemy database URL.
+        schema_file : `str`, optional
+            Location of (YAML) configuration file with APDB schema. If not
+            specified then default location will be used.
+        schema_name : str | None
+            Name of the schema in YAML configuration file. If not specified
+            then default name will be used.
+        read_sources_months : `int`, optional
+            Number of months of history to read from DiaSource.
+        read_forced_sources_months : `int`, optional
+            Number of months of history to read from DiaForcedSource.
+        use_insert_id : `bool`
+            If True, make additional tables used for replication to PPDB.
+        connection_timeout : `int`, optional
+            Database connection timeout in seconds.
+        dia_object_index : `str`, optional
+            Indexing mode for DiaObject table.
+        htm_level : `int`, optional
+            HTM indexing level.
+        htm_index_column : `str`, optional
+            Name of a HTM index column for DiaObject and DiaSource tables.
+        ra_dec_columns : `list` [`str`], optional
+            Names of ra/dec columns in DiaObject table.
+        prefix : `str`, optional
+            Optional prefix for all table names.
+        namespace : `str`, optional
+            Name of the database schema for all APDB tables. If not specified
+            then default schema is used.
+        drop : `bool`, optional
+            If `True` then drop existing tables before re-creating the schema.
+
+        Returns
+        -------
+        config : `ApdbSqlConfig`
+            Resulting configuration object for a created APDB instance.
+        """
+        config = ApdbSqlConfig(db_url=db_url, use_insert_id=use_insert_id)
+        if schema_file is not None:
+            config.schema_file = schema_file
+        if schema_name is not None:
+            config.schema_name = schema_name
+        if read_sources_months is not None:
+            config.read_sources_months = read_sources_months
+        if read_forced_sources_months is not None:
+            config.read_forced_sources_months = read_forced_sources_months
+        if connection_timeout is not None:
+            config.connection_timeout = connection_timeout
+        if dia_object_index is not None:
+            config.dia_object_index = dia_object_index
+        if htm_level is not None:
+            config.htm_level = htm_level
+        if htm_index_column is not None:
+            config.htm_index_column = htm_index_column
+        if ra_dec_columns is not None:
+            config.ra_dec_columns = ra_dec_columns
+        if prefix is not None:
+            config.prefix = prefix
+        if namespace is not None:
+            config.namespace = namespace
+
+        cls._makeSchema(config, drop=drop)
+
+        return config
+
     def apdbSchemaVersion(self) -> VersionTuple:
         # Docstring inherited from base class.
         return self._schema.schemaVersion()
@@ -366,7 +454,7 @@ class ApdbSql(Apdb):
         return self._schema.tableSchemas.get(table)
 
     @classmethod
-    def makeSchema(cls, config: ApdbConfig, drop: bool = False) -> None:
+    def _makeSchema(cls, config: ApdbConfig, drop: bool = False) -> None:
         # docstring is inherited from a base class
 
         if not isinstance(config, ApdbSqlConfig):

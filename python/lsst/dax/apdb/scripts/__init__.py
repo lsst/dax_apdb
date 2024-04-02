@@ -1,8 +1,8 @@
-# This file is part of dax_apdb.
+# This file is part of dax_apdb
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
-# (http://www.lsst.org).
+# (https://www.lsst.org).
 # See the COPYRIGHT file at the top-level directory of this distribution
 # for details of code ownership.
 #
@@ -17,12 +17,8 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from .apdb import *
-from .apdbCassandra import *
-from .apdbMetadata import *
-from .apdbSchema import ApdbTables
-from .apdbSql import *
-from .version import *
-from .versionTuple import *
+from .create_cassandra import create_cassandra
+from .create_sql import create_sql
+from .list_index import list_index

@@ -1,8 +1,8 @@
-# This file is part of dax_apdb.
+# This file is part of dax_apdb
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
-# (http://www.lsst.org).
+# (https://www.lsst.org).
 # See the COPYRIGHT file at the top-level directory of this distribution
 # for details of code ownership.
 #
@@ -17,12 +17,24 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from .apdb import *
-from .apdbCassandra import *
-from .apdbMetadata import *
-from .apdbSchema import ApdbTables
-from .apdbSql import *
-from .version import *
-from .versionTuple import *
+from __future__ import annotations
+
+__all__ = ["list_index"]
+
+from ..apdbIndex import ApdbIndex
+
+
+def list_index(index_path: str | None) -> None:
+    """List contents of APDB index file.
+
+    Parameters
+    ----------
+    index_path : `str`, optional
+        Location of index file, if missing then $DAX_APDB_INDEX_URI is used.
+    """
+    index = ApdbIndex(index_path)
+    entries = index.get_entries()
+    for label, uri in sorted(entries.items()):
+        print(f"{label}: {uri}")

@@ -436,7 +436,143 @@ class ApdbCassandra(Apdb):
         return self._schema.tableSchemas.get(table)
 
     @classmethod
-    def makeSchema(cls, config: ApdbConfig, *, drop: bool = False) -> None:
+    def init_database(
+        cls,
+        hosts: list[str],
+        keyspace: str,
+        *,
+        schema_file: str | None = None,
+        schema_name: str | None = None,
+        read_sources_months: int | None = None,
+        read_forced_sources_months: int | None = None,
+        use_insert_id: bool = False,
+        use_insert_id_skips_diaobjects: bool = False,
+        port: int | None = None,
+        username: str | None = None,
+        prefix: str | None = None,
+        part_pixelization: str | None = None,
+        part_pix_level: int | None = None,
+        time_partition_tables: bool = True,
+        time_partition_start: str | None = None,
+        time_partition_end: str | None = None,
+        read_consistency: str | None = None,
+        write_consistency: str | None = None,
+        read_timeout: int | None = None,
+        write_timeout: int | None = None,
+        ra_dec_columns: list[str] | None = None,
+        replication_factor: int | None = None,
+        drop: bool = False,
+    ) -> ApdbCassandraConfig:
+        """Initialize new APDB instance and make configuration object for it.
+
+        Parameters
+        ----------
+        hosts : `list` [`str`]
+            List of host names or IP addresses for Cassandra cluster.
+        keyspace : `str`
+            Name of the keyspace for APDB tables.
+        schema_file : `str`, optional
+            Location of (YAML) configuration file with APDB schema. If not
+            specified then default location will be used.
+        schema_name : `str`, optional
+            Name of the schema in YAML configuration file. If not specified
+            then default name will be used.
+        read_sources_months : `int`, optional
+            Number of months of history to read from DiaSource.
+        read_forced_sources_months : `int`, optional
+            Number of months of history to read from DiaForcedSource.
+        use_insert_id : `bool`, optional
+            If True, make additional tables used for replication to PPDB.
+        use_insert_id_skips_diaobjects : `bool`, optional
+            If `True` then do not fill regular ``DiaObject`` table when
+            ``use_insert_id`` is `True`.
+        port : `int`, optional
+            Port number to use for Cassandra connections.
+        username : `str`, optional
+            User name for Cassandra connections.
+        prefix : `str`, optional
+            Optional prefix for all table names.
+        part_pixelization : `str`, optional
+            Name of the MOC pixelization used for partitioning.
+        part_pix_level : `int`, optional
+            Pixelization level.
+        time_partition_tables : `bool`, optional
+            Create per-partition tables.
+        time_partition_start : `str`, optional
+            Starting time for per-partition tables, in yyyy-mm-ddThh:mm:ss
+            format, in TAI.
+        time_partition_end : `str`, optional
+            Ending time for per-partition tables, in yyyy-mm-ddThh:mm:ss
+            format, in TAI.
+        read_consistency : `str`, optional
+            Name of the consistency level for read operations.
+        write_consistency : `str`, optional
+            Name of the consistency level for write operations.
+        read_timeout : `int`, optional
+            Read timeout in seconds.
+        write_timeout : `int`, optional
+            Write timeout in seconds.
+        ra_dec_columns : `list` [`str`], optional
+            Names of ra/dec columns in DiaObject table.
+        replication_factor : `int`, optional
+            Replication factor used when creating new keyspace, if keyspace
+            already exists its replication factor is not changed.
+        drop : `bool`, optional
+            If `True` then drop existing tables before re-creating the schema.
+
+        Returns
+        -------
+        config : `ApdbCassandraConfig`
+            Resulting configuration object for a created APDB instance.
+        """
+        config = ApdbCassandraConfig(
+            contact_points=hosts,
+            keyspace=keyspace,
+            use_insert_id=use_insert_id,
+            use_insert_id_skips_diaobjects=use_insert_id_skips_diaobjects,
+            time_partition_tables=time_partition_tables,
+        )
+        if schema_file is not None:
+            config.schema_file = schema_file
+        if schema_name is not None:
+            config.schema_name = schema_name
+        if read_sources_months is not None:
+            config.read_sources_months = read_sources_months
+        if read_forced_sources_months is not None:
+            config.read_forced_sources_months = read_forced_sources_months
+        if port is not None:
+            config.port = port
+        if username is not None:
+            config.username = username
+        if prefix is not None:
+            config.prefix = prefix
+        if part_pixelization is not None:
+            config.part_pixelization = part_pixelization
+        if part_pix_level is not None:
+            config.part_pix_level = part_pix_level
+        if time_partition_start is not None:
+            config.time_partition_start = time_partition_start
+        if time_partition_end is not None:
+            config.time_partition_end = time_partition_end
+        if read_consistency is not None:
+            config.read_consistency = read_consistency
+        if write_consistency is not None:
+            config.write_consistency = write_consistency
+        if read_timeout is not None:
+            config.read_timeout = read_timeout
+        if write_timeout is not None:
+            config.write_timeout = write_timeout
+        if ra_dec_columns is not None:
+            config.ra_dec_columns = ra_dec_columns
+
+        cls._makeSchema(config, drop=drop, replication_factor=replication_factor)
+
+        return config
+
+    @classmethod
+    def _makeSchema(
+        cls, config: ApdbConfig, *, drop: bool = False, replication_factor: int | None = None
+    ) -> None:
         # docstring is inherited from a base class
 
         if not isinstance(config, ApdbCassandraConfig):
@@ -464,9 +600,9 @@ class ApdbCassandra(Apdb):
                 cls._time_partition_cls(time_partition_start, part_epoch, part_days),
                 cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
             )
-            schema.makeSchema(drop=drop, part_range=part_range)
+            schema.makeSchema(drop=drop, part_range=part_range, replication_factor=replication_factor)
         else:
-            schema.makeSchema(drop=drop)
+            schema.makeSchema(drop=drop, replication_factor=replication_factor)
 
         meta_table_name = ApdbTables.metadata.table_name(config.prefix)
         metadata = ApdbMetadataCassandra(session, meta_table_name, config.keyspace, "read_tuples", "write")

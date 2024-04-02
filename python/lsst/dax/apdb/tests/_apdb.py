@@ -25,6 +25,7 @@ __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
 import os
+import tempfile
 import unittest
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -43,7 +44,6 @@ from lsst.dax.apdb import (
     ApdbTables,
     IncompatibleVersionError,
     VersionTuple,
-    make_apdb,
 )
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
@@ -131,6 +131,9 @@ class ApdbTest(TestCaseMixin, ABC):
     allow_visit_query: bool = True
     """Set to true when contains is implemented"""
 
+    schema_path: str
+    """Location of the Felis schema file."""
+
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
         ApdbTables.DiaObject: 8,
@@ -141,8 +144,8 @@ class ApdbTest(TestCaseMixin, ABC):
     }
 
     @abstractmethod
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
-        """Make config class instance used in all tests."""
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
+        """Make database instance and return configuration for it."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -188,9 +191,19 @@ class ApdbTest(TestCaseMixin, ABC):
 
     def test_makeSchema(self) -> None:
         """Test for making APDB schema."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.metadata))
+
+        # Test from_uri factory method with the same config.
+        with tempfile.NamedTemporaryFile() as tmpfile:
+            config.save(tmpfile.name)
+            apdb = Apdb.from_uri(tmpfile.name)
 
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObject))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaObjectLast))
@@ -205,9 +218,8 @@ class ApdbTest(TestCaseMixin, ABC):
         checking that code is not broken.
         """
         # use non-zero months for Forced/Source fetching
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         visit_time = self.visit_time
@@ -264,9 +276,8 @@ class ApdbTest(TestCaseMixin, ABC):
         All get() methods should return empty DataFrame or None.
         """
         # set read_sources_months to 0 so that Forced/Sources are None
-        config = self.make_config(read_sources_months=0, read_forced_sources_months=0)
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance(read_sources_months=0, read_forced_sources_months=0)
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         visit_time = self.visit_time
@@ -305,9 +316,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_storeObjects(self) -> None:
         """Store and retrieve DiaObjects."""
         # don't care about sources.
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         visit_time = self.visit_time
@@ -326,23 +336,21 @@ class ApdbTest(TestCaseMixin, ABC):
 
     def test_storeObjects_empty(self) -> None:
         """Test calling storeObject when there are no objects: see DM-43270."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
         region = _make_region()
         visit_time = self.visit_time
         # make catalog with no Objects
         catalog = makeObjectCatalog(region, 0, visit_time)
 
-        with self.assertLogs("lsst.dax.apdb.apdbSql", level="DEBUG") as cm:
+        with self.assertLogs("lsst.dax.apdb", level="DEBUG") as cm:
             apdb.store(visit_time, catalog)
         self.assertIn("No objects", "\n".join(cm.output))
 
     def test_storeSources(self) -> None:
         """Store and retrieve DiaSources."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         visit_time = self.visit_time
@@ -385,9 +393,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
     def test_storeForcedSources(self) -> None:
         """Store and retrieve DiaForcedSources."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         visit_time = self.visit_time
@@ -419,9 +426,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_getHistory(self) -> None:
         """Store and retrieve catalog history."""
         # don't care about sources.
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
         visit_time = self.visit_time
 
         region1 = _make_region((1.0, 1.0, -1.0))
@@ -492,9 +498,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_storeSSObjects(self) -> None:
         """Store and retrieve SSObjects."""
         # don't care about sources.
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         # make catalog with SSObjects
         catalog = makeSSObjectCatalog(100, flags=1)
@@ -517,9 +522,8 @@ class ApdbTest(TestCaseMixin, ABC):
     def test_reassignObjects(self) -> None:
         """Reassign DiaObjects."""
         # don't care about sources.
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         visit_time = self.visit_time
@@ -550,9 +554,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
     def test_midpointMjdTai_src(self) -> None:
         """Test for time filtering of DiaSources."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         # 2021-01-01 plus 360 days is 2021-12-27
@@ -588,9 +591,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
     def test_midpointMjdTai_fsrc(self) -> None:
         """Test for time filtering of DiaForcedSources."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         region = _make_region()
         src_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
@@ -625,9 +627,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
     def test_metadata(self) -> None:
         """Simple test for writing/reading metadata table"""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
         metadata = apdb.metadata
 
         # APDB should write two metadata items with version numbers and a
@@ -656,12 +657,10 @@ class ApdbTest(TestCaseMixin, ABC):
 
     def test_nometadata(self) -> None:
         """Test case for when metadata table is missing"""
-        config = self.make_config()
         # We expect that schema includes metadata table, drop it.
-        with update_schema_yaml(config.schema_file, drop_metadata=True) as schema_file:
-            config_nometa = self.make_config(schema_file=schema_file)
-            Apdb.makeSchema(config_nometa)
-            apdb = make_apdb(config_nometa)
+        with update_schema_yaml(self.schema_path, drop_metadata=True) as schema_file:
+            config = self.make_instance(schema_file=schema_file)
+            apdb = Apdb.from_config(config)
             metadata = apdb.metadata
 
             self.assertTrue(metadata.empty())
@@ -676,36 +675,36 @@ class ApdbTest(TestCaseMixin, ABC):
         # database is missing it. Database was initialized inside above context
         # without metadata table, here we use schema config which includes
         # metadata table.
-        apdb = make_apdb(config)
+        config.schema_file = self.schema_path
+        apdb = Apdb.from_config(config)
         metadata = apdb.metadata
         self.assertTrue(metadata.empty())
 
     def test_schemaVersionFromYaml(self) -> None:
         """Check version number handling for reading schema from YAML."""
-        config = self.make_config()
+        config = self.make_instance()
         default_schema = config.schema_file
-        apdb = make_apdb(config)
+        apdb = Apdb.from_config(config)
         self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
 
         with update_schema_yaml(default_schema, version="") as schema_file:
-            config = self.make_config(schema_file=schema_file)
-            apdb = make_apdb(config)
+            config = self.make_instance(schema_file=schema_file)
+            apdb = Apdb.from_config(config)
             self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 0))
 
         with update_schema_yaml(default_schema, version="99.0.0") as schema_file:
-            config = self.make_config(schema_file=schema_file)
-            apdb = make_apdb(config)
+            config = self.make_instance(schema_file=schema_file)
+            apdb = Apdb.from_config(config)
             self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(99, 0, 0))
 
     def test_config_freeze(self) -> None:
         """Test that some config fields are correctly frozen in database."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
+        config = self.make_instance()
 
         # `use_insert_id` is the only parameter that is frozen in all
         # implementations.
         config.use_insert_id = not self.use_insert_id
-        apdb = make_apdb(config)
+        apdb = Apdb.from_config(config)
         frozen_config = apdb.config  # type: ignore[attr-defined]
         self.assertEqual(frozen_config.use_insert_id, self.use_insert_id)
 
@@ -716,7 +715,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
     visit_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
 
     @abstractmethod
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests.
 
         This method should return configuration that point to the identical
@@ -730,13 +729,12 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         tables.
         """
         # Make schema without history tables.
-        config = self.make_config(use_insert_id=False)
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance(use_insert_id=False)
+        apdb = Apdb.from_config(config)
 
         # Make APDB instance configured for history tables.
-        config = self.make_config(use_insert_id=True)
-        apdb = make_apdb(config)
+        config.use_insert_id = True
+        apdb = Apdb.from_config(config)
 
         # Try to insert something, should work OK.
         region = _make_region()
@@ -754,14 +752,13 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
 
     def test_schemaVersionCheck(self) -> None:
         """Check version number compatibility."""
-        config = self.make_config()
-        Apdb.makeSchema(config)
-        apdb = make_apdb(config)
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
 
         self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
 
         # Claim that schema version is now 99.0.0, must raise an exception.
         with update_schema_yaml(config.schema_file, version="99.0.0") as schema_file:
-            config = self.make_config(schema_file=schema_file)
+            config.schema_file = schema_file
             with self.assertRaises(IncompatibleVersionError):
-                apdb = make_apdb(config)
+                apdb = Apdb.from_config(config)

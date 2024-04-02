@@ -28,9 +28,10 @@ import shutil
 import tempfile
 import unittest
 from typing import Any
+from unittest.mock import patch
 
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbConfig, ApdbSqlConfig, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbSql, ApdbTables
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 try:
@@ -47,12 +48,16 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
     fsrc_requires_id_list = True
     dia_object_index = "baseline"
     allow_visit_query = False
+    schema_path = TEST_SCHEMA
 
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
         self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tempdir, ignore_errors=True)
+
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
             "db_url": self.db_url,
@@ -61,7 +66,7 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
             "use_insert_id": self.use_insert_id,
         }
         kw.update(kwargs)
-        return ApdbSqlConfig(**kw)
+        return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
@@ -103,6 +108,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     postgresql: Any
     use_insert_id = True
     allow_visit_query = False
+    schema_path = TEST_SCHEMA
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -124,7 +130,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     def tearDown(self) -> None:
         self.server = self.postgresql()
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
             "db_url": self.server.url(),
@@ -133,7 +139,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
             "use_insert_id": self.use_insert_id,
         }
         kw.update(kwargs)
-        return ApdbSqlConfig(**kw)
+        return ApdbSql.init_database(**kw)
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
@@ -147,9 +153,9 @@ class ApdbPostgresNamespaceTestCase(ApdbPostgresTestCase):
     # use mixed case to trigger quoting
     namespace = "ApdbSchema"
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
-        return super().make_config(namespace=self.namespace, **kwargs)
+        return super().make_instance(namespace=self.namespace, **kwargs)
 
 
 class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
@@ -162,14 +168,78 @@ class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.tempdir, ignore_errors=True)
 
-    def make_config(self, **kwargs: Any) -> ApdbConfig:
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
             "db_url": self.db_url,
             "schema_file": TEST_SCHEMA,
         }
         kw.update(kwargs)
-        return ApdbSqlConfig(**kw)
+        return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
+
+
+class ApdbSQLiteFromUriTestCase(unittest.TestCase):
+    """A test case for for instantiating ApdbSql via URI."""
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tempdir, ignore_errors=True)
+        self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
+        config = ApdbSql.init_database(db_url=self.db_url, schema_file=TEST_SCHEMA)
+        # TODO: This will need update when we switch to pydantic configs.
+        self.config_path = os.path.join(self.tempdir, "apdb-config.py")
+        config.save(self.config_path)
+        self.bad_config_path = os.path.join(self.tempdir, "not-config.py")
+        self.index_path = os.path.join(self.tempdir, "apdb-index.yaml")
+        with open(self.index_path, "w") as index_file:
+            print(f'label1: "{self.config_path}"', file=index_file)
+            print(f'"label2/pex_config": "{self.config_path}"', file=index_file)
+            print(f'bad-label: "{self.bad_config_path}"', file=index_file)
+        # File with incorrect format.
+        self.bad_index_path = os.path.join(self.tempdir, "apdb-index-bad.yaml")
+        with open(self.bad_index_path, "w") as index_file:
+            print(f'label1: ["{self.config_path}"]', file=index_file)
+        self.missing_index_path = os.path.join(self.tempdir, "no-apdb-index.yaml")
+
+    def test_make_apdb_from_path(self) -> None:
+        """Check that we can make APDB instance from config URI."""
+        Apdb.from_uri(self.config_path)
+        with self.assertRaises(FileNotFoundError):
+            Apdb.from_uri(self.bad_config_path)
+
+    def test_make_apdb_from_labels(self) -> None:
+        """Check that we can make APDB instance from config URI."""
+        # Replace DAX_APDB_INDEX_URI value
+        new_env = {"DAX_APDB_INDEX_URI": self.index_path}
+        with patch.dict(os.environ, new_env, clear=True):
+            Apdb.from_uri("label:label1")
+            Apdb.from_uri("label:label2")
+            # Label does not exist.
+            with self.assertRaises(ValueError):
+                Apdb.from_uri("label:not-a-label")
+            # Label exists but points to a missing config.
+            with self.assertRaises(FileNotFoundError):
+                Apdb.from_uri("label:bad-label")
+
+    def test_make_apdb_bad_index(self) -> None:
+        """Check what happens when DAX_APDB_INDEX_URI is broken."""
+        # envvar is set but empty.
+        new_env = {"DAX_APDB_INDEX_URI": ""}
+        with patch.dict(os.environ, new_env, clear=True):
+            with self.assertRaises(RuntimeError):
+                Apdb.from_uri("label:label")
+
+        # envvar is set to something non-existing.
+        new_env = {"DAX_APDB_INDEX_URI": self.missing_index_path}
+        with patch.dict(os.environ, new_env, clear=True):
+            with self.assertRaises(FileNotFoundError):
+                Apdb.from_uri("label:label")
+
+        # envvar points to an incorrect file.
+        new_env = {"DAX_APDB_INDEX_URI": self.bad_index_path}
+        with patch.dict(os.environ, new_env, clear=True):
+            with self.assertRaises(TypeError):
+                Apdb.from_uri("label:label")
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
