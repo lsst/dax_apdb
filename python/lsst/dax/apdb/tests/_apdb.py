@@ -39,6 +39,7 @@ from lsst.dax.apdb import (
     Apdb,
     ApdbConfig,
     ApdbInsertId,
+    ApdbReplica,
     ApdbSql,
     ApdbTableData,
     ApdbTables,
@@ -428,6 +429,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # don't care about sources.
         config = self.make_instance()
         apdb = Apdb.from_config(config)
+        apdb_replica = ApdbReplica.from_config(config)
         visit_time = self.visit_time
 
         region1 = _make_region((1.0, 1.0, -1.0))
@@ -454,12 +456,12 @@ class ApdbTest(TestCaseMixin, ABC):
             apdb.store(visit_time, objects, sources, fsources)
             start_id += nobj
 
-        insert_ids = apdb.getInsertIds()
+        insert_ids = apdb_replica.getInsertIds()
         if not self.use_insert_id:
             self.assertIsNone(insert_ids)
 
             with self.assertRaisesRegex(ValueError, "APDB is not configured for history retrieval"):
-                apdb.getDiaObjectsHistory([])
+                apdb_replica.getDiaObjectsHistory([])
 
         else:
             assert insert_ids is not None
@@ -468,11 +470,11 @@ class ApdbTest(TestCaseMixin, ABC):
             def _check_history(insert_ids: list[ApdbInsertId], n_records: int | None = None) -> None:
                 if n_records is None:
                     n_records = len(insert_ids) * nobj
-                res = apdb.getDiaObjectsHistory(insert_ids)
+                res = apdb_replica.getDiaObjectsHistory(insert_ids)
                 self.assert_table_data(res, n_records, ApdbTables.DiaObject)
-                res = apdb.getDiaSourcesHistory(insert_ids)
+                res = apdb_replica.getDiaSourcesHistory(insert_ids)
                 self.assert_table_data(res, n_records, ApdbTables.DiaSource)
-                res = apdb.getDiaForcedSourcesHistory(insert_ids)
+                res = apdb_replica.getDiaForcedSourcesHistory(insert_ids)
                 self.assert_table_data(res, n_records, ApdbTables.DiaForcedSource)
 
             # read it back and check sizes
@@ -484,12 +486,12 @@ class ApdbTest(TestCaseMixin, ABC):
 
             # try to remove some of those
             deleted_ids = insert_ids[:2]
-            apdb.deleteInsertIds(deleted_ids)
+            apdb_replica.deleteInsertIds(deleted_ids)
 
             # All queries on deleted ids should return empty set.
             _check_history(deleted_ids, 0)
 
-            insert_ids = apdb.getInsertIds()
+            insert_ids = apdb_replica.getInsertIds()
             assert insert_ids is not None
             self.assertEqual(len(insert_ids), 6)
 
@@ -731,6 +733,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         # Make schema without history tables.
         config = self.make_instance(use_insert_id=False)
         apdb = Apdb.from_config(config)
+        apdb_replica = ApdbReplica.from_config(config)
 
         # Make APDB instance configured for history tables.
         config.use_insert_id = True
@@ -747,7 +750,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         apdb.store(visit_time, objects, sources, fsources)
 
         # There should be no history.
-        insert_ids = apdb.getInsertIds()
+        insert_ids = apdb_replica.getInsertIds()
         self.assertIsNone(insert_ids)
 
     def test_schemaVersionCheck(self) -> None:

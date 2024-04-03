@@ -21,14 +21,12 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbConfig", "Apdb", "ApdbInsertId", "ApdbTableData"]
+__all__ = ["ApdbConfig", "Apdb"]
 
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
-from uuid import UUID, uuid4
 
 import astropy.time
 import pandas
@@ -78,53 +76,10 @@ class ApdbConfig(Config):
         ),
         default=False,
     )
-
-
-class ApdbTableData(ABC):
-    """Abstract class for representing table data."""
-
-    @abstractmethod
-    def column_names(self) -> list[str]:
-        """Return ordered sequence of column names in the table.
-
-        Returns
-        -------
-        names : `list` [`str`]
-            Column names.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def rows(self) -> Iterable[tuple]:
-        """Return table rows, each row is a tuple of values.
-
-        Returns
-        -------
-        rows : `iterable` [`tuple`]
-            Iterable of tuples.
-        """
-        raise NotImplementedError()
-
-
-@dataclass(frozen=True)
-class ApdbInsertId:
-    """Class used to identify single insert operation.
-
-    Instances of this class are used to identify the units of transfer from
-    APDB to PPDB. Usually single `ApdbInsertId` corresponds to a single call to
-    `store` method.
-    """
-
-    id: UUID
-    insert_time: astropy.time.Time
-    """Time of this insert, usually corresponds to visit time
-    (`astropy.time.Time`).
-    """
-
-    @classmethod
-    def new_insert_id(cls, insert_time: astropy.time.Time) -> ApdbInsertId:
-        """Generate new unique insert identifier."""
-        return ApdbInsertId(id=uuid4(), insert_time=insert_time)
+    replica_chunk_seconds = Field[int](
+        default=600,
+        doc="Time extent for replica chunks, new chunks are created every specified number of seconds.",
+    )
 
 
 class Apdb(ABC):
@@ -335,106 +290,6 @@ class Apdb(ABC):
         present : `bool`
             `True` if some DiaObject, DiaSource, or DiaForcedSource records
             exist for the specified observation, `False` otherwise.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def getInsertIds(self) -> list[ApdbInsertId] | None:
-        """Return collection of insert identifiers known to the database.
-
-        Returns
-        -------
-        ids : `list` [`ApdbInsertId`] or `None`
-            List of identifiers, they may be time-ordered if database supports
-            ordering. `None` is returned if database is not configured to store
-            insert identifiers.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
-        """Remove insert identifiers from the database.
-
-        Parameters
-        ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
-
-        Notes
-        -----
-        This method causes Apdb to forget about specified identifiers. If there
-        are any auxiliary data associated with the identifiers, it is also
-        removed from database (but data in regular tables is not removed).
-        This method should be called after successful transfer of data from
-        APDB to PPDB to free space used by history.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Return catalog of DiaObject instances from a given time period
-        including the history of each DiaObject.
-
-        Parameters
-        ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
-
-        Returns
-        -------
-        data : `ApdbTableData`
-            Catalog containing DiaObject records. In addition to all regular
-            columns it will contain ``insert_id`` column.
-
-        Notes
-        -----
-        This part of API may not be very stable and can change before the
-        implementation finalizes.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Return catalog of DiaSource instances from a given time period.
-
-        Parameters
-        ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
-
-        Returns
-        -------
-        data : `ApdbTableData`
-            Catalog containing DiaSource records. In addition to all regular
-            columns it will contain ``insert_id`` column.
-
-        Notes
-        -----
-        This part of API may not be very stable and can change before the
-        implementation finalizes.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Return catalog of DiaForcedSource instances from a given time
-        period.
-
-        Parameters
-        ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
-
-        Returns
-        -------
-        data : `ApdbTableData`
-            Catalog containing DiaForcedSource records. In addition to all
-            regular columns it will contain ``insert_id`` column.
-
-        Notes
-        -----
-        This part of API may not be very stable and can change before the
-        implementation finalizes.
         """
         raise NotImplementedError()
 

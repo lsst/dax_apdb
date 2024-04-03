@@ -54,13 +54,14 @@ from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
 
-from .apdb import Apdb, ApdbConfig, ApdbInsertId, ApdbTableData
+from .apdb import Apdb, ApdbConfig
+from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
 from .apdbConfigFreezer import ApdbConfigFreezer
 from .apdbMetadataCassandra import ApdbMetadataCassandra
+from .apdbReplica import ApdbInsertId
 from .apdbSchema import ApdbTables
 from .cassandra_utils import (
-    ApdbCassandraTableData,
     PreparedStatementCache,
     literal,
     pandas_dataframe_factory,
@@ -78,8 +79,15 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 VERSION = VersionTuple(0, 1, 0)
-"""Version for the code defined in this module. This needs to be updated
-(following compatibility rules) when schema produced by this code changes.
+"""Version for the code controlling non-replication tables. This needs to be
+updated following compatibility rules when schema produced by this code
+changes.
+"""
+
+REPLICA_VERSION = VersionTuple(0, 1, 0)
+"""Version for the code controlling replication tables. This needs to be
+updated following compatibility rules when schema produced by this code
+changes.
 """
 
 # Copied from daf_butler.
@@ -427,6 +435,11 @@ class ApdbCassandra(Apdb):
         # Docstring inherited from base class.
         return VERSION
 
+    @classmethod
+    def apdbReplicaImplementationVersion(cls) -> VersionTuple:
+        # Docstring inherited from base class.
+        return REPLICA_VERSION
+
     def apdbSchemaVersion(self) -> VersionTuple:
         # Docstring inherited from base class.
         return self._schema.schemaVersion()
@@ -569,6 +582,12 @@ class ApdbCassandra(Apdb):
 
         return config
 
+    def get_replica(self) -> ApdbCassandraReplica:
+        """Return `ApdbReplica` instance for this database."""
+        # Note that this instance has to stay alive while replica exists, so
+        # we pass reference to self.
+        return ApdbCassandraReplica(self, self._schema, self._session)
+
     @classmethod
     def _makeSchema(
         cls, config: ApdbConfig, *, drop: bool = False, replication_factor: int | None = None
@@ -681,81 +700,6 @@ class ApdbCassandra(Apdb):
     def containsVisitDetector(self, visit: int, detector: int) -> bool:
         # docstring is inherited from a base class
         raise NotImplementedError()
-
-    def getInsertIds(self) -> list[ApdbInsertId] | None:
-        # docstring is inherited from a base class
-        if not self._schema.has_insert_id:
-            return None
-
-        # everything goes into a single partition
-        partition = 0
-
-        table_name = self._schema.tableName(ExtraTables.DiaInsertId)
-        query = f'SELECT insert_time, insert_id FROM "{self._keyspace}"."{table_name}" WHERE partition = ?'
-
-        result = self._session.execute(
-            self._preparer.prepare(query),
-            (partition,),
-            timeout=self.config.read_timeout,
-            execution_profile="read_tuples",
-        )
-        # order by insert_time
-        rows = sorted(result)
-        return [
-            ApdbInsertId(id=row[1], insert_time=astropy.time.Time(row[0].timestamp(), format="unix_tai"))
-            for row in rows
-        ]
-
-    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
-        # docstring is inherited from a base class
-        if not self._schema.has_insert_id:
-            raise ValueError("APDB is not configured for history storage")
-
-        all_insert_ids = [id.id for id in ids]
-        # There is 64k limit on number of markers in Cassandra CQL
-        for insert_ids in chunk_iterable(all_insert_ids, 20_000):
-            params = ",".join("?" * len(insert_ids))
-
-            # everything goes into a single partition
-            partition = 0
-
-            table_name = self._schema.tableName(ExtraTables.DiaInsertId)
-            query = (
-                f'DELETE FROM "{self._keyspace}"."{table_name}" '
-                f"WHERE partition = ? AND insert_id IN ({params})"
-            )
-
-            self._session.execute(
-                self._preparer.prepare(query),
-                [partition] + list(insert_ids),
-                timeout=self.config.remove_timeout,
-            )
-
-            # Also remove those insert_ids from Dia*InsertId tables.abs
-            for table in (
-                ExtraTables.DiaObjectInsertId,
-                ExtraTables.DiaSourceInsertId,
-                ExtraTables.DiaForcedSourceInsertId,
-            ):
-                table_name = self._schema.tableName(table)
-                query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
-                self._session.execute(
-                    self._preparer.prepare(query),
-                    insert_ids,
-                    timeout=self.config.remove_timeout,
-                )
-
-    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_history(ExtraTables.DiaObjectInsertId, ids)
-
-    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_history(ExtraTables.DiaSourceInsertId, ids)
-
-    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_history(ExtraTables.DiaForcedSourceInsertId, ids)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -871,7 +815,7 @@ class ApdbCassandra(Apdb):
             # potential race with concurrent removal of insert IDs, but it
             # should be handled by WHERE in UPDATE.
             known_ids = set()
-            if insert_ids := self.getInsertIds():
+            if insert_ids := self.get_replica().getInsertIds():
                 known_ids = set(insert_id.id for insert_id in insert_ids)
             id2insert_id = {key: value for key, value in id2insert_id.items() if value in known_ids}
             if id2insert_id:
@@ -1033,26 +977,6 @@ class ApdbCassandra(Apdb):
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
-
-    def _get_history(self, table: ExtraTables, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Return records from a particular table given set of insert IDs."""
-        if not self._schema.has_insert_id:
-            raise ValueError("APDB is not configured for history retrieval")
-
-        insert_ids = [id.id for id in ids]
-        params = ",".join("?" * len(insert_ids))
-
-        table_name = self._schema.tableName(table)
-        # I know that history table schema has only regular APDB columns plus
-        # an insert_id column, and this is exactly what we need to return from
-        # this method, so selecting a star is fine here.
-        query = f'SELECT * FROM "{self._keyspace}"."{table_name}" WHERE insert_id IN ({params})'
-        statement = self._preparer.prepare(query)
-
-        with Timer("DiaObject history", self.config.timer):
-            result = self._session.execute(statement, insert_ids, execution_profile="read_raw")
-            table_data = cast(ApdbCassandraTableData, result._current_rows)
-        return table_data
 
     def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: astropy.time.Time) -> None:
         # Cassandra timestamp uses milliseconds since epoch
