@@ -198,6 +198,9 @@ class ApdbSql(Apdb):
     metadataCodeVersionKey = "version:ApdbSql"
     """Name of the metadata key to store code version number."""
 
+    metadataReplicaVersionKey = "version:ApdbSqlReplica"
+    """Name of the metadata key to store replica code version number."""
+
     metadataConfigKey = "config:apdb-sql.json"
     """Name of the metadata key to store code version number."""
 
@@ -322,6 +325,16 @@ class ApdbSql(Apdb):
                 f"Current code version {self.apdbImplementationVersion()} "
                 f"is not compatible with database version {db_code_version}"
             )
+
+        # Check replica code version only if replica is enabled.
+        if self._schema.has_insert_id:
+            db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
+            code_replica_version = ApdbSqlReplica.apdbReplicaImplementationVersion()
+            if not code_replica_version.checkCompatibility(db_replica_version, True):
+                raise IncompatibleVersionError(
+                    f"Current replication code version {code_replica_version} "
+                    f"is not compatible with database version {db_replica_version}"
+                )
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
@@ -484,6 +497,13 @@ class ApdbSql(Apdb):
             # Fill version numbers, overwrite if they are already there.
             apdb_meta.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
             apdb_meta.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+            if config.use_insert_id:
+                # Only store replica code version if replcia is enabled.
+                apdb_meta.set(
+                    cls.metadataReplicaVersionKey,
+                    str(ApdbSqlReplica.apdbReplicaImplementationVersion()),
+                    force=True,
+                )
 
             # Store frozen part of a configuration in metadata.
             freezer = ApdbConfigFreezer[ApdbSqlConfig](cls._frozen_parameters)

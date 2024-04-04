@@ -273,6 +273,9 @@ class ApdbCassandra(Apdb):
     metadataCodeVersionKey = "version:ApdbCassandra"
     """Name of the metadata key to store code version number."""
 
+    metadataReplicaVersionKey = "version:ApdbCassandraReplica"
+    """Name of the metadata key to store replica code version number."""
+
     metadataConfigKey = "config:apdb-cassandra.json"
     """Name of the metadata key to store code version number."""
 
@@ -429,6 +432,16 @@ class ApdbCassandra(Apdb):
                 f"Current code version {self.apdbImplementationVersion()} "
                 f"is not compatible with database version {db_code_version}"
             )
+
+        # Check replica code version only if replica is enabled.
+        if self._schema.has_insert_id:
+            db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
+            code_replica_version = ApdbCassandraReplica.apdbReplicaImplementationVersion()
+            if not code_replica_version.checkCompatibility(db_replica_version, True):
+                raise IncompatibleVersionError(
+                    f"Current replication code version {code_replica_version} "
+                    f"is not compatible with database version {db_replica_version}"
+                )
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
@@ -630,6 +643,14 @@ class ApdbCassandra(Apdb):
         if metadata.table_exists():
             metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
             metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+            if config.use_insert_id:
+                # Only store replica code version if replica is enabled.
+                metadata.set(
+                    cls.metadataReplicaVersionKey,
+                    str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
+                    force=True,
+                )
 
             # Store frozen part of a configuration in metadata.
             freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)

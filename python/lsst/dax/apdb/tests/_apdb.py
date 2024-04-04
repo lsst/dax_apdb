@@ -633,10 +633,11 @@ class ApdbTest(TestCaseMixin, ABC):
         apdb = Apdb.from_config(config)
         metadata = apdb.metadata
 
-        # APDB should write two metadata items with version numbers and a
-        # frozen JSON config.
+        # APDB should write two or three metadata items with version numbers
+        # and a frozen JSON config.
         self.assertFalse(metadata.empty())
-        self.assertEqual(len(list(metadata.items())), 3)
+        expected_rows = 4 if self.use_insert_id else 3
+        self.assertEqual(len(list(metadata.items())), expected_rows)
 
         metadata.set("meta", "data")
         metadata.set("data", "meta")
