@@ -199,25 +199,25 @@ class ApdbSchemaTestCase(unittest.TestCase):
             self.table_column_count[ApdbTables.DiaForcedSource],
         )
 
-    def test_makeSchema_history(self) -> None:
-        """Add history_id tables."""
+    def test_makeSchema_replica(self) -> None:
+        """Add replica tables."""
         engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
             engine=engine,
             dia_object_index="last_object_table",
             htm_index_column="pixelId",
             schema_file=TEST_SCHEMA,
-            use_insert_id=True,
+            enable_replica=True,
         )
         schema.makeSchema(drop=True)
-        self._assertTable(schema.get_table(ExtraTables.DiaInsertId), "DiaInsertId", 3)
-        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaInsertId)), 3)
-        self._assertTable(schema.get_table(ExtraTables.DiaObjectInsertId), "DiaObjectInsertId", 3)
-        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaObjectInsertId)), 3)
-        self._assertTable(schema.get_table(ExtraTables.DiaSourceInsertId), "DiaSourceInsertId", 2)
-        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaSourceInsertId)), 2)
-        self._assertTable(schema.get_table(ExtraTables.DiaForcedSourceInsertId), "DiaFSourceInsertId", 3)
-        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaForcedSourceInsertId)), 3)
+        self._assertTable(schema.get_table(ExtraTables.ApdbReplicaChunks), "ApdbReplicaChunks", 3)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.ApdbReplicaChunks)), 3)
+        self._assertTable(schema.get_table(ExtraTables.DiaObjectChunks), "DiaObjectChunks", 3)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaObjectChunks)), 3)
+        self._assertTable(schema.get_table(ExtraTables.DiaSourceChunks), "DiaSourceChunks", 2)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaSourceChunks)), 2)
+        self._assertTable(schema.get_table(ExtraTables.DiaForcedSourceChunks), "DiaForcedSourceChunks", 3)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaForcedSourceChunks)), 3)
 
     def test_makeSchema_nometa(self) -> None:
         """Make schema using old yaml file without metadata table."""

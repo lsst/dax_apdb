@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbReplica", "ApdbInsertId", "ApdbTableData"]
+__all__ = ["ApdbReplica", "ReplicaChunk", "ApdbTableData"]
 
 import uuid
 from abc import ABC, abstractmethod
@@ -68,11 +68,11 @@ class ApdbTableData(ABC):
 
 
 @dataclass(frozen=True)
-class ApdbInsertId:
-    """Class used to identify single insert operation.
+class ReplicaChunk:
+    """Class used for identification of replication chunks.
 
     Instances of this class are used to identify the units of transfer from
-    APDB to PPDB. Usually single `ApdbInsertId` corresponds to multiple
+    APDB to PPDB. Usually single `ReplicaChunk` corresponds to multiple
     consecutive calls to `Apdb.store` method.
 
     Every ``store`` with the same ``id`` value will update ``unique_id`` with
@@ -80,25 +80,30 @@ class ApdbInsertId:
     """
 
     id: int
-    insert_time: astropy.time.Time
-    """Time of this insert, usually corresponds to visit time
+    """A number identifying replication chunk (`int`)."""
+
+    last_update_time: astropy.time.Time
+    """Time of last insert for this chunk, usually corresponds to visit time
     (`astropy.time.Time`).
     """
+
     unique_id: uuid.UUID
     """Unique value updated on each new store (`uuid.UUID`)."""
 
     @classmethod
-    def new_insert_id(cls, insert_time: astropy.time.Time, insert_id_period_seconds: int) -> ApdbInsertId:
+    def make_replica_chunk(
+        cls, last_update_time: astropy.time.Time, chunk_window_seconds: int
+    ) -> ReplicaChunk:
         """Generate new unique insert identifier."""
-        seconds = int(insert_time.unix_tai)
-        seconds = (seconds // insert_id_period_seconds) * insert_id_period_seconds
+        seconds = int(last_update_time.unix_tai)
+        seconds = (seconds // chunk_window_seconds) * chunk_window_seconds
         unique_id = uuid.uuid4()
-        return ApdbInsertId(id=seconds, insert_time=insert_time, unique_id=unique_id)
+        return ReplicaChunk(id=seconds, last_update_time=last_update_time, unique_id=unique_id)
 
     def __str__(self) -> str:
         class_name = self.__class__.__name__
-        time_str = str(self.insert_time.tai.isot)
-        return f"{class_name}(id={self.id:10d}, insert_time={time_str}/tai, unique_id={self.unique_id})"
+        time_str = str(self.last_update_time.tai.isot)
+        return f"{class_name}(id={self.id:10d}, last_update_time={time_str}/tai, unique_id={self.unique_id})"
 
 
 class ApdbReplica(ABC):
@@ -166,52 +171,51 @@ class ApdbReplica(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getInsertIds(self) -> list[ApdbInsertId] | None:
-        """Return collection of insert identifiers known to the database.
+    def getReplicaChunks(self) -> list[ReplicaChunk] | None:
+        """Return collection of replication chunks known to the database.
 
         Returns
         -------
-        ids : `list` [`ApdbInsertId`] or `None`
-            List of identifiers, they may be time-ordered if database supports
-            ordering. `None` is returned if database is not configured to store
-            insert identifiers.
+        chunks : `list` [`ReplicaChunk`] or `None`
+            List of chunks, they may be time-ordered if database supports
+            ordering. `None` is returned if database is not configured for
+            replication.
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
-        """Remove insert identifiers from the database.
+    def deleteReplicaChunks(self, chunks: Iterable[int]) -> None:
+        """Remove replication chunks from the database.
 
         Parameters
         ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
+        chunks : `~collections.abc.Iterable` [`int`]
+            Chunk identifiers to remove.
 
         Notes
         -----
-        This method causes Apdb to forget about specified identifiers. If there
+        This method causes Apdb to forget about specified chunks. If there
         are any auxiliary data associated with the identifiers, it is also
         removed from database (but data in regular tables is not removed).
         This method should be called after successful transfer of data from
-        APDB to PPDB to free space used by history.
+        APDB to PPDB to free space used by replicas.
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Return catalog of DiaObject records from a given time period
-        including the history of each DiaObject.
+    def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
+        """Return catalog of DiaObject records from given replica chunks.
 
         Parameters
         ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
+        chunks : `~collections.abc.Iterable` [`int`]
+            Chunk identifiers to return.
 
         Returns
         -------
         data : `ApdbTableData`
             Catalog containing DiaObject records. In addition to all regular
-            columns it will contain ``insert_id`` column.
+            columns it will contain ``apdb_replica_chunk`` column.
 
         Notes
         -----
@@ -221,19 +225,19 @@ class ApdbReplica(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Return catalog of DiaSource records from a given time period.
+    def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
+        """Return catalog of DiaSource records from given replica chunks.
 
         Parameters
         ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
+        chunks : `~collections.abc.Iterable` [`int`]
+            Chunk identifiers to return.
 
         Returns
         -------
         data : `ApdbTableData`
             Catalog containing DiaSource records. In addition to all regular
-            columns it will contain ``insert_id`` column.
+            columns it will contain ``apdb_replica_chunk`` column.
 
         Notes
         -----
@@ -243,20 +247,19 @@ class ApdbReplica(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
-        """Return catalog of DiaForcedSource records from a given time
-        period.
+    def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
+        """Return catalog of DiaForcedSource records from given replica chunks.
 
         Parameters
         ----------
-        ids : `iterable` [`ApdbInsertId`]
-            Insert identifiers, can include items returned from `getInsertIds`.
+        chunks : `~collections.abc.Iterable` [`int`]
+            Chunk identifiers to return.
 
         Returns
         -------
         data : `ApdbTableData`
             Catalog containing DiaForcedSource records. In addition to all
-            regular columns it will contain ``insert_id`` column.
+            regular columns it will contain ``apdb_replica_chunk`` column.
 
         Notes
         -----

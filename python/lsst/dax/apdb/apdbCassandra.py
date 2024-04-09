@@ -26,7 +26,6 @@ __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 import dataclasses
 import json
 import logging
-import uuid
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
 
@@ -59,7 +58,7 @@ from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
 from .apdbConfigFreezer import ApdbConfigFreezer
 from .apdbMetadataCassandra import ApdbMetadataCassandra
-from .apdbReplica import ApdbInsertId
+from .apdbReplica import ReplicaChunk
 from .apdbSchema import ApdbTables
 from .cassandra_utils import (
     PreparedStatementCache,
@@ -179,11 +178,11 @@ class ApdbCassandraConfig(ApdbConfig):
         default=False,
         doc="If True then build one query per spatial partition, otherwise build single query.",
     )
-    use_insert_id_skips_diaobjects = Field[bool](
+    replica_skips_diaobjects = Field[bool](
         default=False,
         doc=(
             "If True then do not store DiaObjects when use_insert_id is True "
-            "(DiaObjectsInsertId has the same data)."
+            "(DiaObjectsChunks has the same data)."
         ),
     )
 
@@ -206,7 +205,7 @@ class _FrozenApdbCassandraConfig:
     ra_dec_columns: list[str]
     time_partition_tables: bool
     time_partition_days: int
-    use_insert_id_skips_diaobjects: bool
+    replica_skips_diaobjects: bool
 
     def __init__(self, config: ApdbCassandraConfig):
         self.use_insert_id = config.use_insert_id
@@ -215,7 +214,7 @@ class _FrozenApdbCassandraConfig:
         self.ra_dec_columns = list(config.ra_dec_columns)
         self.time_partition_tables = config.time_partition_tables
         self.time_partition_days = config.time_partition_days
-        self.use_insert_id_skips_diaobjects = config.use_insert_id_skips_diaobjects
+        self.replica_skips_diaobjects = config.replica_skips_diaobjects
 
     def to_json(self) -> str:
         """Convert this instance to JSON representation."""
@@ -286,7 +285,7 @@ class ApdbCassandra(Apdb):
         "ra_dec_columns",
         "time_partition_tables",
         "time_partition_days",
-        "use_insert_id_skips_diaobjects",
+        "replica_skips_diaobjects",
     )
     """Names of the config parameters to be frozen in metadata table."""
 
@@ -329,7 +328,7 @@ class ApdbCassandra(Apdb):
             schema_name=self.config.schema_name,
             prefix=self.config.prefix,
             time_partition_tables=self.config.time_partition_tables,
-            use_insert_id=self.config.use_insert_id,
+            enable_replica=self.config.use_insert_id,
         )
         self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
@@ -434,7 +433,7 @@ class ApdbCassandra(Apdb):
             )
 
         # Check replica code version only if replica is enabled.
-        if self._schema.has_insert_id:
+        if self._schema.has_replica_chunks:
             db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
             code_replica_version = ApdbCassandraReplica.apdbReplicaImplementationVersion()
             if not code_replica_version.checkCompatibility(db_replica_version, True):
@@ -472,7 +471,7 @@ class ApdbCassandra(Apdb):
         read_sources_months: int | None = None,
         read_forced_sources_months: int | None = None,
         use_insert_id: bool = False,
-        use_insert_id_skips_diaobjects: bool = False,
+        replica_skips_diaobjects: bool = False,
         port: int | None = None,
         username: str | None = None,
         prefix: str | None = None,
@@ -509,7 +508,7 @@ class ApdbCassandra(Apdb):
             Number of months of history to read from DiaForcedSource.
         use_insert_id : `bool`, optional
             If True, make additional tables used for replication to PPDB.
-        use_insert_id_skips_diaobjects : `bool`, optional
+        replica_skips_diaobjects : `bool`, optional
             If `True` then do not fill regular ``DiaObject`` table when
             ``use_insert_id`` is `True`.
         port : `int`, optional
@@ -555,7 +554,7 @@ class ApdbCassandra(Apdb):
             contact_points=hosts,
             keyspace=keyspace,
             use_insert_id=use_insert_id,
-            use_insert_id_skips_diaobjects=use_insert_id_skips_diaobjects,
+            replica_skips_diaobjects=replica_skips_diaobjects,
             time_partition_tables=time_partition_tables,
         )
         if schema_file is not None:
@@ -619,7 +618,7 @@ class ApdbCassandra(Apdb):
             schema_name=config.schema_name,
             prefix=config.prefix,
             time_partition_tables=config.time_partition_tables,
-            use_insert_id=config.use_insert_id,
+            enable_replica=config.use_insert_id,
         )
 
         # Ask schema to create all tables.
@@ -744,24 +743,24 @@ class ApdbCassandra(Apdb):
     ) -> None:
         # docstring is inherited from a base class
 
-        insert_id: ApdbInsertId | None = None
-        if self._schema.has_insert_id:
-            insert_id = ApdbInsertId.new_insert_id(visit_time, self.config.replica_chunk_seconds)
-            self._storeInsertId(insert_id, visit_time)
+        replica_chunk: ReplicaChunk | None = None
+        if self._schema.has_replica_chunks:
+            replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, self.config.replica_chunk_seconds)
+            self._storeReplicaChunk(replica_chunk, visit_time)
 
         # fill region partition column for DiaObjects
         objects = self._add_obj_part(objects)
-        self._storeDiaObjects(objects, visit_time, insert_id)
+        self._storeDiaObjects(objects, visit_time, replica_chunk)
 
         if sources is not None:
             # copy apdb_part column from DiaObjects to DiaSources
             sources = self._add_src_part(sources, objects)
-            self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time, insert_id)
-            self._storeDiaSourcesPartitions(sources, visit_time, insert_id)
+            self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time, replica_chunk)
+            self._storeDiaSourcesPartitions(sources, visit_time, replica_chunk)
 
         if forced_sources is not None:
             forced_sources = self._add_fsrc_part(forced_sources, objects)
-            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, visit_time, insert_id)
+            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, visit_time, replica_chunk)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
@@ -782,7 +781,7 @@ class ApdbCassandra(Apdb):
             selects.append(
                 (
                     (
-                        'SELECT "diaSourceId", "apdb_part", "apdb_time_part", "insert_id" '
+                        'SELECT "diaSourceId", "apdb_part", "apdb_time_part", "apdb_replica_chunk" '
                         f'FROM "{self._keyspace}"."{table_name}" WHERE "diaSourceId" IN ({ids_str})'
                     ),
                     {},
@@ -791,17 +790,17 @@ class ApdbCassandra(Apdb):
 
         # No need for DataFrame here, read data as tuples.
         result = cast(
-            list[tuple[int, int, int, uuid.UUID | None]],
+            list[tuple[int, int, int, int | None]],
             select_concurrent(self._session, selects, "read_tuples", self.config.read_concurrency),
         )
 
         # Make mapping from source ID to its partition.
         id2partitions: dict[int, tuple[int, int]] = {}
-        id2insert_id: dict[int, uuid.UUID] = {}
+        id2chunk_id: dict[int, int] = {}
         for row in result:
             id2partitions[row[0]] = row[1:3]
             if row[3] is not None:
-                id2insert_id[row[0]] = row[3]
+                id2chunk_id[row[0]] = row[3]
 
         # make sure we know partitions for each ID
         if set(id2partitions) != set(idMap):
@@ -830,25 +829,25 @@ class ApdbCassandra(Apdb):
                 values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
             queries.add(self._preparer.prepare(query), values)
 
-        # Reassign in history tables, only if history is enabled
-        if id2insert_id:
-            # Filter out insert ids that have been deleted already. There is a
-            # potential race with concurrent removal of insert IDs, but it
+        # Reassign in replica tables, only if replication is enabled
+        if id2chunk_id:
+            # Filter out chunks that have been deleted already. There is a
+            # potential race with concurrent removal of chunks, but it
             # should be handled by WHERE in UPDATE.
             known_ids = set()
-            if insert_ids := self.get_replica().getInsertIds():
-                known_ids = set(insert_id.id for insert_id in insert_ids)
-            id2insert_id = {key: value for key, value in id2insert_id.items() if value in known_ids}
-            if id2insert_id:
-                table_name = self._schema.tableName(ExtraTables.DiaSourceInsertId)
+            if replica_chunks := self.get_replica().getReplicaChunks():
+                known_ids = set(replica_chunk.id for replica_chunk in replica_chunks)
+            id2chunk_id = {key: value for key, value in id2chunk_id.items() if value in known_ids}
+            if id2chunk_id:
+                table_name = self._schema.tableName(ExtraTables.DiaSourceChunks)
                 for diaSourceId, ssObjectId in idMap.items():
-                    if insert_id := id2insert_id.get(diaSourceId):
+                    if replica_chunk := id2chunk_id.get(diaSourceId):
                         query = (
                             f'UPDATE "{self._keyspace}"."{table_name}" '
                             ' SET "ssObjectId" = ?, "diaObjectId" = NULL '
-                            'WHERE "insert_id" = ? AND "diaSourceId" = ?'
+                            'WHERE "apdb_replica_chunk" = ? AND "diaSourceId" = ?'
                         )
-                        values = (ssObjectId, insert_id, diaSourceId)
+                        values = (ssObjectId, replica_chunk, diaSourceId)
                         queries.add(self._preparer.prepare(query), values)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
@@ -999,28 +998,29 @@ class ApdbCassandra(Apdb):
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
 
-    def _storeInsertId(self, insert_id: ApdbInsertId, visit_time: astropy.time.Time) -> None:
+    def _storeReplicaChunk(self, replica_chunk: ReplicaChunk, visit_time: astropy.time.Time) -> None:
         # Cassandra timestamp uses milliseconds since epoch
-        timestamp = int(insert_id.insert_time.unix_tai * 1000)
+        timestamp = int(replica_chunk.last_update_time.unix_tai * 1000)
 
         # everything goes into a single partition
         partition = 0
 
-        table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+        table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
         query = (
-            f'INSERT INTO "{self._keyspace}"."{table_name}" (partition, insert_id, insert_time, unique_id) '
+            f'INSERT INTO "{self._keyspace}"."{table_name}" '
+            "(partition, apdb_replica_chunk, last_update_time, unique_id) "
             "VALUES (?, ?, ?, ?)"
         )
 
         self._session.execute(
             self._preparer.prepare(query),
-            (partition, insert_id.id, timestamp, insert_id.unique_id),
+            (partition, replica_chunk.id, timestamp, replica_chunk.unique_id),
             timeout=self.config.write_timeout,
             execution_profile="write",
         )
 
     def _storeDiaObjects(
-        self, objs: pandas.DataFrame, visit_time: astropy.time.Time, insert_id: ApdbInsertId | None
+        self, objs: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
     ) -> None:
         """Store catalog of DiaObjects from current visit.
 
@@ -1030,6 +1030,8 @@ class ApdbCassandra(Apdb):
             Catalog with DiaObject records
         visit_time : `astropy.time.Time`
             Time of the current visit.
+        replica_chunk : `ReplicaChunk` or `None`
+            Replica chunk identifier if replication is configured.
         """
         if len(objs) == 0:
             _LOG.debug("No objects to write to database.")
@@ -1045,32 +1047,36 @@ class ApdbCassandra(Apdb):
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
-        # Only store DiaObects if not storing insert_ids or explicitly
-        # configured to always store them
-        if insert_id is None or not self.config.use_insert_id_skips_diaobjects:
+        # Only store DiaObects if not doing replication or explicitly
+        # configured to always store them.
+        if replica_chunk is None or not self.config.replica_skips_diaobjects:
             self._storeObjectsPandas(
                 objs, ApdbTables.DiaObject, extra_columns=extra_columns, time_part=time_part
             )
 
-        if insert_id is not None:
-            extra_columns = dict(insert_id=insert_id.id, validityStart=visit_time_dt)
-            self._storeObjectsPandas(objs, ExtraTables.DiaObjectInsertId, extra_columns=extra_columns)
+        if replica_chunk is not None:
+            extra_columns = dict(apdb_replica_chunk=replica_chunk.id, validityStart=visit_time_dt)
+            self._storeObjectsPandas(objs, ExtraTables.DiaObjectChunks, extra_columns=extra_columns)
 
     def _storeDiaSources(
         self,
         table_name: ApdbTables,
         sources: pandas.DataFrame,
         visit_time: astropy.time.Time,
-        insert_id: ApdbInsertId | None,
+        replica_chunk: ReplicaChunk | None,
     ) -> None:
         """Store catalog of DIASources or DIAForcedSources from current visit.
 
         Parameters
         ----------
+        table_name : `ApdbTables`
+            Table where to store the data.
         sources : `pandas.DataFrame`
             Catalog containing DiaSource records
         visit_time : `astropy.time.Time`
             Time of the current visit.
+        replica_chunk : `ReplicaChunk` or `None`
+            Replica chunk identifier if replication is configured.
         """
         time_part: int | None = self._time_partition(visit_time)
         extra_columns: dict[str, Any] = {}
@@ -1080,16 +1086,16 @@ class ApdbCassandra(Apdb):
 
         self._storeObjectsPandas(sources, table_name, extra_columns=extra_columns, time_part=time_part)
 
-        if insert_id is not None:
-            extra_columns = dict(insert_id=insert_id.id)
+        if replica_chunk is not None:
+            extra_columns = dict(apdb_replica_chunk=replica_chunk.id)
             if table_name is ApdbTables.DiaSource:
-                extra_table = ExtraTables.DiaSourceInsertId
+                extra_table = ExtraTables.DiaSourceChunks
             else:
-                extra_table = ExtraTables.DiaForcedSourceInsertId
+                extra_table = ExtraTables.DiaForcedSourceChunks
             self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns)
 
     def _storeDiaSourcesPartitions(
-        self, sources: pandas.DataFrame, visit_time: astropy.time.Time, insert_id: ApdbInsertId | None
+        self, sources: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
     ) -> None:
         """Store mapping of diaSourceId to its partitioning values.
 
@@ -1103,7 +1109,7 @@ class ApdbCassandra(Apdb):
         id_map = cast(pandas.DataFrame, sources[["diaSourceId", "apdb_part"]])
         extra_columns = {
             "apdb_time_part": self._time_partition(visit_time),
-            "insert_id": insert_id.id if insert_id is not None else None,
+            "apdb_replica_chunk": replica_chunk.id if replica_chunk is not None else None,
         }
 
         self._storeObjectsPandas(

@@ -70,7 +70,7 @@ class ApdbConfig(Config):
     )
     use_insert_id = Field[bool](
         doc=(
-            "If True, make and fill additional tables used for getHistory methods. "
+            "If True, make and fill additional tables used for replication. "
             "Databases created with earlier versions of APDB may not have these tables, "
             "and corresponding methods will not work for them."
         ),

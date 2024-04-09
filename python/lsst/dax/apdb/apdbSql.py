@@ -45,7 +45,7 @@ from sqlalchemy.pool import NullPool
 from .apdb import Apdb, ApdbConfig
 from .apdbConfigFreezer import ApdbConfigFreezer
 from .apdbMetadataSql import ApdbMetadataSql
-from .apdbReplica import ApdbInsertId
+from .apdbReplica import ReplicaChunk
 from .apdbSchema import ApdbTables
 from .apdbSqlReplica import ApdbSqlReplica
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
@@ -242,14 +242,13 @@ class ApdbSql(Apdb):
             prefix=self.config.prefix,
             namespace=self.config.namespace,
             htm_index_column=self.config.htm_index_column,
-            use_insert_id=self.config.use_insert_id,
+            enable_replica=self.config.use_insert_id,
         )
 
         if self._metadata.table_exists():
             self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.htm_level)
-        self.use_insert_id = self._schema.has_insert_id
 
         _LOG.debug("APDB Configuration:")
         _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
@@ -327,7 +326,7 @@ class ApdbSql(Apdb):
             )
 
         # Check replica code version only if replica is enabled.
-        if self._schema.has_insert_id:
+        if self._schema.has_replica_chunks:
             db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
             code_replica_version = ApdbSqlReplica.apdbReplicaImplementationVersion()
             if not code_replica_version.checkCompatibility(db_replica_version, True):
@@ -483,7 +482,7 @@ class ApdbSql(Apdb):
             prefix=config.prefix,
             namespace=config.namespace,
             htm_index_column=config.htm_index_column,
-            use_insert_id=config.use_insert_id,
+            enable_replica=config.use_insert_id,
         )
         schema.makeSchema(drop=drop)
 
@@ -641,22 +640,22 @@ class ApdbSql(Apdb):
 
         # We want to run all inserts in one transaction.
         with self._engine.begin() as connection:
-            insert_id: ApdbInsertId | None = None
-            if self._schema.has_insert_id:
-                insert_id = ApdbInsertId.new_insert_id(visit_time, self.config.replica_chunk_seconds)
-                self._storeInsertId(insert_id, visit_time, connection)
+            replica_chunk: ReplicaChunk | None = None
+            if self._schema.has_replica_chunks:
+                replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, self.config.replica_chunk_seconds)
+                self._storeReplicaChunk(replica_chunk, visit_time, connection)
 
             # fill pixelId column for DiaObjects
             objects = self._add_obj_htm_index(objects)
-            self._storeDiaObjects(objects, visit_time, insert_id, connection)
+            self._storeDiaObjects(objects, visit_time, replica_chunk, connection)
 
             if sources is not None:
                 # copy pixelId column from DiaObjects to DiaSources
                 sources = self._add_src_htm_index(sources, objects)
-                self._storeDiaSources(sources, insert_id, connection)
+                self._storeDiaSources(sources, replica_chunk, connection)
 
             if forced_sources is not None:
-                self._storeDiaForcedSources(forced_sources, insert_id, connection)
+                self._storeDiaForcedSources(forced_sources, replica_chunk, connection)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
@@ -858,16 +857,19 @@ class ApdbSql(Apdb):
         assert sources is not None, "Catalog cannot be None"
         return sources
 
-    def _storeInsertId(
-        self, insert_id: ApdbInsertId, visit_time: astropy.time.Time, connection: sqlalchemy.engine.Connection
+    def _storeReplicaChunk(
+        self,
+        replica_chunk: ReplicaChunk,
+        visit_time: astropy.time.Time,
+        connection: sqlalchemy.engine.Connection,
     ) -> None:
         dt = visit_time.datetime
 
-        table = self._schema.get_table(ExtraTables.DiaInsertId)
+        table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
 
         # We need UPSERT which is dialect-specific construct
-        values = {"insert_time": dt, "unique_id": insert_id.unique_id}
-        row = {"insert_id": insert_id.id} | values
+        values = {"last_update_time": dt, "unique_id": replica_chunk.unique_id}
+        row = {"apdb_replica_chunk": replica_chunk.id} | values
         if connection.dialect.name == "sqlite":
             insert_sqlite = sqlalchemy.dialects.sqlite.insert(table)
             insert_sqlite = insert_sqlite.on_conflict_do_update(index_elements=table.primary_key, set_=values)
@@ -883,7 +885,7 @@ class ApdbSql(Apdb):
         self,
         objs: pandas.DataFrame,
         visit_time: astropy.time.Time,
-        insert_id: ApdbInsertId | None,
+        replica_chunk: ReplicaChunk | None,
         connection: sqlalchemy.engine.Connection,
     ) -> None:
         """Store catalog of DiaObjects from current visit.
@@ -894,7 +896,7 @@ class ApdbSql(Apdb):
             Catalog with DiaObject records.
         visit_time : `astropy.time.Time`
             Time of the visit.
-        insert_id : `ApdbInsertId`
+        replica_chunk : `ReplicaChunk`
             Insert identifier.
         """
         if len(objs) == 0:
@@ -987,28 +989,28 @@ class ApdbSql(Apdb):
             objs.set_index(extra_columns[0].index, inplace=True)
             objs = pandas.concat([objs] + extra_columns, axis="columns")
 
-        # Insert history data
+        # Insert replica data
         table = self._schema.get_table(ApdbTables.DiaObject)
-        history_data: list[dict] = []
-        history_stmt: Any = None
-        if insert_id is not None:
+        replica_data: list[dict] = []
+        replica_stmt: Any = None
+        if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
-            history_data = objs[pk_names].to_dict("records")
-            for row in history_data:
-                row["insert_id"] = insert_id.id
-            history_table = self._schema.get_table(ExtraTables.DiaObjectInsertId)
-            history_stmt = history_table.insert()
+            replica_data = objs[pk_names].to_dict("records")
+            for row in replica_data:
+                row["apdb_replica_chunk"] = replica_chunk.id
+            replica_table = self._schema.get_table(ExtraTables.DiaObjectChunks)
+            replica_stmt = replica_table.insert()
 
         # insert new versions
         with Timer("DiaObject insert", self.config.timer):
             objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
-            if history_stmt is not None:
-                connection.execute(history_stmt, history_data)
+            if replica_stmt is not None:
+                connection.execute(replica_stmt, replica_data)
 
     def _storeDiaSources(
         self,
         sources: pandas.DataFrame,
-        insert_id: ApdbInsertId | None,
+        replica_chunk: ReplicaChunk | None,
         connection: sqlalchemy.engine.Connection,
     ) -> None:
         """Store catalog of DiaSources from current visit.
@@ -1020,28 +1022,28 @@ class ApdbSql(Apdb):
         """
         table = self._schema.get_table(ApdbTables.DiaSource)
 
-        # Insert history data
-        history: list[dict] = []
-        history_stmt: Any = None
-        if insert_id is not None:
+        # Insert replica data
+        replica_data: list[dict] = []
+        replica_stmt: Any = None
+        if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
-            history = sources[pk_names].to_dict("records")
-            for row in history:
-                row["insert_id"] = insert_id.id
-            history_table = self._schema.get_table(ExtraTables.DiaSourceInsertId)
-            history_stmt = history_table.insert()
+            replica_data = sources[pk_names].to_dict("records")
+            for row in replica_data:
+                row["apdb_replica_chunk"] = replica_chunk.id
+            replica_table = self._schema.get_table(ExtraTables.DiaSourceChunks)
+            replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
         with Timer("DiaSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
             sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
-            if history_stmt is not None:
-                connection.execute(history_stmt, history)
+            if replica_stmt is not None:
+                connection.execute(replica_stmt, replica_data)
 
     def _storeDiaForcedSources(
         self,
         sources: pandas.DataFrame,
-        insert_id: ApdbInsertId | None,
+        replica_chunk: ReplicaChunk | None,
         connection: sqlalchemy.engine.Connection,
     ) -> None:
         """Store a set of DiaForcedSources from current visit.
@@ -1053,23 +1055,23 @@ class ApdbSql(Apdb):
         """
         table = self._schema.get_table(ApdbTables.DiaForcedSource)
 
-        # Insert history data
-        history: list[dict] = []
-        history_stmt: Any = None
-        if insert_id is not None:
+        # Insert replica data
+        replica_data: list[dict] = []
+        replica_stmt: Any = None
+        if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
-            history = sources[pk_names].to_dict("records")
-            for row in history:
-                row["insert_id"] = insert_id.id
-            history_table = self._schema.get_table(ExtraTables.DiaForcedSourceInsertId)
-            history_stmt = history_table.insert()
+            replica_data = sources[pk_names].to_dict("records")
+            for row in replica_data:
+                row["apdb_replica_chunk"] = replica_chunk.id
+            replica_table = self._schema.get_table(ExtraTables.DiaForcedSourceChunks)
+            replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
         with Timer("DiaForcedSource insert", self.config.timer):
             sources = _coerce_uint64(sources)
             sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
-            if history_stmt is not None:
-                connection.execute(history_stmt, history)
+            if replica_stmt is not None:
+                connection.execute(replica_stmt, replica_data)
 
     def _htm_indices(self, region: Region) -> list[tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.

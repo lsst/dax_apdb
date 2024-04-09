@@ -34,7 +34,7 @@ import astropy.time
 import sqlalchemy
 from sqlalchemy import sql
 
-from .apdbReplica import ApdbInsertId, ApdbReplica, ApdbTableData
+from .apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from .apdbSchema import ApdbTables
 from .apdbSqlSchema import ExtraTables
 from .timer import Timer
@@ -90,74 +90,71 @@ class ApdbSqlReplica(ApdbReplica):
         # Docstring inherited from base class.
         return VERSION
 
-    def getInsertIds(self) -> list[ApdbInsertId] | None:
+    def getReplicaChunks(self) -> list[ReplicaChunk] | None:
         # docstring is inherited from a base class
-        if not self._schema.has_insert_id:
+        if not self._schema.has_replica_chunks:
             return None
 
-        table = self._schema.get_table(ExtraTables.DiaInsertId)
-        assert table is not None, "has_insert_id=True means it must be defined"
+        table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
+        assert table is not None, "has_replica_chunks=True means it must be defined"
         query = sql.select(
-            table.columns["insert_id"], table.columns["insert_time"], table.columns["unique_id"]
-        ).order_by(table.columns["insert_time"])
+            table.columns["apdb_replica_chunk"], table.columns["last_update_time"], table.columns["unique_id"]
+        ).order_by(table.columns["last_update_time"])
         with Timer("DiaObject insert id select", self._timer):
             with self._engine.connect() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 ids = []
                 for row in result:
-                    insert_time = astropy.time.Time(row[1].timestamp(), format="unix_tai")
-                    ids.append(ApdbInsertId(id=row[0], insert_time=insert_time, unique_id=row[2]))
+                    last_update_time = astropy.time.Time(row[1].timestamp(), format="unix_tai")
+                    ids.append(ReplicaChunk(id=row[0], last_update_time=last_update_time, unique_id=row[2]))
                 return ids
 
-    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
+    def deleteReplicaChunks(self, chunks: Iterable[int]) -> None:
         # docstring is inherited from a base class
-        if not self._schema.has_insert_id:
-            raise ValueError("APDB is not configured for history storage")
+        if not self._schema.has_replica_chunks:
+            raise ValueError("APDB is not configured for replication")
 
-        table = self._schema.get_table(ExtraTables.DiaInsertId)
-
-        insert_ids = [id.id for id in ids]
-        where_clause = table.columns["insert_id"].in_(insert_ids)
+        table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
+        where_clause = table.columns["apdb_replica_chunk"].in_(chunks)
         stmt = table.delete().where(where_clause)
         with self._engine.begin() as conn:
             conn.execute(stmt)
 
-    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+    def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_history(ids, ApdbTables.DiaObject, ExtraTables.DiaObjectInsertId)
+        return self._get_chunks(chunks, ApdbTables.DiaObject, ExtraTables.DiaObjectChunks)
 
-    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+    def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_history(ids, ApdbTables.DiaSource, ExtraTables.DiaSourceInsertId)
+        return self._get_chunks(chunks, ApdbTables.DiaSource, ExtraTables.DiaSourceChunks)
 
-    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+    def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_history(ids, ApdbTables.DiaForcedSource, ExtraTables.DiaForcedSourceInsertId)
+        return self._get_chunks(chunks, ApdbTables.DiaForcedSource, ExtraTables.DiaForcedSourceChunks)
 
-    def _get_history(
+    def _get_chunks(
         self,
-        ids: Iterable[ApdbInsertId],
+        chunks: Iterable[int],
         table_enum: ApdbTables,
-        history_table_enum: ExtraTables,
+        chunk_table_enum: ExtraTables,
     ) -> ApdbTableData:
         """Return catalog of records for given insert identifiers, common
         implementation for all DIA tables.
         """
-        if not self._schema.has_insert_id:
-            raise ValueError("APDB is not configured for history retrieval")
+        if not self._schema.has_replica_chunks:
+            raise ValueError("APDB is not configured for replication")
 
         table = self._schema.get_table(table_enum)
-        history_table = self._schema.get_table(history_table_enum)
+        chunk_table = self._schema.get_table(chunk_table_enum)
 
-        join = table.join(history_table)
-        insert_ids = [id.id for id in ids]
-        history_id_column = history_table.columns["insert_id"]
+        join = table.join(chunk_table)
+        chunk_id_column = chunk_table.columns["apdb_replica_chunk"]
         apdb_columns = self._schema.get_apdb_columns(table_enum)
-        where_clause = history_id_column.in_(insert_ids)
-        query = sql.select(history_id_column, *apdb_columns).select_from(join).where(where_clause)
+        where_clause = chunk_id_column.in_(chunks)
+        query = sql.select(chunk_id_column, *apdb_columns).select_from(join).where(where_clause)
 
         # execute select
-        with Timer(f"{table.name} history select", self._timer):
+        with Timer(f"{table.name} replica chunk select", self._timer):
             with self._engine.begin() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 return ApdbSqlTableData(result)

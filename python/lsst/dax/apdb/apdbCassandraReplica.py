@@ -31,7 +31,7 @@ import astropy.time
 from lsst.utils.iteration import chunk_iterable
 
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
-from .apdbReplica import ApdbInsertId, ApdbReplica, ApdbTableData
+from .apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from .cassandra_utils import ApdbCassandraTableData, PreparedStatementCache
 from .timer import Timer
 from .versionTuple import VersionTuple
@@ -77,18 +77,18 @@ class ApdbCassandraReplica(ApdbReplica):
         # Docstring inherited from base class.
         return VERSION
 
-    def getInsertIds(self) -> list[ApdbInsertId] | None:
+    def getReplicaChunks(self) -> list[ReplicaChunk] | None:
         # docstring is inherited from a base class
-        if not self._schema.has_insert_id:
+        if not self._schema.has_replica_chunks:
             return None
 
         # everything goes into a single partition
         partition = 0
 
-        table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+        table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
         # We want to avoid timezone mess so return timestamps as milliseconds.
         query = (
-            "SELECT toUnixTimestamp(insert_time), insert_id, unique_id "
+            "SELECT toUnixTimestamp(last_update_time), apdb_replica_chunk, unique_id "
             f'FROM "{self._config.keyspace}"."{table_name}" WHERE partition = ?'
         )
 
@@ -98,84 +98,89 @@ class ApdbCassandraReplica(ApdbReplica):
             timeout=self._config.read_timeout,
             execution_profile="read_tuples",
         )
-        # order by insert_time
+        # order by last_update_time
         rows = sorted(result)
         return [
-            ApdbInsertId(
+            ReplicaChunk(
                 id=row[1],
-                insert_time=astropy.time.Time(row[0] / 1000, format="unix_tai"),
+                last_update_time=astropy.time.Time(row[0] / 1000, format="unix_tai"),
                 unique_id=row[2],
             )
             for row in rows
         ]
 
-    def deleteInsertIds(self, ids: Iterable[ApdbInsertId]) -> None:
+    def deleteReplicaChunks(self, chunks: Iterable[int]) -> None:
         # docstring is inherited from a base class
-        if not self._schema.has_insert_id:
-            raise ValueError("APDB is not configured for history storage")
+        if not self._schema.has_replica_chunks:
+            raise ValueError("APDB is not configured for replication")
 
-        all_insert_ids = [id.id for id in ids]
         # There is 64k limit on number of markers in Cassandra CQL
-        for insert_ids in chunk_iterable(all_insert_ids, 20_000):
-            params = ",".join("?" * len(insert_ids))
+        for chunk_ids in chunk_iterable(chunks, 20_000):
+            params = ",".join("?" * len(chunk_ids))
 
             # everything goes into a single partition
             partition = 0
 
-            table_name = self._schema.tableName(ExtraTables.DiaInsertId)
+            table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
             query = (
                 f'DELETE FROM "{self._config.keyspace}"."{table_name}" '
-                f"WHERE partition = ? AND insert_id IN ({params})"
+                f"WHERE partition = ? AND apdb_replica_chunk IN ({params})"
             )
 
             self._session.execute(
                 self._preparer.prepare(query),
-                [partition] + list(insert_ids),
+                [partition] + list(chunk_ids),
                 timeout=self._config.remove_timeout,
             )
 
-            # Also remove those insert_ids from Dia*InsertId tables.
+            # Also remove those chunk_ids from Dia*Chunks tables.
             for table in (
-                ExtraTables.DiaObjectInsertId,
-                ExtraTables.DiaSourceInsertId,
-                ExtraTables.DiaForcedSourceInsertId,
+                ExtraTables.DiaObjectChunks,
+                ExtraTables.DiaSourceChunks,
+                ExtraTables.DiaForcedSourceChunks,
             ):
                 table_name = self._schema.tableName(table)
-                query = f'DELETE FROM "{self._config.keyspace}"."{table_name}" WHERE insert_id IN ({params})'
+                query = (
+                    f'DELETE FROM "{self._config.keyspace}"."{table_name}"'
+                    f" WHERE apdb_replica_chunk IN ({params})"
+                )
                 self._session.execute(
                     self._preparer.prepare(query),
-                    insert_ids,
+                    chunk_ids,
                     timeout=self._config.remove_timeout,
                 )
 
-    def getDiaObjectsHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+    def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_history(ExtraTables.DiaObjectInsertId, ids)
+        return self._get_chunks(ExtraTables.DiaObjectChunks, chunks)
 
-    def getDiaSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+    def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_history(ExtraTables.DiaSourceInsertId, ids)
+        return self._get_chunks(ExtraTables.DiaSourceChunks, chunks)
 
-    def getDiaForcedSourcesHistory(self, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+    def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_history(ExtraTables.DiaForcedSourceInsertId, ids)
+        return self._get_chunks(ExtraTables.DiaForcedSourceChunks, chunks)
 
-    def _get_history(self, table: ExtraTables, ids: Iterable[ApdbInsertId]) -> ApdbTableData:
+    def _get_chunks(self, table: ExtraTables, chunks: Iterable[int]) -> ApdbTableData:
         """Return records from a particular table given set of insert IDs."""
-        if not self._schema.has_insert_id:
-            raise ValueError("APDB is not configured for history retrieval")
+        if not self._schema.has_replica_chunks:
+            raise ValueError("APDB is not configured for replication")
 
-        insert_ids = [id.id for id in ids]
-        params = ",".join("?" * len(insert_ids))
+        # We do not expect too may chunks in this query.
+        chunks = list(chunks)
+        params = ",".join("?" * len(chunks))
 
         table_name = self._schema.tableName(table)
-        # I know that history table schema has only regular APDB columns plus
-        # an insert_id column, and this is exactly what we need to return from
-        # this method, so selecting a star is fine here.
-        query = f'SELECT * FROM "{self._config.keyspace}"."{table_name}" WHERE insert_id IN ({params})'
+        # I know that chunk table schema has only regular APDB columns plus
+        # apdb_replica_chunk column, and this is exactly what we need to return
+        # from this method, so selecting a star is fine here.
+        query = (
+            f'SELECT * FROM "{self._config.keyspace}"."{table_name}" WHERE apdb_replica_chunk IN ({params})'
+        )
         statement = self._preparer.prepare(query)
 
-        with Timer(f"{table_name} history", self._config.timer):
-            result = self._session.execute(statement, insert_ids, execution_profile="read_raw")
+        with Timer(f"{table_name} select chunk", self._config.timer):
+            result = self._session.execute(statement, chunks, execution_profile="read_raw")
             table_data = cast(ApdbCassandraTableData, result._current_rows)
         return table_data

@@ -115,31 +115,31 @@ class InconsistentSchemaError(RuntimeError):
 class ExtraTables(enum.Enum):
     """Names of the tables used for tracking insert IDs."""
 
-    DiaInsertId = "DiaInsertId"
-    """Name of the table for insert ID records."""
+    ApdbReplicaChunks = "ApdbReplicaChunks"
+    """Name of the table for replica chunks records."""
 
-    DiaObjectInsertId = "DiaObjectInsertId"
-    """Name of the table for DIAObject insert ID records."""
+    DiaObjectChunks = "DiaObjectChunks"
+    """Name of the table for DIAObject chunk data."""
 
-    DiaSourceInsertId = "DiaSourceInsertId"
-    """Name of the table for DIASource insert ID records."""
+    DiaSourceChunks = "DiaSourceChunks"
+    """Name of the table for DIASource chunk data."""
 
-    DiaForcedSourceInsertId = "DiaFSourceInsertId"
-    """Name of the table for DIAForcedSource insert ID records."""
+    DiaForcedSourceChunks = "DiaForcedSourceChunks"
+    """Name of the table for DIAForcedSource chunk data."""
 
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
         return prefix + self.value
 
     @classmethod
-    def insert_id_tables(cls) -> Mapping[ExtraTables, ApdbTables]:
-        """Return mapping of tables used for insert ID tracking to their
+    def replica_chunk_tables(cls) -> Mapping[ExtraTables, ApdbTables]:
+        """Return mapping of tables used for replica chunk storage to their
         corresponding regular tables.
         """
         return {
-            cls.DiaObjectInsertId: ApdbTables.DiaObject,
-            cls.DiaSourceInsertId: ApdbTables.DiaSource,
-            cls.DiaForcedSourceInsertId: ApdbTables.DiaForcedSource,
+            cls.DiaObjectChunks: ApdbTables.DiaObject,
+            cls.DiaSourceChunks: ApdbTables.DiaSource,
+            cls.DiaForcedSourceChunks: ApdbTables.DiaForcedSource,
         }
 
 
@@ -156,8 +156,8 @@ class ApdbSqlSchema(ApdbSchema):
         DiaSource table instance
     forcedSources : `sqlalchemy.Table`
         DiaForcedSource table instance
-    has_insert_id : `bool`
-        If true then schema has tables for insert ID tracking.
+    has_replica_chunks : `bool`
+        If true then schema has tables for replication chunks.
 
     Parameters
     ----------
@@ -176,8 +176,8 @@ class ApdbSqlSchema(ApdbSchema):
         Prefix to add to all schema elements.
     namespace : `str`, optional
         Namespace (or schema name) to use for all APDB tables.
-    use_insert_id : `bool`, optional
-
+    enable_replica : `bool`, optional
+        If `True` then use additional tables for replica chunks.
     """
 
     pixel_id_tables = (ApdbTables.DiaObject, ApdbTables.DiaObjectLast, ApdbTables.DiaSource)
@@ -192,7 +192,7 @@ class ApdbSqlSchema(ApdbSchema):
         schema_name: str = "ApdbSchema",
         prefix: str = "",
         namespace: str | None = None,
-        use_insert_id: bool = False,
+        enable_replica: bool = False,
     ):
         super().__init__(schema_file, schema_name)
 
@@ -200,7 +200,7 @@ class ApdbSqlSchema(ApdbSchema):
         self._dia_object_index = dia_object_index
         self._htm_index_column = htm_index_column
         self._prefix = prefix
-        self._use_insert_id = use_insert_id
+        self._enable_replica = enable_replica
 
         self._metadata = MetaData(schema=namespace)
 
@@ -254,7 +254,7 @@ class ApdbSqlSchema(ApdbSchema):
         self._apdb_tables = self._make_apdb_tables()
         self._extra_tables = self._make_extra_tables(self._apdb_tables)
 
-        self._has_insert_id: bool | None = None
+        self._has_replica_chunks: bool | None = None
         self._metadata_check: bool | None = None
 
     def empty(self) -> bool:
@@ -318,7 +318,7 @@ class ApdbSqlSchema(ApdbSchema):
         self._metadata.create_all(self._engine)
 
         # Reset possibly cached value.
-        self._has_insert_id = None
+        self._has_replica_chunks = None
         self._metadata_check = None
 
     def get_table(self, table_enum: ApdbTables | ExtraTables) -> Table:
@@ -387,17 +387,17 @@ class ApdbSqlSchema(ApdbSchema):
         return [column for column in table.columns if column.name not in exclude_columns]
 
     @property
-    def has_insert_id(self) -> bool:
+    def has_replica_chunks(self) -> bool:
         """Whether insert ID tables are to be used (`bool`)."""
-        if self._has_insert_id is None:
-            self._has_insert_id = self._use_insert_id and self._check_insert_id()
-        return self._has_insert_id
+        if self._has_replica_chunks is None:
+            self._has_replica_chunks = self._enable_replica and self._check_replica_chunks()
+        return self._has_replica_chunks
 
-    def _check_insert_id(self) -> bool:
+    def _check_replica_chunks(self) -> bool:
         """Check whether database has tables for tracking insert IDs."""
         inspector = inspect(self._engine)
         db_tables = set(inspector.get_table_names(schema=self._metadata.schema))
-        return ExtraTables.DiaInsertId.table_name(self._prefix) in db_tables
+        return ExtraTables.ApdbReplicaChunks.table_name(self._prefix) in db_tables
 
     def _make_apdb_tables(self, mysql_engine: str = "InnoDB") -> Mapping[ApdbTables, Table]:
         """Generate schema for regular tables.
@@ -433,27 +433,27 @@ class ApdbSqlSchema(ApdbSchema):
     ) -> Mapping[ExtraTables, Table]:
         """Generate schema for insert ID tables."""
         tables: dict[ExtraTables, Table] = {}
-        if not self._use_insert_id:
+        if not self._enable_replica:
             return tables
 
         # Parent table needs to be defined first
         column_defs: list[Column] = [
-            Column("insert_id", sqlalchemy.types.BigInteger, primary_key=True),
-            Column("insert_time", sqlalchemy.types.TIMESTAMP, nullable=False),
+            Column("apdb_replica_chunk", sqlalchemy.types.BigInteger, primary_key=True),
+            Column("last_update_time", sqlalchemy.types.TIMESTAMP, nullable=False),
             Column("unique_id", GUID, nullable=False),
         ]
         parent_table = Table(
-            ExtraTables.DiaInsertId.table_name(self._prefix),
+            ExtraTables.ApdbReplicaChunks.table_name(self._prefix),
             self._metadata,
             *column_defs,
             mysql_engine=mysql_engine,
         )
-        tables[ExtraTables.DiaInsertId] = parent_table
+        tables[ExtraTables.ApdbReplicaChunks] = parent_table
 
-        for table_enum, apdb_enum in ExtraTables.insert_id_tables().items():
+        for table_enum, apdb_enum in ExtraTables.replica_chunk_tables().items():
             apdb_table = apdb_tables[apdb_enum]
-            columns = self._insertIdColumns(table_enum)
-            constraints = self._insertIdIndices(table_enum, apdb_table, parent_table)
+            columns = self._replicaChunkColumns(table_enum)
+            constraints = self._replicaChunkIndices(table_enum, apdb_table, parent_table)
             table = Table(
                 table_enum.table_name(self._prefix),
                 self._metadata,
@@ -530,12 +530,14 @@ class ApdbSqlSchema(ApdbSchema):
 
         return index_defs
 
-    def _insertIdColumns(self, table_enum: ExtraTables) -> list[Column]:
-        """Return list of columns for insert ID tables."""
-        column_defs: list[Column] = [Column("insert_id", sqlalchemy.types.BigInteger, nullable=False)]
-        insert_id_tables = ExtraTables.insert_id_tables()
-        if table_enum in insert_id_tables:
-            column_defs += self._tablePkColumns(insert_id_tables[table_enum])
+    def _replicaChunkColumns(self, table_enum: ExtraTables) -> list[Column]:
+        """Return list of columns for replica chunks tables."""
+        column_defs: list[Column] = [
+            Column("apdb_replica_chunk", sqlalchemy.types.BigInteger, nullable=False)
+        ]
+        replica_chunk_tables = ExtraTables.replica_chunk_tables()
+        if table_enum in replica_chunk_tables:
+            column_defs += self._tablePkColumns(replica_chunk_tables[table_enum])
         else:
             assert False, "Above branches have to cover all enum values"
         return column_defs
@@ -549,24 +551,24 @@ class ApdbSqlSchema(ApdbSchema):
             column_defs.append(Column(column.name, ctype, nullable=False, autoincrement=False))
         return column_defs
 
-    def _insertIdIndices(
+    def _replicaChunkIndices(
         self,
         table_enum: ExtraTables,
         apdb_table: sqlalchemy.schema.Table,
         parent_table: sqlalchemy.schema.Table,
     ) -> list[sqlalchemy.schema.SchemaItem]:
-        """Return set of constraints/indices for insert ID tables."""
+        """Return set of constraints/indices for replica chunk tables."""
         index_defs: list[sqlalchemy.schema.SchemaItem] = []
 
         # Special case for insert ID tables that are not in felis schema.
-        insert_id_tables = ExtraTables.insert_id_tables()
-        if table_enum in insert_id_tables:
+        replica_chunk_tables = ExtraTables.replica_chunk_tables()
+        if table_enum in replica_chunk_tables:
             # PK is the same as for original table
-            pk_names = [column.name for column in self._tablePkColumns(insert_id_tables[table_enum])]
+            pk_names = [column.name for column in self._tablePkColumns(replica_chunk_tables[table_enum])]
             index_defs.append(PrimaryKeyConstraint(*pk_names))
-            # Non-unique index on insert_id column.
+            # Non-unique index on replica chunk column.
             name = self._prefix + table_enum.name + "_idx"
-            index_defs.append(Index(name, "insert_id"))
+            index_defs.append(Index(name, "apdb_replica_chunk"))
             # Foreign key to original table
             pk_columns = [apdb_table.columns[column] for column in pk_names]
             index_defs.append(
@@ -575,7 +577,10 @@ class ApdbSqlSchema(ApdbSchema):
             # Foreign key to parent table
             index_defs.append(
                 ForeignKeyConstraint(
-                    ["insert_id"], [parent_table.columns["insert_id"]], onupdate="CASCADE", ondelete="CASCADE"
+                    ["apdb_replica_chunk"],
+                    [parent_table.columns["apdb_replica_chunk"]],
+                    onupdate="CASCADE",
+                    ondelete="CASCADE",
                 )
             )
         else:

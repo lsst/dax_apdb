@@ -123,7 +123,7 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
             "time_partition_tables": self.time_partition_tables,
-            "use_insert_id": self.use_insert_id,
+            "use_insert_id": self.enable_replica,
         }
         if self.time_partition_start:
             kw["time_partition_start"] = self.time_partition_start
@@ -145,10 +145,10 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     time_partition_end = "2022-01-01T00:00:00"
 
 
-class ApdbCassandraTestCaseInsertIds(ApdbCassandraTestCase):
-    """A test case  with use_insert_id."""
+class ApdbCassandraTestCaseReplica(ApdbCassandraTestCase):
+    """A test case  with enabled replica tables."""
 
-    use_insert_id = True
+    enable_replica = True
 
 
 class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):
