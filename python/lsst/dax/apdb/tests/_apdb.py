@@ -39,13 +39,13 @@ from lsst.dax.apdb import (
     Apdb,
     ApdbConfig,
     ApdbReplica,
-    ApdbSql,
     ApdbTableData,
     ApdbTables,
     IncompatibleVersionError,
     ReplicaChunk,
     VersionTuple,
 )
+from lsst.dax.apdb.sql import ApdbSql
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog

@@ -28,7 +28,7 @@ import astropy.time
 import lsst.utils.tests
 import numpy
 import pandas
-from lsst.dax.apdb import ApdbSql, ApdbSqlConfig
+from lsst.dax.apdb.sql import ApdbSql, ApdbSqlConfig
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 

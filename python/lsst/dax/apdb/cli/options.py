@@ -27,8 +27,8 @@ import argparse
 from typing import TYPE_CHECKING, Any
 
 from ..apdb import ApdbConfig
-from ..apdbCassandra import ApdbCassandraConfig
-from ..apdbSql import ApdbSqlConfig
+from ..cassandra import ApdbCassandraConfig
+from ..sql import ApdbSqlConfig
 
 if TYPE_CHECKING:
     from lsst.pex.config import Field

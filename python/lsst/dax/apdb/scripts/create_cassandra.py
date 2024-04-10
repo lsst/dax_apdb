@@ -25,7 +25,7 @@ __all__ = ["create_cassandra"]
 
 from typing import Any
 
-from ..apdbCassandra import ApdbCassandra
+from ..cassandra import ApdbCassandra
 
 
 def create_cassandra(config_path: str, ra_dec_columns: str | None, **kwargs: Any) -> None:

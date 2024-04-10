@@ -30,11 +30,11 @@ from typing import TYPE_CHECKING, Any, cast
 import astropy.time
 from lsst.utils.iteration import chunk_iterable
 
+from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
+from ..timer import Timer
+from ..versionTuple import VersionTuple
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
-from .apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from .cassandra_utils import ApdbCassandraTableData, PreparedStatementCache
-from .timer import Timer
-from .versionTuple import VersionTuple
 
 if TYPE_CHECKING:
     from .apdbCassandra import ApdbCassandra

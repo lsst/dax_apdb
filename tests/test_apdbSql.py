@@ -31,7 +31,8 @@ from typing import Any
 from unittest.mock import patch
 
 import lsst.utils.tests
-from lsst.dax.apdb import Apdb, ApdbConfig, ApdbSql, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
+from lsst.dax.apdb.sql import ApdbSql
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 try:

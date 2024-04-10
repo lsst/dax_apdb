@@ -49,8 +49,8 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbConfig, ApdbTables
-from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
+from lsst.dax.apdb import ApdbConfig, ApdbTables
+from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")

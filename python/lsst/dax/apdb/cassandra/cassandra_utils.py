@@ -51,7 +51,7 @@ try:
 except ImportError:
     CASSANDRA_IMPORTED = False
 
-from .apdbReplica import ApdbTableData
+from ..apdbReplica import ApdbTableData
 
 _LOG = logging.getLogger(__name__)
 

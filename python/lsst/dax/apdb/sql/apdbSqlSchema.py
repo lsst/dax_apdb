@@ -49,7 +49,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 
-from .apdbSchema import ApdbSchema, ApdbTables
+from ..apdbSchema import ApdbSchema, ApdbTables
 
 _LOG = logging.getLogger(__name__)
 

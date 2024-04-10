@@ -34,11 +34,11 @@ import astropy.time
 import sqlalchemy
 from sqlalchemy import sql
 
-from .apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
-from .apdbSchema import ApdbTables
+from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
+from ..apdbSchema import ApdbTables
+from ..timer import Timer
+from ..versionTuple import VersionTuple
 from .apdbSqlSchema import ExtraTables
-from .timer import Timer
-from .versionTuple import VersionTuple
 
 if TYPE_CHECKING:
     from .apdbSqlSchema import ApdbSqlSchema

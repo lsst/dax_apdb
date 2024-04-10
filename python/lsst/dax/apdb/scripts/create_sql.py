@@ -25,7 +25,7 @@ __all__ = ["create_sql"]
 
 from typing import Any
 
-from ..apdbSql import ApdbSql
+from ..sql import ApdbSql
 
 
 def create_sql(config_path: str, ra_dec_columns: str | None, **kwargs: Any) -> None:

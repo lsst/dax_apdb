@@ -27,9 +27,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .apdb import Apdb, ApdbConfig
-    from .apdbCassandra import ApdbCassandra
     from .apdbReplica import ApdbReplica
-    from .apdbSql import ApdbSql
+    from .cassandra import ApdbCassandra
+    from .sql import ApdbSql
 
 
 def apdb_type(config: ApdbConfig) -> type[ApdbSql | ApdbCassandra]:
@@ -50,8 +50,8 @@ def apdb_type(config: ApdbConfig) -> type[ApdbSql | ApdbCassandra]:
     TypeError
         Raised if type of ``config`` does not match any known types.
     """
-    from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
-    from .apdbSql import ApdbSql, ApdbSqlConfig
+    from .cassandra import ApdbCassandra, ApdbCassandraConfig
+    from .sql import ApdbSql, ApdbSqlConfig
 
     if type(config) is ApdbSqlConfig:
         return ApdbSql
@@ -78,8 +78,8 @@ def make_apdb(config: ApdbConfig) -> Apdb:
     TypeError
         Raised if type of ``config`` does not match any known types.
     """
-    from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
-    from .apdbSql import ApdbSql, ApdbSqlConfig
+    from .cassandra import ApdbCassandra, ApdbCassandraConfig
+    from .sql import ApdbSql, ApdbSqlConfig
 
     if type(config) is ApdbSqlConfig:
         return ApdbSql(config)
@@ -106,8 +106,8 @@ def make_apdb_replica(config: ApdbConfig) -> ApdbReplica:
     TypeError
         Raised if type of ``config`` does not match any known types.
     """
-    from .apdbCassandra import ApdbCassandra, ApdbCassandraConfig
-    from .apdbSql import ApdbSql, ApdbSqlConfig
+    from .cassandra import ApdbCassandra, ApdbCassandraConfig
+    from .sql import ApdbSql, ApdbSqlConfig
 
     if type(config) is ApdbSqlConfig:
         return ApdbSql(config).get_replica()

@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import felis.types
 from felis import simple
 
-from .apdbSchema import ApdbSchema, ApdbTables
+from ..apdbSchema import ApdbSchema, ApdbTables
 
 if TYPE_CHECKING:
     import cassandra.cluster
