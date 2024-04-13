@@ -32,9 +32,8 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-import felis.types
+import felis.datamodel
 import sqlalchemy
-from felis import simple
 from sqlalchemy import (
     DDL,
     Column,
@@ -49,6 +48,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 
+from .. import schema_model
 from ..apdbSchema import ApdbSchema, ApdbTables
 
 _LOG = logging.getLogger(__name__)
@@ -205,20 +205,20 @@ class ApdbSqlSchema(ApdbSchema):
         self._metadata = MetaData(schema=namespace)
 
         # map YAML column types to SQLAlchemy
-        self._type_map = {
-            felis.types.Double: self._getDoubleType(engine),
-            felis.types.Float: sqlalchemy.types.Float,
-            felis.types.Timestamp: sqlalchemy.types.TIMESTAMP,
-            felis.types.Long: sqlalchemy.types.BigInteger,
-            felis.types.Int: sqlalchemy.types.Integer,
-            felis.types.Short: sqlalchemy.types.Integer,
-            felis.types.Byte: sqlalchemy.types.Integer,
-            felis.types.Binary: sqlalchemy.types.LargeBinary,
-            felis.types.Text: sqlalchemy.types.Text,
-            felis.types.String: sqlalchemy.types.CHAR,
-            felis.types.Char: sqlalchemy.types.CHAR,
-            felis.types.Unicode: sqlalchemy.types.CHAR,
-            felis.types.Boolean: sqlalchemy.types.Boolean,
+        self._type_map: dict[felis.datamodel.DataType | schema_model.ExtraDataTypes, type] = {
+            felis.datamodel.DataType.DOUBLE: sqlalchemy.types.Double,
+            felis.datamodel.DataType.FLOAT: sqlalchemy.types.Float,
+            felis.datamodel.DataType.TIMESTAMP: sqlalchemy.types.TIMESTAMP,
+            felis.datamodel.DataType.LONG: sqlalchemy.types.BigInteger,
+            felis.datamodel.DataType.INT: sqlalchemy.types.Integer,
+            felis.datamodel.DataType.SHORT: sqlalchemy.types.Integer,
+            felis.datamodel.DataType.BYTE: sqlalchemy.types.Integer,
+            felis.datamodel.DataType.BINARY: sqlalchemy.types.LargeBinary,
+            felis.datamodel.DataType.TEXT: sqlalchemy.types.Text,
+            felis.datamodel.DataType.STRING: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.CHAR: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.UNICODE: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.BOOLEAN: sqlalchemy.types.Boolean,
         }
 
         # Add pixelId column and index to tables that need it
@@ -226,10 +226,10 @@ class ApdbSqlSchema(ApdbSchema):
             tableDef = self.tableSchemas.get(table)
             if not tableDef:
                 continue
-            column = simple.Column(
+            column = schema_model.Column(
                 id=f"#{htm_index_column}",
                 name=htm_index_column,
-                datatype=felis.types.Long,
+                datatype=felis.datamodel.DataType.LONG,
                 nullable=False,
                 value=None,
                 description="Pixelization index column.",
@@ -247,7 +247,7 @@ class ApdbSqlSchema(ApdbSchema):
             else:
                 # make a regular index
                 name = f"IDX_{tableDef.name}_{htm_index_column}"
-                index = simple.Index(id=f"#{name}", name=name, columns=[column])
+                index = schema_model.Index(id=f"#{name}", name=name, columns=[column])
                 tableDef.indexes.append(index)
 
         # generate schema for all tables, must be called last
@@ -523,7 +523,7 @@ class ApdbSqlSchema(ApdbSchema):
             constr_name: str | None = None
             if constraint.name:
                 constr_name = self._prefix + constraint.name
-            if isinstance(constraint, simple.UniqueConstraint):
+            if isinstance(constraint, schema_model.UniqueConstraint):
                 index_defs.append(
                     UniqueConstraint(*[column.name for column in constraint.columns], name=constr_name)
                 )
@@ -586,37 +586,3 @@ class ApdbSqlSchema(ApdbSchema):
         else:
             assert False, "Above branches have to cover all enum values"
         return index_defs
-
-    @classmethod
-    def _getDoubleType(cls, engine: sqlalchemy.engine.Engine) -> type | sqlalchemy.types.TypeEngine:
-        """DOUBLE type is database-specific, select one based on dialect.
-
-        Parameters
-        ----------
-        engine : `sqlalchemy.engine.Engine`
-            Database engine.
-
-        Returns
-        -------
-        type_object : `object`
-            Database-specific type definition.
-        """
-        if engine.name == "mysql":
-            from sqlalchemy.dialects.mysql import DOUBLE
-
-            return DOUBLE(asdecimal=False)
-        elif engine.name == "postgresql":
-            from sqlalchemy.dialects.postgresql import DOUBLE_PRECISION
-
-            return DOUBLE_PRECISION
-        elif engine.name == "oracle":
-            from sqlalchemy.dialects.oracle import DOUBLE_PRECISION
-
-            return DOUBLE_PRECISION
-        elif engine.name == "sqlite":
-            # all floats in sqlite are 8-byte
-            from sqlalchemy.dialects.sqlite import REAL
-
-            return REAL
-        else:
-            raise TypeError("cannot determine DOUBLE type, unexpected dialect: " + engine.name)

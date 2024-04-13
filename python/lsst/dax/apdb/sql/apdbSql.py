@@ -37,7 +37,6 @@ import pandas
 import sqlalchemy
 import sqlalchemy.dialects.postgresql
 import sqlalchemy.dialects.sqlite
-from felis.simple import Table
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
@@ -48,6 +47,7 @@ from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
 from ..apdbSchema import ApdbTables
+from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
 from .apdbMetadataSql import ApdbMetadataSql

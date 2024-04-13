@@ -46,8 +46,7 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 import astropy.time
-import felis.types
-from felis.simple import Table
+import felis.datamodel
 from lsst import sphgeom
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
@@ -58,6 +57,7 @@ from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
 from ..apdbSchema import ApdbTables
 from ..pixelization import Pixelization
+from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
 from .apdbCassandraReplica import ApdbCassandraReplica
@@ -1175,7 +1175,7 @@ class ApdbCassandra(Apdb):
                     if field not in column_map:
                         continue
                     value = getattr(rec, field)
-                    if column_map[field].datatype is felis.types.Timestamp:
+                    if column_map[field].datatype is felis.datamodel.DataType.TIMESTAMP:
                         if isinstance(value, pandas.Timestamp):
                             value = literal(value.to_pydatetime())
                         else:

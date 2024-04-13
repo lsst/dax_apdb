@@ -28,9 +28,9 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-import felis.types
-from felis import simple
+import felis.datamodel
 
+from .. import schema_model
 from ..apdbSchema import ApdbSchema, ApdbTables
 
 if TYPE_CHECKING:
@@ -38,12 +38,6 @@ if TYPE_CHECKING:
 
 
 _LOG = logging.getLogger(__name__)
-
-
-class _FelisUUID(felis.types.FelisType, felis_name="uuid", votable_name="uuid"):
-    """Special internal type for UUID columns. Felis does not support UUID,
-    but we need it here, to simplify logic it's easier to add a special class.
-    """
 
 
 class InconsistentSchemaError(RuntimeError):
@@ -108,20 +102,20 @@ class ApdbCassandraSchema(ApdbSchema):
     """
 
     _type_map = {
-        felis.types.Double: "DOUBLE",
-        felis.types.Float: "FLOAT",
-        felis.types.Timestamp: "TIMESTAMP",
-        felis.types.Long: "BIGINT",
-        felis.types.Int: "INT",
-        felis.types.Short: "INT",
-        felis.types.Byte: "TINYINT",
-        felis.types.Binary: "BLOB",
-        felis.types.Char: "TEXT",
-        felis.types.String: "TEXT",
-        felis.types.Unicode: "TEXT",
-        felis.types.Text: "TEXT",
-        felis.types.Boolean: "BOOLEAN",
-        _FelisUUID: "UUID",
+        felis.datamodel.DataType.DOUBLE: "DOUBLE",
+        felis.datamodel.DataType.FLOAT: "FLOAT",
+        felis.datamodel.DataType.TIMESTAMP: "TIMESTAMP",
+        felis.datamodel.DataType.LONG: "BIGINT",
+        felis.datamodel.DataType.INT: "INT",
+        felis.datamodel.DataType.SHORT: "INT",
+        felis.datamodel.DataType.BYTE: "TINYINT",
+        felis.datamodel.DataType.BINARY: "BLOB",
+        felis.datamodel.DataType.CHAR: "TEXT",
+        felis.datamodel.DataType.STRING: "TEXT",
+        felis.datamodel.DataType.UNICODE: "TEXT",
+        felis.datamodel.DataType.TEXT: "TEXT",
+        felis.datamodel.DataType.BOOLEAN: "BOOLEAN",
+        schema_model.ExtraDataTypes.UUID: "UUID",
     }
     """Map YAML column types to Cassandra"""
 
@@ -154,9 +148,9 @@ class ApdbCassandraSchema(ApdbSchema):
         self._apdb_tables = self._apdb_tables_schema(time_partition_tables)
         self._extra_tables = self._extra_tables_schema()
 
-    def _apdb_tables_schema(self, time_partition_tables: bool) -> Mapping[ApdbTables, simple.Table]:
+    def _apdb_tables_schema(self, time_partition_tables: bool) -> Mapping[ApdbTables, schema_model.Table]:
         """Generate schema for regular APDB tables."""
-        apdb_tables: dict[ApdbTables, simple.Table] = {}
+        apdb_tables: dict[ApdbTables, schema_model.Table] = {}
 
         # add columns and index for partitioning.
         for table, apdb_table_def in self.tableSchemas.items():
@@ -192,7 +186,9 @@ class ApdbCassandraSchema(ApdbSchema):
             column_defs = []
             if add_columns:
                 column_defs = [
-                    simple.Column(id=f"#{name}", name=name, datatype=felis.types.Long, nullable=False)
+                    schema_model.Column(
+                        id=f"#{name}", name=name, datatype=felis.datamodel.DataType.LONG, nullable=False
+                    )
                     for name in add_columns
                 ]
 
@@ -201,7 +197,7 @@ class ApdbCassandraSchema(ApdbSchema):
             if part_columns:
                 annotations["cassandra:partitioning_columns"] = part_columns
 
-            apdb_tables[table] = simple.Table(
+            apdb_tables[table] = schema_model.Table(
                 id=apdb_table_def.id,
                 name=apdb_table_def.name,
                 columns=column_defs + apdb_table_def.columns,
@@ -213,27 +209,35 @@ class ApdbCassandraSchema(ApdbSchema):
 
         return apdb_tables
 
-    def _extra_tables_schema(self) -> Mapping[ExtraTables, simple.Table]:
+    def _extra_tables_schema(self) -> Mapping[ExtraTables, schema_model.Table]:
         """Generate schema for extra tables."""
-        extra_tables: dict[ExtraTables, simple.Table] = {}
+        extra_tables: dict[ExtraTables, schema_model.Table] = {}
 
         # This table maps DiaSource ID to its partitions in DiaSource table and
         # DiaSourceChunks tables.
-        extra_tables[ExtraTables.DiaSourceToPartition] = simple.Table(
+        extra_tables[ExtraTables.DiaSourceToPartition] = schema_model.Table(
             id="#" + ExtraTables.DiaSourceToPartition.value,
             name=ExtraTables.DiaSourceToPartition.table_name(self._prefix),
             columns=[
-                simple.Column(
-                    id="#diaSourceId", name="diaSourceId", datatype=felis.types.Long, nullable=False
+                schema_model.Column(
+                    id="#diaSourceId",
+                    name="diaSourceId",
+                    datatype=felis.datamodel.DataType.LONG,
+                    nullable=False,
                 ),
-                simple.Column(id="#apdb_part", name="apdb_part", datatype=felis.types.Long, nullable=False),
-                simple.Column(
-                    id="#apdb_time_part", name="apdb_time_part", datatype=felis.types.Int, nullable=False
+                schema_model.Column(
+                    id="#apdb_part", name="apdb_part", datatype=felis.datamodel.DataType.LONG, nullable=False
                 ),
-                simple.Column(
+                schema_model.Column(
+                    id="#apdb_time_part",
+                    name="apdb_time_part",
+                    datatype=felis.datamodel.DataType.INT,
+                    nullable=False,
+                ),
+                schema_model.Column(
                     id="#apdb_replica_chunk",
                     name="apdb_replica_chunk",
-                    datatype=felis.types.Long,
+                    datatype=felis.datamodel.DataType.LONG,
                     nullable=True,
                 ),
             ],
@@ -243,8 +247,11 @@ class ApdbCassandraSchema(ApdbSchema):
             annotations={"cassandra:partitioning_columns": ["diaSourceId"]},
         )
 
-        replica_chunk_column = simple.Column(
-            id="#apdb_replica_chunk", name="apdb_replica_chunk", datatype=felis.types.Long, nullable=False
+        replica_chunk_column = schema_model.Column(
+            id="#apdb_replica_chunk",
+            name="apdb_replica_chunk",
+            datatype=felis.datamodel.DataType.LONG,
+            nullable=False,
         )
 
         if not self._enable_replica:
@@ -252,19 +259,26 @@ class ApdbCassandraSchema(ApdbSchema):
 
         # Table containing insert IDs, this one is not partitioned, but
         # partition key must be defined.
-        extra_tables[ExtraTables.ApdbReplicaChunks] = simple.Table(
+        extra_tables[ExtraTables.ApdbReplicaChunks] = schema_model.Table(
             id="#" + ExtraTables.ApdbReplicaChunks.value,
             name=ExtraTables.ApdbReplicaChunks.table_name(self._prefix),
             columns=[
-                simple.Column(id="#partition", name="partition", datatype=felis.types.Int, nullable=False),
+                schema_model.Column(
+                    id="#partition", name="partition", datatype=felis.datamodel.DataType.INT, nullable=False
+                ),
                 replica_chunk_column,
-                simple.Column(
+                schema_model.Column(
                     id="#last_update_time",
                     name="last_update_time",
-                    datatype=felis.types.Timestamp,
+                    datatype=felis.datamodel.DataType.TIMESTAMP,
                     nullable=False,
                 ),
-                simple.Column(id="#unique_id", name="unique_id", datatype=_FelisUUID, nullable=False),
+                schema_model.Column(
+                    id="#unique_id",
+                    name="unique_id",
+                    datatype=schema_model.ExtraDataTypes.UUID,
+                    nullable=False,
+                ),
             ],
             primary_key=[replica_chunk_column],
             indexes=[],
@@ -275,7 +289,7 @@ class ApdbCassandraSchema(ApdbSchema):
         for chunk_table_enum, apdb_table_enum in ExtraTables.replica_chunk_tables().items():
             apdb_table_def = self.tableSchemas[apdb_table_enum]
 
-            extra_tables[chunk_table_enum] = simple.Table(
+            extra_tables[chunk_table_enum] = schema_model.Table(
                 id="#" + chunk_table_enum.value,
                 name=chunk_table_enum.table_name(self._prefix),
                 columns=[replica_chunk_column] + apdb_table_def.columns,
@@ -354,7 +368,7 @@ class ApdbCassandraSchema(ApdbSchema):
         """Return Cassandra keyspace for APDB tables."""
         return self._keyspace
 
-    def getColumnMap(self, table_name: ApdbTables | ExtraTables) -> Mapping[str, simple.Column]:
+    def getColumnMap(self, table_name: ApdbTables | ExtraTables) -> Mapping[str, schema_model.Column]:
         """Return mapping of column names to Column definitions.
 
         Parameters
@@ -539,7 +553,7 @@ class ApdbCassandraSchema(ApdbSchema):
 
         return column_defs
 
-    def _table_schema(self, table: ApdbTables | ExtraTables) -> simple.Table:
+    def _table_schema(self, table: ApdbTables | ExtraTables) -> schema_model.Table:
         """Return schema definition for a table."""
         if isinstance(table, ApdbTables):
             table_schema = self._apdb_tables[table]

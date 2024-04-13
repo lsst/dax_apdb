@@ -30,7 +30,6 @@ from typing import TYPE_CHECKING, cast
 
 import astropy.time
 import pandas
-from felis.simple import Table
 from lsst.pex.config import Config, ConfigurableField, Field
 from lsst.resources import ResourcePath, ResourcePathExpression
 from lsst.sphgeom import Region
@@ -38,6 +37,7 @@ from lsst.sphgeom import Region
 from .apdbIndex import ApdbIndex
 from .apdbSchema import ApdbTables
 from .factory import make_apdb
+from .schema_model import Table
 
 if TYPE_CHECKING:
     from .apdbMetadata import ApdbMetadata
@@ -170,7 +170,7 @@ class Apdb(ABC):
 
         Returns
         -------
-        tableSchema : `felis.simple.Table` or `None`
+        tableSchema : `.schema_model.Table` or `None`
             Table schema description, `None` is returned if table is not
             defined by this implementation.
         """

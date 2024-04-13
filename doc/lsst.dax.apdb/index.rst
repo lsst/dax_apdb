@@ -37,6 +37,10 @@ Python API reference
    :no-main-docstr:
    :no-inheritance-diagram:
 
+.. automodapi:: lsst.dax.apdb.schema_model
+   :no-main-docstr:
+   :no-inheritance-diagram:
+
 
 Command line tools
 ==================
