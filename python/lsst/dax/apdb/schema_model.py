@@ -130,6 +130,10 @@ class Column:
         )
         return column
 
+    def clone(self) -> Column:
+        """Make a clone of self."""
+        return dataclasses.replace(self, table=None)
+
 
 @dataclasses.dataclass
 class Index:
@@ -301,6 +305,24 @@ class ForeignKeyConstraint(Constraint):
     which is different from the table of this constraint.
     """
 
+    onupdate: str | None = None
+    """What to do when parent table columns are updated. Typical values are
+    CASCADE, DELETE and RESTRICT.
+    """
+
+    ondelete: str | None = None
+    """What to do when parent table columns are deleted. Typical values are
+    CASCADE, DELETE and RESTRICT.
+    """
+
+    @property
+    def referenced_table(self) -> Table:
+        """Table referenced by this constraint."""
+        assert len(self.referenced_columns) > 0, "column list cannot be empty"
+        ref_table = self.referenced_columns[0].table
+        assert ref_table is not None, "foreign key column must have table defined"
+        return ref_table
+
 
 @dataclasses.dataclass
 class CheckConstraint(Constraint):
@@ -338,6 +360,11 @@ class Table:
     annotations: Mapping[str, Any] = dataclasses.field(default_factory=dict)
     """Additional annotations for this table."""
 
+    def __post_init__(self) -> None:
+        """Update all columns to point to this table."""
+        for column in self.columns:
+            column.table = self
+
     @classmethod
     def from_felis(cls, dm_table: felis.datamodel.Table, columns: Mapping[str, Column]) -> Table:
         """Convert Felis table definition into instance of this class.
@@ -374,8 +401,6 @@ class Table:
                 ["name", "id", "columns", "primaryKey", "constraints", "indexes", "description"],
             ),
         )
-        for column in table_columns:
-            column.table = table
         return table
 
 

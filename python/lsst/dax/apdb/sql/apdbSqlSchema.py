@@ -27,84 +27,18 @@ from __future__ import annotations
 __all__ = ["ApdbSqlSchema", "ExtraTables"]
 
 import enum
+import itertools
 import logging
-import uuid
 from collections.abc import Mapping
-from typing import Any
 
 import felis.datamodel
 import sqlalchemy
-from sqlalchemy import (
-    DDL,
-    Column,
-    ForeignKeyConstraint,
-    Index,
-    MetaData,
-    PrimaryKeyConstraint,
-    Table,
-    UniqueConstraint,
-    event,
-    inspect,
-)
-from sqlalchemy.dialects.postgresql import UUID
 
 from .. import schema_model
 from ..apdbSchema import ApdbSchema, ApdbTables
+from .modelToSql import ModelToSql
 
 _LOG = logging.getLogger(__name__)
-
-
-#
-# Copied from daf_butler.
-#
-class GUID(sqlalchemy.TypeDecorator):
-    """Platform-independent GUID type.
-
-    Uses PostgreSQL's UUID type, otherwise uses CHAR(32), storing as
-    stringified hex values.
-    """
-
-    impl = sqlalchemy.CHAR
-
-    cache_ok = True
-
-    def load_dialect_impl(self, dialect: sqlalchemy.engine.Dialect) -> sqlalchemy.types.TypeEngine:
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(UUID())
-        else:
-            return dialect.type_descriptor(sqlalchemy.CHAR(32))
-
-    def process_bind_param(self, value: Any, dialect: sqlalchemy.engine.Dialect) -> str | None:
-        if value is None:
-            return value
-
-        # Coerce input to UUID type, in general having UUID on input is the
-        # only thing that we want but there is code right now that uses ints.
-        if isinstance(value, int):
-            value = uuid.UUID(int=value)
-        elif isinstance(value, bytes):
-            value = uuid.UUID(bytes=value)
-        elif isinstance(value, str):
-            # hexstring
-            value = uuid.UUID(hex=value)
-        elif not isinstance(value, uuid.UUID):
-            raise TypeError(f"Unexpected type of a bind value: {type(value)}")
-
-        if dialect.name == "postgresql":
-            return str(value)
-        else:
-            return "%.32x" % value.int
-
-    def process_result_value(
-        self, value: str | uuid.UUID | None, dialect: sqlalchemy.engine.Dialect
-    ) -> uuid.UUID | None:
-        if value is None:
-            return value
-        elif isinstance(value, uuid.UUID):
-            # sqlalchemy 2 converts to UUID internally
-            return value
-        else:
-            return uuid.UUID(hex=value)
 
 
 class InconsistentSchemaError(RuntimeError):
@@ -202,24 +136,7 @@ class ApdbSqlSchema(ApdbSchema):
         self._prefix = prefix
         self._enable_replica = enable_replica
 
-        self._metadata = MetaData(schema=namespace)
-
-        # map YAML column types to SQLAlchemy
-        self._type_map: dict[felis.datamodel.DataType | schema_model.ExtraDataTypes, type] = {
-            felis.datamodel.DataType.DOUBLE: sqlalchemy.types.Double,
-            felis.datamodel.DataType.FLOAT: sqlalchemy.types.Float,
-            felis.datamodel.DataType.TIMESTAMP: sqlalchemy.types.TIMESTAMP,
-            felis.datamodel.DataType.LONG: sqlalchemy.types.BigInteger,
-            felis.datamodel.DataType.INT: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.SHORT: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.BYTE: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.BINARY: sqlalchemy.types.LargeBinary,
-            felis.datamodel.DataType.TEXT: sqlalchemy.types.Text,
-            felis.datamodel.DataType.STRING: sqlalchemy.types.CHAR,
-            felis.datamodel.DataType.CHAR: sqlalchemy.types.CHAR,
-            felis.datamodel.DataType.UNICODE: sqlalchemy.types.CHAR,
-            felis.datamodel.DataType.BOOLEAN: sqlalchemy.types.Boolean,
-        }
+        self._metadata = sqlalchemy.schema.MetaData(schema=namespace)
 
         # Add pixelId column and index to tables that need it
         for table in self.pixel_id_tables:
@@ -251,8 +168,18 @@ class ApdbSqlSchema(ApdbSchema):
                 tableDef.indexes.append(index)
 
         # generate schema for all tables, must be called last
-        self._apdb_tables = self._make_apdb_tables()
-        self._extra_tables = self._make_extra_tables(self._apdb_tables)
+        apdb_tables = self._make_apdb_tables()
+        extra_tables = self._make_extra_tables(apdb_tables)
+
+        converter = ModelToSql(metadata=self._metadata, prefix=self._prefix)
+        id_to_table = converter.make_tables(itertools.chain(apdb_tables.values(), extra_tables.values()))
+
+        self._apdb_tables = {
+            apdb_enum: id_to_table[table_model.id] for apdb_enum, table_model in apdb_tables.items()
+        }
+        self._extra_tables = {
+            extra_enum: id_to_table[table_model.id] for extra_enum, table_model in extra_tables.items()
+        }
 
         self._has_replica_chunks: bool | None = None
         self._metadata_check: bool | None = None
@@ -271,7 +198,7 @@ class ApdbSqlSchema(ApdbSchema):
         InconsistentSchemaError
             Raised when some of the required tables exist but not all.
         """
-        inspector = inspect(self._engine)
+        inspector = sqlalchemy.inspect(self._engine)
         table_names = set(inspector.get_table_names(self._metadata.schema))
 
         existing_tables = []
@@ -305,10 +232,10 @@ class ApdbSqlSchema(ApdbSchema):
         if self._metadata.schema:
             dialect = self._engine.dialect
             quoted_schema = dialect.preparer(dialect).quote_schema(self._metadata.schema)
-            create_schema = DDL(
+            create_schema = sqlalchemy.schema.DDL(
                 "CREATE SCHEMA IF NOT EXISTS %(schema)s", context={"schema": quoted_schema}
             ).execute_if(dialect="postgresql")
-            event.listen(self._metadata, "before_create", create_schema)
+            sqlalchemy.event.listen(self._metadata, "before_create", create_schema)
 
         # create all tables (optionally drop first)
         if drop:
@@ -321,7 +248,7 @@ class ApdbSqlSchema(ApdbSchema):
         self._has_replica_chunks = None
         self._metadata_check = None
 
-    def get_table(self, table_enum: ApdbTables | ExtraTables) -> Table:
+    def get_table(self, table_enum: ApdbTables | ExtraTables) -> sqlalchemy.schema.Table:
         """Return SQLAlchemy table instance for a specified table type/enum.
 
         Parameters
@@ -347,7 +274,7 @@ class ApdbSqlSchema(ApdbSchema):
                     # that table actually exists in the database. Note that
                     # this may interact with `makeSchema`.
                     if self._metadata_check is None:
-                        inspector = inspect(self._engine)
+                        inspector = sqlalchemy.inspect(self._engine)
                         table_name = table_enum.table_name(self._prefix)
                         self._metadata_check = inspector.has_table(table_name, schema=self._metadata.schema)
                     if not self._metadata_check:
@@ -359,7 +286,7 @@ class ApdbSqlSchema(ApdbSchema):
         except LookupError:
             raise ValueError(f"Table type {table_enum} does not exist in the schema") from None
 
-    def get_apdb_columns(self, table_enum: ApdbTables | ExtraTables) -> list[Column]:
+    def get_apdb_columns(self, table_enum: ApdbTables | ExtraTables) -> list[sqlalchemy.schema.Column]:
         """Return list of columns defined for a table in APDB schema.
 
         Returned list excludes columns that are implementation-specific, e.g.
@@ -395,11 +322,11 @@ class ApdbSqlSchema(ApdbSchema):
 
     def _check_replica_chunks(self) -> bool:
         """Check whether database has tables for tracking insert IDs."""
-        inspector = inspect(self._engine)
+        inspector = sqlalchemy.inspect(self._engine)
         db_tables = set(inspector.get_table_names(schema=self._metadata.schema))
         return ExtraTables.ApdbReplicaChunks.table_name(self._prefix) in db_tables
 
-    def _make_apdb_tables(self, mysql_engine: str = "InnoDB") -> Mapping[ApdbTables, Table]:
+    def _make_apdb_tables(self, mysql_engine: str = "InnoDB") -> Mapping[ApdbTables, schema_model.Table]:
         """Generate schema for regular tables.
 
         Parameters
@@ -414,175 +341,143 @@ class ApdbSqlSchema(ApdbSchema):
             if table_enum is ApdbTables.metadata and table_enum not in self.tableSchemas:
                 # Schema does not define metadata.
                 continue
-
-            columns = self._tableColumns(table_enum)
-            constraints = self._tableIndices(table_enum)
-            table = Table(
-                table_enum.table_name(self._prefix),
-                self._metadata,
-                *columns,
-                *constraints,
-                mysql_engine=mysql_engine,
-            )
+            table = self.tableSchemas[table_enum]
             tables[table_enum] = table
 
         return tables
 
     def _make_extra_tables(
-        self, apdb_tables: Mapping[ApdbTables, Table], mysql_engine: str = "InnoDB"
-    ) -> Mapping[ExtraTables, Table]:
+        self, apdb_tables: Mapping[ApdbTables, schema_model.Table]
+    ) -> Mapping[ExtraTables, schema_model.Table]:
         """Generate schema for insert ID tables."""
-        tables: dict[ExtraTables, Table] = {}
         if not self._enable_replica:
-            return tables
+            return {}
 
-        # Parent table needs to be defined first
-        column_defs: list[Column] = [
-            Column("apdb_replica_chunk", sqlalchemy.types.BigInteger, primary_key=True),
-            Column("last_update_time", sqlalchemy.types.TIMESTAMP, nullable=False),
-            Column("unique_id", GUID, nullable=False),
+        tables = {}
+        column_defs: list[schema_model.Column] = [
+            schema_model.Column(
+                name="apdb_replica_chunk",
+                id="#ApdbReplicaChunks.apdb_replica_chunk",
+                datatype=felis.datamodel.DataType.LONG,
+            ),
+            schema_model.Column(
+                name="last_update_time",
+                id="#ApdbReplicaChunks.last_update_time",
+                datatype=felis.datamodel.DataType.TIMESTAMP,
+                nullable=False,
+            ),
+            schema_model.Column(
+                name="unique_id",
+                id="#ApdbReplicaChunks.unique_id",
+                datatype=schema_model.ExtraDataTypes.UUID,
+                nullable=False,
+            ),
         ]
-        parent_table = Table(
-            ExtraTables.ApdbReplicaChunks.table_name(self._prefix),
-            self._metadata,
-            *column_defs,
-            mysql_engine=mysql_engine,
+        parent_table = schema_model.Table(
+            name=ExtraTables.ApdbReplicaChunks.table_name(self._prefix),
+            id="#ApdbReplicaChunks",
+            columns=column_defs,
+            primary_key=[column_defs[0]],
+            constraints=[],
+            indexes=[],
         )
         tables[ExtraTables.ApdbReplicaChunks] = parent_table
 
         for table_enum, apdb_enum in ExtraTables.replica_chunk_tables().items():
             apdb_table = apdb_tables[apdb_enum]
-            columns = self._replicaChunkColumns(table_enum)
-            constraints = self._replicaChunkIndices(table_enum, apdb_table, parent_table)
-            table = Table(
-                table_enum.table_name(self._prefix),
-                self._metadata,
-                *columns,
-                *constraints,
-                mysql_engine=mysql_engine,
+            table_name = table_enum.table_name(self._prefix)
+
+            columns = self._replicaChunkColumns(table_enum, apdb_enum)
+            column_map = {column.name: column for column in columns}
+            # PK is the same as for original table
+            pk_columns = [column_map[column.name] for column in apdb_table.primary_key]
+
+            indices = self._replicaChunkIndices(table_enum, column_map)
+            constraints = self._replicaChunkConstraints(table_enum, apdb_table, parent_table, column_map)
+            table = schema_model.Table(
+                name=table_name,
+                id=f"#{table_name}",
+                columns=columns,
+                primary_key=pk_columns,
+                indexes=indices,
+                constraints=constraints,
             )
             tables[table_enum] = table
 
         return tables
 
-    def _tableColumns(self, table_name: ApdbTables) -> list[Column]:
-        """Return set of columns in a table
-
-        Parameters
-        ----------
-        table_name : `ApdbTables`
-            Name of the table.
-
-        Returns
-        -------
-        column_defs : `list`
-            List of `Column` objects.
-        """
-        # get the list of columns in primary key, they are treated somewhat
-        # specially below
-        table_schema = self.tableSchemas[table_name]
-
-        # convert all column dicts into alchemy Columns
-        column_defs: list[Column] = []
-        for column in table_schema.columns:
-            kwargs: dict[str, Any] = dict(nullable=column.nullable)
-            if column.value is not None:
-                kwargs.update(server_default=str(column.value))
-            if column in table_schema.primary_key:
-                kwargs.update(autoincrement=False)
-            ctype = self._type_map[column.datatype]
-            column_defs.append(Column(column.name, ctype, **kwargs))
-
-        return column_defs
-
-    def _tableIndices(self, table_name: ApdbTables) -> list[sqlalchemy.schema.SchemaItem]:
-        """Return set of constraints/indices in a table
-
-        Parameters
-        ----------
-        table_name : `ApdbTables`
-            Name of the table.
-        info : `dict`
-            Additional options passed to SQLAlchemy index constructor.
-
-        Returns
-        -------
-        index_defs : `list`
-            List of SQLAlchemy index/constraint objects.
-        """
-        table_schema = self.tableSchemas[table_name]
-
-        # convert all index dicts into alchemy Columns
-        index_defs: list[sqlalchemy.schema.SchemaItem] = []
-        if table_schema.primary_key:
-            index_defs.append(PrimaryKeyConstraint(*[column.name for column in table_schema.primary_key]))
-        for index in table_schema.indexes:
-            name = self._prefix + index.name if index.name else ""
-            index_defs.append(Index(name, *[column.name for column in index.columns]))
-        for constraint in table_schema.constraints:
-            constr_name: str | None = None
-            if constraint.name:
-                constr_name = self._prefix + constraint.name
-            if isinstance(constraint, schema_model.UniqueConstraint):
-                index_defs.append(
-                    UniqueConstraint(*[column.name for column in constraint.columns], name=constr_name)
-                )
-
-        return index_defs
-
-    def _replicaChunkColumns(self, table_enum: ExtraTables) -> list[Column]:
+    def _replicaChunkColumns(
+        self, table_enum: ExtraTables, apdb_enum: ApdbTables
+    ) -> list[schema_model.Column]:
         """Return list of columns for replica chunks tables."""
-        column_defs: list[Column] = [
-            Column("apdb_replica_chunk", sqlalchemy.types.BigInteger, nullable=False)
+        table_name = table_enum.table_name()
+        column_defs: list[schema_model.Column] = [
+            schema_model.Column(
+                name="apdb_replica_chunk",
+                id=f"#{table_name}.apdb_replica_chunk",
+                datatype=felis.datamodel.DataType.LONG,
+                nullable=False,
+            )
         ]
-        replica_chunk_tables = ExtraTables.replica_chunk_tables()
-        if table_enum in replica_chunk_tables:
-            column_defs += self._tablePkColumns(replica_chunk_tables[table_enum])
+        if table_enum in ExtraTables.replica_chunk_tables():
+            table_model = self.tableSchemas[apdb_enum]
+            column_defs += [column.clone() for column in table_model.primary_key]
         else:
             assert False, "Above branches have to cover all enum values"
-        return column_defs
-
-    def _tablePkColumns(self, table_enum: ApdbTables) -> list[Column]:
-        """Return a list of columns for table PK."""
-        table_schema = self.tableSchemas[table_enum]
-        column_defs: list[Column] = []
-        for column in table_schema.primary_key:
-            ctype = self._type_map[column.datatype]
-            column_defs.append(Column(column.name, ctype, nullable=False, autoincrement=False))
         return column_defs
 
     def _replicaChunkIndices(
         self,
         table_enum: ExtraTables,
-        apdb_table: sqlalchemy.schema.Table,
-        parent_table: sqlalchemy.schema.Table,
-    ) -> list[sqlalchemy.schema.SchemaItem]:
-        """Return set of constraints/indices for replica chunk tables."""
-        index_defs: list[sqlalchemy.schema.SchemaItem] = []
+        column_map: Mapping[str, schema_model.Column],
+    ) -> list[schema_model.Index]:
+        """Return set of indices for replica chunk table."""
+        index_defs: list[schema_model.Index] = []
+        if table_enum in ExtraTables.replica_chunk_tables():
+            # Non-unique index on replica chunk column.
+            name = self._prefix + table_enum.name + "_apdb_replica_chunk_idx"
+            column = column_map["apdb_replica_chunk"]
+            index_defs.append(schema_model.Index(name=name, id=f"#{name}", columns=[column]))
+        return index_defs
 
-        # Special case for insert ID tables that are not in felis schema.
+    def _replicaChunkConstraints(
+        self,
+        table_enum: ExtraTables,
+        apdb_table: schema_model.Table,
+        parent_table: schema_model.Table,
+        column_map: Mapping[str, schema_model.Column],
+    ) -> list[schema_model.Constraint]:
+        """Return set of constraints for replica chunk table."""
+        constraints: list[schema_model.Constraint] = []
         replica_chunk_tables = ExtraTables.replica_chunk_tables()
         if table_enum in replica_chunk_tables:
-            # PK is the same as for original table
-            pk_names = [column.name for column in self._tablePkColumns(replica_chunk_tables[table_enum])]
-            index_defs.append(PrimaryKeyConstraint(*pk_names))
-            # Non-unique index on replica chunk column.
-            name = self._prefix + table_enum.name + "_idx"
-            index_defs.append(Index(name, "apdb_replica_chunk"))
             # Foreign key to original table
-            pk_columns = [apdb_table.columns[column] for column in pk_names]
-            index_defs.append(
-                ForeignKeyConstraint(pk_names, pk_columns, onupdate="CASCADE", ondelete="CASCADE")
-            )
-            # Foreign key to parent table
-            index_defs.append(
-                ForeignKeyConstraint(
-                    ["apdb_replica_chunk"],
-                    [parent_table.columns["apdb_replica_chunk"]],
+            name = f"{table_enum.table_name()}_fk_{apdb_table.name}"
+            other_columns = apdb_table.primary_key
+            this_columns = [column_map[column.name] for column in apdb_table.primary_key]
+            constraints.append(
+                schema_model.ForeignKeyConstraint(
+                    name=name,
+                    id=f"#{name}",
+                    columns=this_columns,
+                    referenced_columns=other_columns,
                     onupdate="CASCADE",
                     ondelete="CASCADE",
                 )
             )
-        else:
-            assert False, "Above branches have to cover all enum values"
-        return index_defs
+
+            # Foreign key to parent chunk ID table
+            name = f"{table_enum.table_name()}_fk_{parent_table.name}"
+            other_columns = parent_table.primary_key
+            this_columns = [column_map[column.name] for column in parent_table.primary_key]
+            constraints.append(
+                schema_model.ForeignKeyConstraint(
+                    name=name,
+                    id=f"#{name}",
+                    columns=this_columns,
+                    referenced_columns=other_columns,
+                    onupdate="CASCADE",
+                    ondelete="CASCADE",
+                )
+            )
+        return constraints
