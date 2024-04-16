@@ -38,13 +38,14 @@ import yaml
 from lsst.dax.apdb import (
     Apdb,
     ApdbConfig,
-    ApdbInsertId,
-    ApdbSql,
+    ApdbReplica,
     ApdbTableData,
     ApdbTables,
     IncompatibleVersionError,
+    ReplicaChunk,
     VersionTuple,
 )
+from lsst.dax.apdb.sql import ApdbSql
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
@@ -125,8 +126,8 @@ class ApdbTest(TestCaseMixin, ABC):
     fsrc_requires_id_list = False
     """Should be set to True if getDiaForcedSources requires object IDs"""
 
-    use_insert_id: bool = False
-    """Set to true when support for Insert IDs is configured"""
+    enable_replica: bool = False
+    """Set to true when support for replication is configured"""
 
     allow_visit_query: bool = True
     """Set to true when contains is implemented"""
@@ -186,7 +187,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertIsInstance(catalog, ApdbTableData)
         n_rows = sum(1 for row in catalog.rows())
         self.assertEqual(n_rows, rows)
-        # One extra column for insert_id
+        # One extra column for replica chunk id
         self.assertEqual(len(catalog.column_names()), self.table_column_count[table] + 1)
 
     def test_makeSchema(self) -> None:
@@ -423,11 +424,12 @@ class ApdbTest(TestCaseMixin, ABC):
             res = apdb.containsCcdVisit(42)
             self.assertFalse(res)
 
-    def test_getHistory(self) -> None:
-        """Store and retrieve catalog history."""
+    def test_getChunks(self) -> None:
+        """Store and retrieve replica chunks."""
         # don't care about sources.
         config = self.make_instance()
         apdb = Apdb.from_config(config)
+        apdb_replica = ApdbReplica.from_config(config)
         visit_time = self.visit_time
 
         region1 = _make_region((1.0, 1.0, -1.0))
@@ -436,13 +438,15 @@ class ApdbTest(TestCaseMixin, ABC):
         objects1 = makeObjectCatalog(region1, nobj, visit_time)
         objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
 
+        # With the default 10 minutes replica chunk window we should have 4
+        # records.
         visits = [
             (astropy.time.Time("2021-01-01T00:01:00", format="isot", scale="tai"), objects1),
             (astropy.time.Time("2021-01-01T00:02:00", format="isot", scale="tai"), objects2),
-            (astropy.time.Time("2021-01-01T00:03:00", format="isot", scale="tai"), objects1),
-            (astropy.time.Time("2021-01-01T00:04:00", format="isot", scale="tai"), objects2),
-            (astropy.time.Time("2021-01-01T00:05:00", format="isot", scale="tai"), objects1),
-            (astropy.time.Time("2021-01-01T00:06:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:11:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:12:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:45:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:46:00", format="isot", scale="tai"), objects2),
             (astropy.time.Time("2021-03-01T00:01:00", format="isot", scale="tai"), objects1),
             (astropy.time.Time("2021-03-01T00:02:00", format="isot", scale="tai"), objects2),
         ]
@@ -454,46 +458,46 @@ class ApdbTest(TestCaseMixin, ABC):
             apdb.store(visit_time, objects, sources, fsources)
             start_id += nobj
 
-        insert_ids = apdb.getInsertIds()
-        if not self.use_insert_id:
-            self.assertIsNone(insert_ids)
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
 
-            with self.assertRaisesRegex(ValueError, "APDB is not configured for history retrieval"):
-                apdb.getDiaObjectsHistory([])
+            with self.assertRaisesRegex(ValueError, "APDB is not configured for replication"):
+                apdb_replica.getDiaObjectsChunks([])
 
         else:
-            assert insert_ids is not None
-            self.assertEqual(len(insert_ids), 8)
+            assert replica_chunks is not None
+            self.assertEqual(len(replica_chunks), 4)
 
-            def _check_history(insert_ids: list[ApdbInsertId], n_records: int | None = None) -> None:
+            def _check_chunks(replica_chunks: list[ReplicaChunk], n_records: int | None = None) -> None:
                 if n_records is None:
-                    n_records = len(insert_ids) * nobj
-                res = apdb.getDiaObjectsHistory(insert_ids)
+                    n_records = len(replica_chunks) * nobj
+                res = apdb_replica.getDiaObjectsChunks(chunk.id for chunk in replica_chunks)
                 self.assert_table_data(res, n_records, ApdbTables.DiaObject)
-                res = apdb.getDiaSourcesHistory(insert_ids)
+                res = apdb_replica.getDiaSourcesChunks(chunk.id for chunk in replica_chunks)
                 self.assert_table_data(res, n_records, ApdbTables.DiaSource)
-                res = apdb.getDiaForcedSourcesHistory(insert_ids)
+                res = apdb_replica.getDiaForcedSourcesChunks(chunk.id for chunk in replica_chunks)
                 self.assert_table_data(res, n_records, ApdbTables.DiaForcedSource)
 
             # read it back and check sizes
-            _check_history(insert_ids)
-            _check_history(insert_ids[1:])
-            _check_history(insert_ids[1:-1])
-            _check_history(insert_ids[3:4])
-            _check_history([])
+            _check_chunks(replica_chunks, 800)
+            _check_chunks(replica_chunks[1:], 600)
+            _check_chunks(replica_chunks[1:-1], 400)
+            _check_chunks(replica_chunks[2:3], 200)
+            _check_chunks([])
 
             # try to remove some of those
-            deleted_ids = insert_ids[:2]
-            apdb.deleteInsertIds(deleted_ids)
+            deleted_chunks = replica_chunks[:1]
+            apdb_replica.deleteReplicaChunks(chunk.id for chunk in deleted_chunks)
 
             # All queries on deleted ids should return empty set.
-            _check_history(deleted_ids, 0)
+            _check_chunks(deleted_chunks, 0)
 
-            insert_ids = apdb.getInsertIds()
-            assert insert_ids is not None
-            self.assertEqual(len(insert_ids), 6)
+            replica_chunks = apdb_replica.getReplicaChunks()
+            assert replica_chunks is not None
+            self.assertEqual(len(replica_chunks), 3)
 
-            _check_history(insert_ids)
+            _check_chunks(replica_chunks, 600)
 
     def test_storeSSObjects(self) -> None:
         """Store and retrieve SSObjects."""
@@ -631,10 +635,11 @@ class ApdbTest(TestCaseMixin, ABC):
         apdb = Apdb.from_config(config)
         metadata = apdb.metadata
 
-        # APDB should write two metadata items with version numbers and a
-        # frozen JSON config.
+        # APDB should write two or three metadata items with version numbers
+        # and a frozen JSON config.
         self.assertFalse(metadata.empty())
-        self.assertEqual(len(list(metadata.items())), 3)
+        expected_rows = 4 if self.enable_replica else 3
+        self.assertEqual(len(list(metadata.items())), expected_rows)
 
         metadata.set("meta", "data")
         metadata.set("data", "meta")
@@ -703,10 +708,10 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # `use_insert_id` is the only parameter that is frozen in all
         # implementations.
-        config.use_insert_id = not self.use_insert_id
+        config.use_insert_id = not self.enable_replica
         apdb = Apdb.from_config(config)
         frozen_config = apdb.config  # type: ignore[attr-defined]
-        self.assertEqual(frozen_config.use_insert_id, self.use_insert_id)
+        self.assertEqual(frozen_config.use_insert_id, self.enable_replica)
 
 
 class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
@@ -724,15 +729,16 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         """
         raise NotImplementedError()
 
-    def test_schema_add_history(self) -> None:
-        """Check that new code can work with old schema without history
+    def test_schema_add_replica(self) -> None:
+        """Check that new code can work with old schema without replica
         tables.
         """
-        # Make schema without history tables.
+        # Make schema without replica tables.
         config = self.make_instance(use_insert_id=False)
         apdb = Apdb.from_config(config)
+        apdb_replica = ApdbReplica.from_config(config)
 
-        # Make APDB instance configured for history tables.
+        # Make APDB instance configured for replication.
         config.use_insert_id = True
         apdb = Apdb.from_config(config)
 
@@ -746,9 +752,9 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         fsources = makeForcedSourceCatalog(objects, visit_time)
         apdb.store(visit_time, objects, sources, fsources)
 
-        # There should be no history.
-        insert_ids = apdb.getInsertIds()
-        self.assertIsNone(insert_ids)
+        # There should be no replica chunks.
+        replica_chunks = apdb_replica.getReplicaChunks()
+        self.assertIsNone(replica_chunks)
 
     def test_schemaVersionCheck(self) -> None:
         """Check version number compatibility."""

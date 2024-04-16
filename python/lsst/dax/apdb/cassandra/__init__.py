@@ -19,12 +19,5 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from . import schema_model
-from .apdb import *
-from .apdbMetadata import *
-from .apdbReplica import *
-from .apdbSchema import ApdbTables
-from .cassandra import ApdbCassandra, ApdbCassandraConfig
-from .sql import ApdbSql, ApdbSqlConfig
-from .version import *
-from .versionTuple import *
+from .apdbCassandra import *
+from .apdbCassandraReplica import *

@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 import logging
-from collections.abc import Iterable, Iterator
+from collections.abc import Collection, Iterator, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -51,7 +51,7 @@ try:
 except ImportError:
     CASSANDRA_IMPORTED = False
 
-from .apdb import ApdbTableData
+from ..apdbReplica import ApdbTableData
 
 _LOG = logging.getLogger(__name__)
 
@@ -96,11 +96,11 @@ class ApdbCassandraTableData(ApdbTableData):
         self._columns = columns
         self._rows = rows
 
-    def column_names(self) -> list[str]:
+    def column_names(self) -> Sequence[str]:
         # docstring inherited
         return self._columns
 
-    def rows(self) -> Iterable[tuple]:
+    def rows(self) -> Collection[tuple]:
         # docstring inherited
         return self._rows
 

@@ -26,7 +26,7 @@ __all__ = ["ApdbMetadataCassandra"]
 from collections.abc import Generator
 from typing import Any
 
-from .apdbMetadata import ApdbMetadata
+from ..apdbMetadata import ApdbMetadata
 from .cassandra_utils import PreparedStatementCache, quote_id
 
 

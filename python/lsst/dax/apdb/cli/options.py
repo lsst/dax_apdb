@@ -27,8 +27,8 @@ import argparse
 from typing import TYPE_CHECKING, Any
 
 from ..apdb import ApdbConfig
-from ..apdbCassandra import ApdbCassandraConfig
-from ..apdbSql import ApdbSqlConfig
+from ..cassandra import ApdbCassandraConfig
+from ..sql import ApdbSqlConfig
 
 if TYPE_CHECKING:
     from lsst.pex.config import Field
@@ -58,7 +58,9 @@ def common_apdb_options(parser: argparse.ArgumentParser) -> None:
     _option_from_pex_field(group, ApdbConfig.schema_name)
     _option_from_pex_field(group, ApdbConfig.read_sources_months, type=int)
     _option_from_pex_field(group, ApdbConfig.read_forced_sources_months, type=int)
-    _option_from_pex_field(group, ApdbConfig.use_insert_id, action="store_true", default=False)
+    _option_from_pex_field(
+        group, ApdbConfig.use_insert_id, name="--enable-replica", action="store_true", default=False
+    )
 
 
 # Options for fields in ApdbSqlConfig, db_url is not included.
@@ -85,7 +87,12 @@ def sql_config_options(parser: argparse.ArgumentParser) -> None:
 def cassandra_config_options(parser: argparse.ArgumentParser) -> None:
     """Define Cassandra backend configuration options."""
     group = parser.add_argument_group("Cassandra backend options")
-    _option_from_pex_field(group, ApdbCassandraConfig.use_insert_id_skips_diaobjects, action="store_true")
+    _option_from_pex_field(
+        group,
+        ApdbCassandraConfig.use_insert_id_skips_diaobjects,
+        name="--replica-skips-diaobjects",
+        action="store_true",
+    )
     _option_from_pex_field(group, ApdbCassandraConfig.port, type=int, metavar="PORT")
     _option_from_pex_field(group, ApdbCassandraConfig.username, metavar="USER")
     _option_from_pex_field(group, ApdbCassandraConfig.prefix)

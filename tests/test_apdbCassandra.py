@@ -49,8 +49,8 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbCassandra, ApdbCassandraConfig, ApdbConfig, ApdbTables
-from lsst.dax.apdb.apdbCassandra import CASSANDRA_IMPORTED
+from lsst.dax.apdb import ApdbConfig, ApdbTables
+from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
@@ -85,7 +85,8 @@ class ApdbCassandraMixin:
             protocol_version=config.protocol_version,
         )
         session = cluster.connect()
-        session.execute(query, timeout=120)
+        # Deleting many tables can take long time, use long timeout.
+        session.execute(query, timeout=600)
         del session
         cluster.shutdown()
 
@@ -122,7 +123,7 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
             "time_partition_tables": self.time_partition_tables,
-            "use_insert_id": self.use_insert_id,
+            "use_insert_id": self.enable_replica,
         }
         if self.time_partition_start:
             kw["time_partition_start"] = self.time_partition_start
@@ -144,10 +145,10 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     time_partition_end = "2022-01-01T00:00:00"
 
 
-class ApdbCassandraTestCaseInsertIds(ApdbCassandraTestCase):
-    """A test case  with use_insert_id."""
+class ApdbCassandraTestCaseReplica(ApdbCassandraTestCase):
+    """A test case  with enabled replica tables."""
 
-    use_insert_id = True
+    enable_replica = True
 
 
 class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):

@@ -31,7 +31,8 @@ from typing import Any
 from unittest.mock import patch
 
 import lsst.utils.tests
-from lsst.dax.apdb import Apdb, ApdbConfig, ApdbSql, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
+from lsst.dax.apdb.sql import ApdbSql
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 try:
@@ -63,7 +64,7 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
             "db_url": self.db_url,
             "schema_file": TEST_SCHEMA,
             "dia_object_index": self.dia_object_index,
-            "use_insert_id": self.use_insert_id,
+            "use_insert_id": self.enable_replica,
         }
         kw.update(kwargs)
         return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
@@ -93,10 +94,10 @@ class ApdbSQLiteTestCasePixIdIovIndex(ApdbSQLiteTestCase):
     dia_object_index = "pix_id_iov"
 
 
-class ApdbSQLiteTestCaseInsertIds(ApdbSQLiteTestCase):
-    """Test case for ApdbSql class using SQLite backend with use_insert_id."""
+class ApdbSQLiteTestCaseReplica(ApdbSQLiteTestCase):
+    """Test case for ApdbSql class using SQLite backend with replica tables."""
 
-    use_insert_id = True
+    enable_replica = True
 
 
 @unittest.skipUnless(testing is not None, "testing.postgresql module not found")
@@ -106,7 +107,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     fsrc_requires_id_list = True
     dia_object_index = "last_object_table"
     postgresql: Any
-    use_insert_id = True
+    enable_replica = True
     allow_visit_query = False
     schema_path = TEST_SCHEMA
 
@@ -136,7 +137,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
             "db_url": self.server.url(),
             "schema_file": TEST_SCHEMA,
             "dia_object_index": self.dia_object_index,
-            "use_insert_id": self.use_insert_id,
+            "use_insert_id": self.enable_replica,
         }
         kw.update(kwargs)
         return ApdbSql.init_database(**kw)

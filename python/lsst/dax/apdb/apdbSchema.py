@@ -34,12 +34,11 @@ import logging
 import os
 from collections.abc import Mapping, MutableMapping
 
-import felis.types
+import felis.datamodel
 import numpy
 import yaml
-from felis import DEFAULT_FRAME
-from felis.simple import SimpleVisitor, Table
 
+from .schema_model import ExtraDataTypes, Schema, Table
 from .versionTuple import VersionTuple
 
 _LOG = logging.getLogger(__name__)
@@ -47,20 +46,20 @@ _LOG = logging.getLogger(__name__)
 # In most cases column types are determined by Cassandra driver, but in some
 # cases we need to create Pandas Dataframe ourselves and we use this map to
 # infer types of columns from their YAML schema.
-_dtype_map: Mapping[type[felis.types.FelisType], type | str] = {
-    felis.types.Double: numpy.float64,
-    felis.types.Float: numpy.float32,
-    felis.types.Timestamp: "datetime64[ms]",
-    felis.types.Long: numpy.int64,
-    felis.types.Int: numpy.int32,
-    felis.types.Short: numpy.int16,
-    felis.types.Byte: numpy.int8,
-    felis.types.Binary: object,
-    felis.types.Char: object,
-    felis.types.Text: object,
-    felis.types.String: object,
-    felis.types.Unicode: object,
-    felis.types.Boolean: bool,
+_dtype_map: Mapping[felis.datamodel.DataType | ExtraDataTypes, type | str] = {
+    felis.datamodel.DataType.DOUBLE: numpy.float64,
+    felis.datamodel.DataType.FLOAT: numpy.float32,
+    felis.datamodel.DataType.TIMESTAMP: "datetime64[ms]",
+    felis.datamodel.DataType.LONG: numpy.int64,
+    felis.datamodel.DataType.INT: numpy.int32,
+    felis.datamodel.DataType.SHORT: numpy.int16,
+    felis.datamodel.DataType.BYTE: numpy.int8,
+    felis.datamodel.DataType.BINARY: object,
+    felis.datamodel.DataType.CHAR: object,
+    felis.datamodel.DataType.TEXT: object,
+    felis.datamodel.DataType.STRING: object,
+    felis.datamodel.DataType.UNICODE: object,
+    felis.datamodel.DataType.BOOLEAN: bool,
 }
 
 
@@ -121,13 +120,13 @@ class ApdbSchema:
         # build complete table schema
         self.tableSchemas, self._schemaVersion = self._buildSchemas(schema_file, schema_name)
 
-    def column_dtype(self, felis_type: type[felis.types.FelisType]) -> type | str:
+    def column_dtype(self, felis_type: felis.datamodel.DataType | ExtraDataTypes) -> type | str:
         """Return Pandas data type for a given Felis column type.
 
         Parameters
         ----------
-        felis_type : `type`
-            Felis type, on of the classes defined in `felis.types` module.
+        felis_type : `felis.datamodel.DataType`
+            Felis type, on of the enums defined in `felis.datamodel` module.
 
         Returns
         -------
@@ -165,7 +164,7 @@ class ApdbSchema:
         """Create schema definitions for all tables.
 
         Reads YAML schema and builds a dictionary containing
-        `felis.simple.Table` instances for each table.
+        `.schema_model.Table` instances for each table.
 
         Parameters
         ----------
@@ -177,7 +176,7 @@ class ApdbSchema:
         Returns
         -------
         tables : `dict`
-            Mapping of table names to `felis.simple.Table` instances.
+            Mapping of table names to `.schema_model.Table` instances.
         version : `VersionTuple` or `None`
             Schema version defined in schema file, `None` if version is not
             defined.
@@ -190,10 +189,8 @@ class ApdbSchema:
                 raise ValueError(f"Schema file {schema_file!r} does not define schema {schema_name!r}")
             elif len(schemas_list) > 1:
                 raise ValueError(f"Schema file {schema_file!r} defines multiple schemas {schema_name!r}")
-            schema_dict = schemas_list[0]
-            schema_dict.update(DEFAULT_FRAME)
-            visitor = SimpleVisitor()
-            schema = visitor.visit_schema(schema_dict)
+            felis_schema = felis.datamodel.Schema.model_validate(schemas_list[0])
+            schema = Schema.from_felis(felis_schema)
 
         # convert all dicts into classes
         tables: MutableMapping[ApdbTables, Table] = {}

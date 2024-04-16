@@ -27,7 +27,7 @@ from collections.abc import Generator
 
 import sqlalchemy
 
-from .apdbMetadata import ApdbMetadata
+from ..apdbMetadata import ApdbMetadata
 
 
 class ApdbMetadataSql(ApdbMetadata):
