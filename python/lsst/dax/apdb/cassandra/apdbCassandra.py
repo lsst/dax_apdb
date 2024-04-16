@@ -1175,7 +1175,7 @@ class ApdbCassandra(Apdb):
                     if field not in column_map:
                         continue
                     value = getattr(rec, field)
-                    if column_map[field].datatype is felis.datamodel.DataType.TIMESTAMP:
+                    if column_map[field].datatype is felis.datamodel.DataType.timestamp:
                         if isinstance(value, pandas.Timestamp):
                             value = literal(value.to_pydatetime())
                         else:

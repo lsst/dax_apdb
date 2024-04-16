@@ -47,19 +47,19 @@ _LOG = logging.getLogger(__name__)
 # cases we need to create Pandas Dataframe ourselves and we use this map to
 # infer types of columns from their YAML schema.
 _dtype_map: Mapping[felis.datamodel.DataType | ExtraDataTypes, type | str] = {
-    felis.datamodel.DataType.DOUBLE: numpy.float64,
-    felis.datamodel.DataType.FLOAT: numpy.float32,
-    felis.datamodel.DataType.TIMESTAMP: "datetime64[ms]",
-    felis.datamodel.DataType.LONG: numpy.int64,
-    felis.datamodel.DataType.INT: numpy.int32,
-    felis.datamodel.DataType.SHORT: numpy.int16,
-    felis.datamodel.DataType.BYTE: numpy.int8,
-    felis.datamodel.DataType.BINARY: object,
-    felis.datamodel.DataType.CHAR: object,
-    felis.datamodel.DataType.TEXT: object,
-    felis.datamodel.DataType.STRING: object,
-    felis.datamodel.DataType.UNICODE: object,
-    felis.datamodel.DataType.BOOLEAN: bool,
+    felis.datamodel.DataType.double: numpy.float64,
+    felis.datamodel.DataType.float: numpy.float32,
+    felis.datamodel.DataType.timestamp: "datetime64[ms]",
+    felis.datamodel.DataType.long: numpy.int64,
+    felis.datamodel.DataType.int: numpy.int32,
+    felis.datamodel.DataType.short: numpy.int16,
+    felis.datamodel.DataType.byte: numpy.int8,
+    felis.datamodel.DataType.binary: object,
+    felis.datamodel.DataType.char: object,
+    felis.datamodel.DataType.text: object,
+    felis.datamodel.DataType.string: object,
+    felis.datamodel.DataType.unicode: object,
+    felis.datamodel.DataType.boolean: bool,
 }
 
 

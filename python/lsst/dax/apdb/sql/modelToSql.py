@@ -108,19 +108,19 @@ class ModelToSql:
 
         # Map model column types to SQLAlchemy.
         self._type_map: dict[felis.datamodel.DataType | schema_model.ExtraDataTypes, type] = {
-            felis.datamodel.DataType.DOUBLE: sqlalchemy.types.Double,
-            felis.datamodel.DataType.FLOAT: sqlalchemy.types.Float,
-            felis.datamodel.DataType.TIMESTAMP: sqlalchemy.types.TIMESTAMP,
-            felis.datamodel.DataType.LONG: sqlalchemy.types.BigInteger,
-            felis.datamodel.DataType.INT: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.SHORT: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.BYTE: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.BINARY: sqlalchemy.types.LargeBinary,
-            felis.datamodel.DataType.TEXT: sqlalchemy.types.Text,
-            felis.datamodel.DataType.STRING: sqlalchemy.types.CHAR,
-            felis.datamodel.DataType.CHAR: sqlalchemy.types.CHAR,
-            felis.datamodel.DataType.UNICODE: sqlalchemy.types.CHAR,
-            felis.datamodel.DataType.BOOLEAN: sqlalchemy.types.Boolean,
+            felis.datamodel.DataType.double: sqlalchemy.types.Double,
+            felis.datamodel.DataType.float: sqlalchemy.types.Float,
+            felis.datamodel.DataType.timestamp: sqlalchemy.types.TIMESTAMP,
+            felis.datamodel.DataType.long: sqlalchemy.types.BigInteger,
+            felis.datamodel.DataType.int: sqlalchemy.types.Integer,
+            felis.datamodel.DataType.short: sqlalchemy.types.Integer,
+            felis.datamodel.DataType.byte: sqlalchemy.types.Integer,
+            felis.datamodel.DataType.binary: sqlalchemy.types.LargeBinary,
+            felis.datamodel.DataType.text: sqlalchemy.types.Text,
+            felis.datamodel.DataType.string: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.char: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.unicode: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.boolean: sqlalchemy.types.Boolean,
             schema_model.ExtraDataTypes.UUID: GUID,
         }
 

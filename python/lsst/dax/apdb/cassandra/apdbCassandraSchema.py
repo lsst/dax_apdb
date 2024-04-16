@@ -102,19 +102,19 @@ class ApdbCassandraSchema(ApdbSchema):
     """
 
     _type_map = {
-        felis.datamodel.DataType.DOUBLE: "DOUBLE",
-        felis.datamodel.DataType.FLOAT: "FLOAT",
-        felis.datamodel.DataType.TIMESTAMP: "TIMESTAMP",
-        felis.datamodel.DataType.LONG: "BIGINT",
-        felis.datamodel.DataType.INT: "INT",
-        felis.datamodel.DataType.SHORT: "INT",
-        felis.datamodel.DataType.BYTE: "TINYINT",
-        felis.datamodel.DataType.BINARY: "BLOB",
-        felis.datamodel.DataType.CHAR: "TEXT",
-        felis.datamodel.DataType.STRING: "TEXT",
-        felis.datamodel.DataType.UNICODE: "TEXT",
-        felis.datamodel.DataType.TEXT: "TEXT",
-        felis.datamodel.DataType.BOOLEAN: "BOOLEAN",
+        felis.datamodel.DataType.double: "DOUBLE",
+        felis.datamodel.DataType.float: "FLOAT",
+        felis.datamodel.DataType.timestamp: "TIMESTAMP",
+        felis.datamodel.DataType.long: "BIGINT",
+        felis.datamodel.DataType.int: "INT",
+        felis.datamodel.DataType.short: "INT",
+        felis.datamodel.DataType.byte: "TINYINT",
+        felis.datamodel.DataType.binary: "BLOB",
+        felis.datamodel.DataType.char: "TEXT",
+        felis.datamodel.DataType.string: "TEXT",
+        felis.datamodel.DataType.unicode: "TEXT",
+        felis.datamodel.DataType.text: "TEXT",
+        felis.datamodel.DataType.boolean: "BOOLEAN",
         schema_model.ExtraDataTypes.UUID: "UUID",
     }
     """Map YAML column types to Cassandra"""
@@ -187,7 +187,7 @@ class ApdbCassandraSchema(ApdbSchema):
             if add_columns:
                 column_defs = [
                     schema_model.Column(
-                        id=f"#{name}", name=name, datatype=felis.datamodel.DataType.LONG, nullable=False
+                        id=f"#{name}", name=name, datatype=felis.datamodel.DataType.long, nullable=False
                     )
                     for name in add_columns
                 ]
@@ -222,22 +222,22 @@ class ApdbCassandraSchema(ApdbSchema):
                 schema_model.Column(
                     id="#diaSourceId",
                     name="diaSourceId",
-                    datatype=felis.datamodel.DataType.LONG,
+                    datatype=felis.datamodel.DataType.long,
                     nullable=False,
                 ),
                 schema_model.Column(
-                    id="#apdb_part", name="apdb_part", datatype=felis.datamodel.DataType.LONG, nullable=False
+                    id="#apdb_part", name="apdb_part", datatype=felis.datamodel.DataType.long, nullable=False
                 ),
                 schema_model.Column(
                     id="#apdb_time_part",
                     name="apdb_time_part",
-                    datatype=felis.datamodel.DataType.INT,
+                    datatype=felis.datamodel.DataType.int,
                     nullable=False,
                 ),
                 schema_model.Column(
                     id="#apdb_replica_chunk",
                     name="apdb_replica_chunk",
-                    datatype=felis.datamodel.DataType.LONG,
+                    datatype=felis.datamodel.DataType.long,
                     nullable=True,
                 ),
             ],
@@ -250,7 +250,7 @@ class ApdbCassandraSchema(ApdbSchema):
         replica_chunk_column = schema_model.Column(
             id="#apdb_replica_chunk",
             name="apdb_replica_chunk",
-            datatype=felis.datamodel.DataType.LONG,
+            datatype=felis.datamodel.DataType.long,
             nullable=False,
         )
 
@@ -264,13 +264,13 @@ class ApdbCassandraSchema(ApdbSchema):
             name=ExtraTables.ApdbReplicaChunks.table_name(self._prefix),
             columns=[
                 schema_model.Column(
-                    id="#partition", name="partition", datatype=felis.datamodel.DataType.INT, nullable=False
+                    id="#partition", name="partition", datatype=felis.datamodel.DataType.int, nullable=False
                 ),
                 replica_chunk_column,
                 schema_model.Column(
                     id="#last_update_time",
                     name="last_update_time",
-                    datatype=felis.datamodel.DataType.TIMESTAMP,
+                    datatype=felis.datamodel.DataType.timestamp,
                     nullable=False,
                 ),
                 schema_model.Column(

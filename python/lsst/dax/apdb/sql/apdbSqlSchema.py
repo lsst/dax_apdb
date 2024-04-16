@@ -146,7 +146,7 @@ class ApdbSqlSchema(ApdbSchema):
             column = schema_model.Column(
                 id=f"#{htm_index_column}",
                 name=htm_index_column,
-                datatype=felis.datamodel.DataType.LONG,
+                datatype=felis.datamodel.DataType.long,
                 nullable=False,
                 value=None,
                 description="Pixelization index column.",
@@ -358,12 +358,12 @@ class ApdbSqlSchema(ApdbSchema):
             schema_model.Column(
                 name="apdb_replica_chunk",
                 id="#ApdbReplicaChunks.apdb_replica_chunk",
-                datatype=felis.datamodel.DataType.LONG,
+                datatype=felis.datamodel.DataType.long,
             ),
             schema_model.Column(
                 name="last_update_time",
                 id="#ApdbReplicaChunks.last_update_time",
-                datatype=felis.datamodel.DataType.TIMESTAMP,
+                datatype=felis.datamodel.DataType.timestamp,
                 nullable=False,
             ),
             schema_model.Column(
@@ -415,7 +415,7 @@ class ApdbSqlSchema(ApdbSchema):
             schema_model.Column(
                 name="apdb_replica_chunk",
                 id=f"#{table_name}.apdb_replica_chunk",
-                datatype=felis.datamodel.DataType.LONG,
+                datatype=felis.datamodel.DataType.long,
                 nullable=False,
             )
         ]
