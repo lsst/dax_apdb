@@ -27,7 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlReplica"]
 
 import logging
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
 import astropy.time
@@ -36,6 +36,7 @@ from sqlalchemy import sql
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
+from ..monitor import MonAgent
 from ..timer import Timer
 from ..versionTuple import VersionTuple
 from .apdbSqlSchema import ExtraTables
@@ -45,6 +46,8 @@ if TYPE_CHECKING:
 
 
 _LOG = logging.getLogger(__name__)
+
+_MON = MonAgent(__name__)
 
 VERSION = VersionTuple(1, 0, 0)
 """Version for the code controlling replication tables. This needs to be
@@ -83,7 +86,14 @@ class ApdbSqlReplica(ApdbReplica):
     def __init__(self, schema: ApdbSqlSchema, engine: sqlalchemy.engine.Engine, timer: bool = False):
         self._schema = schema
         self._engine = engine
-        self._timer = timer
+
+        self._timer_args: list[MonAgent | logging.Logger] = [_MON]
+        if timer:
+            self._timer_args.append(_LOG)
+
+    def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
+        """Create `Timer` instance given its name."""
+        return Timer(name, *self._timer_args, tags=tags)
 
     @classmethod
     def apdbReplicaImplementationVersion(cls) -> VersionTuple:
@@ -100,7 +110,7 @@ class ApdbSqlReplica(ApdbReplica):
         query = sql.select(
             table.columns["apdb_replica_chunk"], table.columns["last_update_time"], table.columns["unique_id"]
         ).order_by(table.columns["last_update_time"])
-        with Timer("DiaObject insert id select", self._timer):
+        with self._timer("chunks_select_time"):
             with self._engine.connect() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 ids = []
@@ -117,8 +127,9 @@ class ApdbSqlReplica(ApdbReplica):
         table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
         where_clause = table.columns["apdb_replica_chunk"].in_(chunks)
         stmt = table.delete().where(where_clause)
-        with self._engine.begin() as conn:
-            conn.execute(stmt)
+        with self._timer("chunks_delete_time"):
+            with self._engine.begin() as conn:
+                conn.execute(stmt)
 
     def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
@@ -154,7 +165,7 @@ class ApdbSqlReplica(ApdbReplica):
         query = sql.select(chunk_id_column, *apdb_columns).select_from(join).where(where_clause)
 
         # execute select
-        with Timer(f"{table.name} replica chunk select", self._timer):
+        with self._timer("table_chunk_select_time", tags={"table": table.name}):
             with self._engine.begin() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 return ApdbSqlTableData(result)

@@ -56,6 +56,7 @@ from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
 from ..apdbSchema import ApdbTables
+from ..monitor import MonAgent
 from ..pixelization import Pixelization
 from ..schema_model import Table
 from ..timer import Timer
@@ -76,6 +77,8 @@ if TYPE_CHECKING:
     from ..apdbMetadata import ApdbMetadata
 
 _LOG = logging.getLogger(__name__)
+
+_MON = MonAgent(__name__)
 
 VERSION = VersionTuple(0, 1, 0)
 """Version for the code controlling non-replication tables. This needs to be
@@ -336,9 +339,17 @@ class ApdbCassandra(Apdb):
         for key, value in self.config.items():
             _LOG.debug("    %s: %s", key, value)
 
+        self._timer_args: list[MonAgent | logging.Logger] = [_MON]
+        if self.config.timer:
+            self._timer_args.append(_LOG)
+
     def __del__(self) -> None:
         if hasattr(self, "_cluster"):
             self._cluster.shutdown()
+
+    def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
+        """Create `Timer` instance given its name."""
+        return Timer(name, *self._timer_args, tags=tags)
 
     @classmethod
     def _make_session(cls, config: ApdbCassandraConfig) -> tuple[Cluster, Session]:
@@ -460,7 +471,7 @@ class ApdbCassandra(Apdb):
         read_sources_months: int | None = None,
         read_forced_sources_months: int | None = None,
         use_insert_id: bool = False,
-        replica_skips_diaobjects: bool = False,
+        use_insert_id_skips_diaobjects: bool = False,
         port: int | None = None,
         username: str | None = None,
         prefix: str | None = None,
@@ -497,7 +508,7 @@ class ApdbCassandra(Apdb):
             Number of months of history to read from DiaForcedSource.
         use_insert_id : `bool`, optional
             If True, make additional tables used for replication to PPDB.
-        replica_skips_diaobjects : `bool`, optional
+        use_insert_id_skips_diaobjects : `bool`, optional
             If `True` then do not fill regular ``DiaObject`` table when
             ``use_insert_id`` is `True`.
         port : `int`, optional
@@ -543,7 +554,7 @@ class ApdbCassandra(Apdb):
             contact_points=hosts,
             keyspace=keyspace,
             use_insert_id=use_insert_id,
-            use_insert_id_skips_diaobjects=replica_skips_diaobjects,
+            use_insert_id_skips_diaobjects=use_insert_id_skips_diaobjects,
             time_partition_tables=time_partition_tables,
         )
         if schema_file is not None:
@@ -671,13 +682,17 @@ class ApdbCassandra(Apdb):
             statements.append((statement, params))
         _LOG.debug("getDiaObjects: #queries: %s", len(statements))
 
-        with Timer("DiaObject select", self.config.timer):
-            objects = cast(
-                pandas.DataFrame,
-                select_concurrent(
-                    self._session, statements, "read_pandas_multi", self.config.read_concurrency
-                ),
+        with _MON.context_tags({"table": "DiaObject"}):
+            _MON.add_record(
+                "select_query_stats", values={"num_sp_part": len(sp_where), "num_queries": len(statements)}
             )
+            with self._timer("select_time"):
+                objects = cast(
+                    pandas.DataFrame,
+                    select_concurrent(
+                        self._session, statements, "read_pandas_multi", self.config.read_concurrency
+                    ),
+                )
 
         _LOG.debug("found %s DiaObjects", objects.shape[0])
         return objects
@@ -716,11 +731,11 @@ class ApdbCassandra(Apdb):
         query = f'SELECT * from "{self._keyspace}"."{tableName}"'
 
         objects = None
-        with Timer("SSObject select", self.config.timer):
+        with self._timer("select_time", tags={"table": "SSObject"}):
             result = self._session.execute(query, execution_profile="read_pandas")
             objects = result._current_rows
 
-        _LOG.debug("found %s DiaObjects", objects.shape[0])
+        _LOG.debug("found %s SSObjects", objects.shape[0])
         return objects
 
     def store(
@@ -840,7 +855,7 @@ class ApdbCassandra(Apdb):
                         queries.add(self._preparer.prepare(query), values)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
-        with Timer(table_name + " update", self.config.timer):
+        with self._timer("update_time", tags={"table": table_name}):
             self._session.execute(queries, execution_profile="write")
 
     def dailyJob(self) -> None:
@@ -969,13 +984,17 @@ class ApdbCassandra(Apdb):
             statements += list(self._combine_where(prefix, sp_where, temporal_where))
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
-        with Timer(table_name.name + " select", self.config.timer):
-            catalog = cast(
-                pandas.DataFrame,
-                select_concurrent(
-                    self._session, statements, "read_pandas_multi", self.config.read_concurrency
-                ),
+        with _MON.context_tags({"table": table_name.name}):
+            _MON.add_record(
+                "select_query_stats", values={"num_sp_part": len(sp_where), "num_queries": len(statements)}
             )
+            with self._timer("select_time"):
+                catalog = cast(
+                    pandas.DataFrame,
+                    select_concurrent(
+                        self._session, statements, "read_pandas_multi", self.config.read_concurrency
+                    ),
+                )
 
         # filter by given object IDs
         if len(object_id_set) > 0:
@@ -1160,7 +1179,7 @@ class ApdbCassandra(Apdb):
         qfields = [quote_id(field) for field in fields]
         qfields_str = ",".join(qfields)
 
-        with Timer(table_name.name + " query build", self.config.timer):
+        with self._timer("insert_build_time", tags={"table": table_name.name}):
             table = self._schema.tableName(table_name)
             if time_part is not None:
                 table = f"{table}_{time_part}"
@@ -1189,7 +1208,7 @@ class ApdbCassandra(Apdb):
                 queries.add(statement, values)
 
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
-        with Timer(table_name.name + " insert", self.config.timer):
+        with self._timer("insert_time", tags={"table": table_name.name}):
             self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
 
     def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:

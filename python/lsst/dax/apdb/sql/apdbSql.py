@@ -47,6 +47,7 @@ from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
 from ..apdbSchema import ApdbTables
+from ..monitor import MonAgent
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
@@ -60,6 +61,8 @@ if TYPE_CHECKING:
     from ..apdbMetadata import ApdbMetadata
 
 _LOG = logging.getLogger(__name__)
+
+_MON = MonAgent(__name__)
 
 VERSION = VersionTuple(0, 1, 0)
 """Version for the code controlling non-replication tables. This needs to be
@@ -254,6 +257,14 @@ class ApdbSql(Apdb):
         _LOG.debug("    schema_file: %s", self.config.schema_file)
         _LOG.debug("    extra_schema_file: %s", self.config.extra_schema_file)
         _LOG.debug("    schema prefix: %s", self.config.prefix)
+
+        self._timer_args: list[MonAgent | logging.Logger] = [_MON]
+        if self.config.timer:
+            self._timer_args.append(_LOG)
+
+    def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
+        """Create `Timer` instance given its name."""
+        return Timer(name, *self._timer_args, tags=tags)
 
     @classmethod
     def _makeEngine(cls, config: ApdbSqlConfig) -> sqlalchemy.engine.Engine:
@@ -529,7 +540,7 @@ class ApdbSql(Apdb):
         # _LOG.debug("query: %s", query)
 
         # execute select
-        with Timer("DiaObject select", self.config.timer):
+        with self._timer("select_time", tags={"table": "DiaObject"}):
             with self._engine.begin() as conn:
                 objects = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaObjects", len(objects))
@@ -566,7 +577,7 @@ class ApdbSql(Apdb):
         midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_forced_sources_months)
         _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
 
-        with Timer("DiaForcedSource select", self.config.timer):
+        with self._timer("select_time", tags={"table": "DiaForcedSource"}):
             sources = self._getSourcesByIDs(
                 ApdbTables.DiaForcedSource, list(object_ids), midpointMjdTai_start
             )
@@ -619,7 +630,7 @@ class ApdbSql(Apdb):
         query = sql.select(*columns)
 
         # execute select
-        with Timer("DiaObject select", self.config.timer):
+        with self._timer("SSObject_select_time", tags={"table": "SSObject"}):
             with self._engine.begin() as conn:
                 objects = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s SSObjects", len(objects))
@@ -762,7 +773,7 @@ class ApdbSql(Apdb):
         query = query.where(where)
 
         # execute select
-        with Timer("DiaSource select", self.config.timer):
+        with self._timer("DiaSource_select_time", tags={"table": "DiaSource"}):
             with self._engine.begin() as conn:
                 sources = pandas.read_sql_query(query, conn)
         _LOG.debug("found %s DiaSources", len(sources))
@@ -788,7 +799,7 @@ class ApdbSql(Apdb):
         midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_sources_months)
         _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
 
-        with Timer("DiaSource select", self.config.timer):
+        with self._timer("select_time", tags={"table": "DiaSource"}):
             sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, midpointMjdTai_start)
 
         _LOG.debug("found %s DiaSources", len(sources))
@@ -916,7 +927,7 @@ class ApdbSql(Apdb):
             # Drop the previous objects (pandas cannot upsert).
             query = table.delete().where(table.columns["diaObjectId"].in_(ids))
 
-            with Timer(table.name + " delete", self.config.timer):
+            with self._timer("delete_time", tags={"table": table.name}):
                 res = connection.execute(query)
             _LOG.debug("deleted %s objects", res.rowcount)
 
@@ -934,7 +945,7 @@ class ApdbSql(Apdb):
                 last_objs.set_index(extra_column.index, inplace=True)
                 last_objs = pandas.concat([last_objs, extra_column], axis="columns")
 
-            with Timer("DiaObjectLast insert", self.config.timer):
+            with self._timer("insert_time", tags={"table": "DiaObjectLast"}):
                 last_objs.to_sql(
                     table.name,
                     connection,
@@ -957,9 +968,7 @@ class ApdbSql(Apdb):
                 )
             )
 
-            # _LOG.debug("query: %s", query)
-
-            with Timer(table.name + " truncate", self.config.timer):
+            with self._timer("truncate_time", tags={"table": table.name}):
                 res = connection.execute(update)
             _LOG.debug("truncated %s intervals", res.rowcount)
 
@@ -989,18 +998,21 @@ class ApdbSql(Apdb):
         table = self._schema.get_table(ApdbTables.DiaObject)
         replica_data: list[dict] = []
         replica_stmt: Any = None
+        replica_table_name = ""
         if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
             replica_data = objs[pk_names].to_dict("records")
             for row in replica_data:
                 row["apdb_replica_chunk"] = replica_chunk.id
             replica_table = self._schema.get_table(ExtraTables.DiaObjectChunks)
+            replica_table_name = replica_table.name
             replica_stmt = replica_table.insert()
 
         # insert new versions
-        with Timer("DiaObject insert", self.config.timer):
+        with self._timer("insert_time", tags={"table": table.name}):
             objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
-            if replica_stmt is not None:
+        if replica_stmt is not None:
+            with self._timer("insert_time", tags={"table": replica_table_name}):
                 connection.execute(replica_stmt, replica_data)
 
     def _storeDiaSources(
@@ -1021,19 +1033,22 @@ class ApdbSql(Apdb):
         # Insert replica data
         replica_data: list[dict] = []
         replica_stmt: Any = None
+        replica_table_name = ""
         if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
             replica_data = sources[pk_names].to_dict("records")
             for row in replica_data:
                 row["apdb_replica_chunk"] = replica_chunk.id
             replica_table = self._schema.get_table(ExtraTables.DiaSourceChunks)
+            replica_table_name = replica_table.name
             replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
-        with Timer("DiaSource insert", self.config.timer):
+        with self._timer("insert_time", tags={"table": table.name}):
             sources = _coerce_uint64(sources)
             sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
-            if replica_stmt is not None:
+        if replica_stmt is not None:
+            with self._timer("replica_insert_time", tags={"table": replica_table_name}):
                 connection.execute(replica_stmt, replica_data)
 
     def _storeDiaForcedSources(
@@ -1054,19 +1069,22 @@ class ApdbSql(Apdb):
         # Insert replica data
         replica_data: list[dict] = []
         replica_stmt: Any = None
+        replica_table_name = ""
         if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
             replica_data = sources[pk_names].to_dict("records")
             for row in replica_data:
                 row["apdb_replica_chunk"] = replica_chunk.id
             replica_table = self._schema.get_table(ExtraTables.DiaForcedSourceChunks)
+            replica_table_name = replica_table.name
             replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
-        with Timer("DiaForcedSource insert", self.config.timer):
+        with self._timer("insert_time", tags={"table": table.name}):
             sources = _coerce_uint64(sources)
             sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
-            if replica_stmt is not None:
+        if replica_stmt is not None:
+            with self._timer("insert_time", tags={"table": replica_table_name}):
                 connection.execute(replica_stmt, replica_data)
 
     def _htm_indices(self, region: Region) -> list[tuple[int, int]]:

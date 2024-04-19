@@ -24,13 +24,14 @@ from __future__ import annotations
 __all__ = ["ApdbCassandraReplica"]
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import astropy.time
 from lsst.utils.iteration import chunk_iterable
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
+from ..monitor import MonAgent
 from ..timer import Timer
 from ..versionTuple import VersionTuple
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
@@ -40,6 +41,8 @@ if TYPE_CHECKING:
     from .apdbCassandra import ApdbCassandra
 
 _LOG = logging.getLogger(__name__)
+
+_MON = MonAgent(__name__)
 
 VERSION = VersionTuple(1, 0, 0)
 """Version for the code controlling replication tables. This needs to be
@@ -72,6 +75,14 @@ class ApdbCassandraReplica(ApdbReplica):
         # Cache for prepared statements
         self._preparer = PreparedStatementCache(self._session)
 
+        self._timer_args: list[MonAgent | logging.Logger] = [_MON]
+        if self._config.timer:
+            self._timer_args.append(_LOG)
+
+    def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
+        """Create `Timer` instance given its name."""
+        return Timer(name, *self._timer_args, tags=tags)
+
     @classmethod
     def apdbReplicaImplementationVersion(cls) -> VersionTuple:
         # Docstring inherited from base class.
@@ -92,12 +103,13 @@ class ApdbCassandraReplica(ApdbReplica):
             f'FROM "{self._config.keyspace}"."{table_name}" WHERE partition = ?'
         )
 
-        result = self._session.execute(
-            self._preparer.prepare(query),
-            (partition,),
-            timeout=self._config.read_timeout,
-            execution_profile="read_tuples",
-        )
+        with self._timer("chunks_select_time"):
+            result = self._session.execute(
+                self._preparer.prepare(query),
+                (partition,),
+                timeout=self._config.read_timeout,
+                execution_profile="read_tuples",
+            )
         # order by last_update_time
         rows = sorted(result)
         return [
@@ -127,11 +139,12 @@ class ApdbCassandraReplica(ApdbReplica):
                 f"WHERE partition = ? AND apdb_replica_chunk IN ({params})"
             )
 
-            self._session.execute(
-                self._preparer.prepare(query),
-                [partition] + list(chunk_ids),
-                timeout=self._config.remove_timeout,
-            )
+            with self._timer("chunks_delete_time"):
+                self._session.execute(
+                    self._preparer.prepare(query),
+                    [partition] + list(chunk_ids),
+                    timeout=self._config.remove_timeout,
+                )
 
             # Also remove those chunk_ids from Dia*Chunks tables.
             for table in (
@@ -144,11 +157,12 @@ class ApdbCassandraReplica(ApdbReplica):
                     f'DELETE FROM "{self._config.keyspace}"."{table_name}"'
                     f" WHERE apdb_replica_chunk IN ({params})"
                 )
-                self._session.execute(
-                    self._preparer.prepare(query),
-                    chunk_ids,
-                    timeout=self._config.remove_timeout,
-                )
+                with self._timer("table_chunk_detele_time", tags={"table": table_name}):
+                    self._session.execute(
+                        self._preparer.prepare(query),
+                        chunk_ids,
+                        timeout=self._config.remove_timeout,
+                    )
 
     def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
@@ -180,7 +194,7 @@ class ApdbCassandraReplica(ApdbReplica):
         )
         statement = self._preparer.prepare(query)
 
-        with Timer(f"{table_name} select chunk", self._config.timer):
+        with self._timer("table_chunk_select_time", tags={"table": table_name}):
             result = self._session.execute(statement, chunks, execution_profile="read_raw")
             table_data = cast(ApdbCassandraTableData, result._current_rows)
         return table_data
