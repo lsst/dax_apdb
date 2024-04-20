@@ -120,7 +120,7 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Name for consistency level of write operations, default: QUORUM, can be ONE.", default="QUORUM"
     )
     read_timeout = Field[float](doc="Timeout in seconds for read operations.", default=120.0)
-    write_timeout = Field[float](doc="Timeout in seconds for write operations.", default=10.0)
+    write_timeout = Field[float](doc="Timeout in seconds for write operations.", default=60.0)
     remove_timeout = Field[float](doc="Timeout in seconds for remove operations.", default=600.0)
     read_concurrency = Field[int](doc="Concurrency level for read operations.", default=500)
     protocol_version = Field[int](
