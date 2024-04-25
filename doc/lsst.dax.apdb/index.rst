@@ -24,7 +24,7 @@ Contributing
 ============
 
 ``lsst.dax.apdb`` is developed at https://github.com/lsst/dax_apdb.
-You can find Jira issues for this module under the `dax_apdb <https://jira.lsstcorp.org/issues/?jql=project%20%3D%20DM%20AND%20component%20%3D%20dax_apdb>`_ component.
+You can find Jira issues for this module under the `dax_apdb <https://rubinobs.atlassian.net/issues/?jql=project%20%3D%20DM%20AND%20component%20%3D%20dax_apdb>`_ component.
 
 .. If there are topics related to developing this module (rather than using it), link to this from a toctree placed here.
 
