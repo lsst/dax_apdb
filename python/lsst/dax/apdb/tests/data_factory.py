@@ -110,7 +110,11 @@ def makeObjectCatalog(
 
 
 def makeSourceCatalog(
-    objects: pandas.DataFrame, visit_time: astropy.time.Time, start_id: int = 0, ccdVisitId: int = 1
+    objects: pandas.DataFrame,
+    visit_time: astropy.time.Time,
+    start_id: int = 0,
+    visit: int = 1,
+    detector: int = 1,
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaSources associated with the
     input DiaObjects.
@@ -123,8 +127,8 @@ def makeSourceCatalog(
         Time of the visit.
     start_id : `int`
         Starting value for ``diaObjectId``.
-    ccdVisitId : `int`
-        Value for ``ccdVisitId`` field.
+    visit, detector : `int`
+        Value for ``visit`` and ``detector`` fields.
 
     Returns
     -------
@@ -141,7 +145,8 @@ def makeSourceCatalog(
         {
             "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
             "diaObjectId": objects["diaObjectId"],
-            "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
+            "visit": numpy.full(nrows, visit, dtype=numpy.int64),
+            "detector": numpy.full(nrows, detector, dtype=numpy.int16),
             "parentDiaSourceId": 0,
             "ra": objects["ra"],
             "dec": objects["dec"],
@@ -153,7 +158,7 @@ def makeSourceCatalog(
 
 
 def makeForcedSourceCatalog(
-    objects: pandas.DataFrame, visit_time: astropy.time.Time, ccdVisitId: int = 1
+    objects: pandas.DataFrame, visit_time: astropy.time.Time, visit: int = 1, detector: int = 1
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaForcedSources associated with
     the input DiaObjects.
@@ -164,8 +169,8 @@ def makeForcedSourceCatalog(
         Catalog of DiaObject records.
     visit_time : `astropy.time.Time`
         Time of the visit.
-    ccdVisitId : `int`
-        Value for ``ccdVisitId`` field.
+    visit, detector : `int`
+        Value for ``visit`` and ``detector`` fields.
 
     Returns
     -------
@@ -181,7 +186,8 @@ def makeForcedSourceCatalog(
     df = pandas.DataFrame(
         {
             "diaObjectId": objects["diaObjectId"],
-            "ccdVisitId": numpy.full(nrows, ccdVisitId, dtype=numpy.int64),
+            "visit": numpy.full(nrows, visit, dtype=numpy.int64),
+            "detector": numpy.full(nrows, detector, dtype=numpy.int16),
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
         }

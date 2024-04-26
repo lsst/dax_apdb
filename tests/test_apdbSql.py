@@ -48,7 +48,6 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
 
     fsrc_requires_id_list = True
     dia_object_index = "baseline"
-    allow_visit_query = False
     schema_path = TEST_SCHEMA
 
     def setUp(self) -> None:
@@ -108,7 +107,6 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     dia_object_index = "last_object_table"
     postgresql: Any
     enable_replica = True
-    allow_visit_query = False
     schema_path = TEST_SCHEMA
 
     @classmethod

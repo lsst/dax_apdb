@@ -47,8 +47,8 @@ class ApdbSchemaTestCase(unittest.TestCase):
     table_column_count = {
         ApdbTables.DiaObject: 8,
         ApdbTables.DiaObjectLast: 5,
-        ApdbTables.DiaSource: 10,
-        ApdbTables.DiaForcedSource: 4,
+        ApdbTables.DiaSource: 11,
+        ApdbTables.DiaForcedSource: 5,
         ApdbTables.SSObject: 3,
         ApdbTables.metadata: 2,
     }
@@ -216,8 +216,8 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaObjectChunks)), 3)
         self._assertTable(schema.get_table(ExtraTables.DiaSourceChunks), "DiaSourceChunks", 2)
         self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaSourceChunks)), 2)
-        self._assertTable(schema.get_table(ExtraTables.DiaForcedSourceChunks), "DiaForcedSourceChunks", 3)
-        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaForcedSourceChunks)), 3)
+        self._assertTable(schema.get_table(ExtraTables.DiaForcedSourceChunks), "DiaForcedSourceChunks", 4)
+        self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaForcedSourceChunks)), 4)
 
     def test_makeSchema_nometa(self) -> None:
         """Make schema using old yaml file without metadata table."""
