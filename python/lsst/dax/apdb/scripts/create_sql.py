@@ -28,12 +28,12 @@ from typing import Any
 from ..sql import ApdbSql
 
 
-def create_sql(config_path: str, ra_dec_columns: str | None, **kwargs: Any) -> None:
+def create_sql(output_config: str, ra_dec_columns: str | None, **kwargs: Any) -> None:
     """Create new APDB instance in SQL database.
 
     Parameters
     ----------
-    config_path : `str`
+    output_config : `str`
         Name of the file to write APDB configuration.
     ra_dec_columns : `str` or `None`
         Comma-separated list of names for ra/dec columns in DiaObject table.
@@ -44,4 +44,4 @@ def create_sql(config_path: str, ra_dec_columns: str | None, **kwargs: Any) -> N
     if ra_dec_columns:
         ra_dec_list = ra_dec_columns.split(",")
     config = ApdbSql.init_database(ra_dec_columns=ra_dec_list, **kwargs)
-    config.save(config_path)
+    config.save(output_config)

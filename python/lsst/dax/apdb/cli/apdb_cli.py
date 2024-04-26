@@ -53,7 +53,7 @@ def main(args: Sequence[str] | None = None) -> None:
 def _create_sql_subcommand(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("create-sql", help="Create new APDB instance in SQL database.")
     parser.add_argument("db_url", help="Database URL in SQLAlchemy format for APDB instance.")
-    parser.add_argument("config_path", help="Name of the new configuration file for created APDB instance.")
+    parser.add_argument("output_config", help="Name of the new configuration file for created APDB instance.")
     options.common_apdb_options(parser)
     options.sql_config_options(parser)
     parser.add_argument(
@@ -68,7 +68,7 @@ def _create_cassandra_subcommand(subparsers: argparse._SubParsersAction) -> None
     parser.add_argument(
         "keyspace", help="Cassandra keyspace name for APDB tables, will be created if does not exist."
     )
-    parser.add_argument("config_path", help="Name of the new configuration file for created APDB instance.")
+    parser.add_argument("output_config", help="Name of the new configuration file for created APDB instance.")
     options.common_apdb_options(parser)
     options.cassandra_config_options(parser)
     parser.add_argument(

@@ -56,8 +56,8 @@ def common_apdb_options(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("common APDB options")
     _option_from_pex_field(group, ApdbConfig.schema_file, metavar="URL")
     _option_from_pex_field(group, ApdbConfig.schema_name)
-    _option_from_pex_field(group, ApdbConfig.read_sources_months, type=int)
-    _option_from_pex_field(group, ApdbConfig.read_forced_sources_months, type=int)
+    _option_from_pex_field(group, ApdbConfig.read_sources_months, metavar="NUMBER", type=int)
+    _option_from_pex_field(group, ApdbConfig.read_forced_sources_months, metavar="NUMBER", type=int)
     _option_from_pex_field(
         group, ApdbConfig.use_insert_id, name="--enable-replica", action="store_true", default=False
     )

@@ -30,37 +30,64 @@ from __future__ import annotations
 import logging
 import resource
 import time
+from collections.abc import Mapping
 from typing import Any
 
-_LOG = logging.getLogger(__name__)
+from .monitor import MonAgent
+
+_TagsType = Mapping[str, str | int]
 
 
 class Timer:
-    """
-    Instance of this class can be used to track consumed time.
+    """Instance of this class can be used to track consumed time.
 
-    This class is also a context manager and can be used in
-    a `with` statement. By default it prints consumed CPU time
-    and real time spent in a context.
+    Parameters
+    ----------
+    name : `str`
+        Timer name, will be use for reporting to both monitoring and logging.
+        Typically the name should look like an identifier for ease of use with
+        downstream monitoring software.
+    *args : `MonAgent` or `logging.Logger`
+        Positional arguments can include a combination of `MonAgent` and
+        `logging.Logger` instances. They will be used to report accumulated
+        times on exit from context or by calling `dump` method directly.
+    tags : `~collections.abc.Mapping` [`str`, `str` or `int`], optional
+        Keyword argument, additional tags added to monitoring report and
+        logging output.
+    log_level : `int`, optional
+        Keyword argument, level used for logging output, default is
+        `logging.INFO`.
+
+    Notes
+    -----
+    This class is also a context manager and can be used in a `with` statement.
+    By default it prints consumed CPU time and real time spent in a context.
 
     Example:
 
-        with Timer('SelectTimer'):
+        with Timer("SelectTimer", logger):
             engine.execute('SELECT ...')
 
     """
 
-    def __init__(self, name: str = "", doPrint: bool = True):
-        """
-        Parameters
-        ----------
-        name : `str`
-            Timer name, will be printed together with statistics.
-        doPrint : `bool`
-            If True then print statistics on exist from context.
-        """
+    def __init__(
+        self,
+        name: str,
+        *args: MonAgent | logging.Logger,
+        tags: _TagsType | None = None,
+        log_level: int = logging.INFO,
+    ):
         self._name = name
-        self._print = doPrint
+        self._mon_agents: list[MonAgent] = []
+        self._loggers: list[logging.Logger] = []
+        self._tags = tags
+        self._log_level = log_level
+
+        for arg in args:
+            if isinstance(arg, MonAgent):
+                self._mon_agents.append(arg)
+            elif isinstance(arg, logging.Logger):
+                self._loggers.append(arg)
 
         self._startReal = -1.0
         self._startUser = -1.0
@@ -70,9 +97,7 @@ class Timer:
         self._sumSys = 0.0
 
     def start(self) -> Timer:
-        """
-        Start timer.
-        """
+        """Start timer."""
         self._startReal = time.time()
         ru = resource.getrusage(resource.RUSAGE_SELF)
         self._startUser = ru.ru_utime
@@ -80,9 +105,7 @@ class Timer:
         return self
 
     def stop(self) -> Timer:
-        """
-        Stop timer.
-        """
+        """Stop timer."""
         if self._startReal > 0:
             self._sumReal += time.time() - self._startReal
             ru = resource.getrusage(resource.RUSAGE_SELF)
@@ -94,13 +117,15 @@ class Timer:
         return self
 
     def dump(self) -> Timer:
-        """
-        Dump timer statistics
-        """
-        _LOG.info("%s", self)
+        """Dump timer statistics"""
+        for logger in self._loggers:
+            logger.log(self._log_level, "%s", self)
+        for agent in self._mon_agents:
+            agent.add_record(self._name, values=self.as_dict(), tags=self._tags)
         return self
 
-    def __str__(self) -> str:
+    def accumulated(self) -> tuple[float, float, float]:
+        """Return accumulated real, user, and system times in seconds."""
         real = self._sumReal
         user = self._sumUser
         sys = self._sumSys
@@ -109,24 +134,34 @@ class Timer:
             ru = resource.getrusage(resource.RUSAGE_SELF)
             user += ru.ru_utime - self._startUser
             sys += ru.ru_stime - self._startSys
+        return (real, user, sys)
+
+    def as_dict(self, prefix: str = "") -> dict[str, float]:
+        """Return accumulated real, user, and system times as dictionary."""
+        real, user, sys = self.accumulated()
+        return {
+            f"{prefix}real": real,
+            f"{prefix}user": user,
+            f"{prefix}sys": sys,
+        }
+
+    def __str__(self) -> str:
+        real, user, sys = self.accumulated()
         info = "real=%.3f user=%.3f sys=%.3f" % (real, user, sys)
         if self._name:
             info = self._name + ": " + info
+        if self._tags:
+            info += f" (tags={self._tags})"
         return info
 
     def __enter__(self) -> Timer:
-        """
-        Enter context, start timer
-        """
+        """Enter context, start timer"""
         self.start()
         return self
 
     def __exit__(self, exc_type: type | None, exc_val: Any, exc_tb: Any) -> Any:
-        """
-        Exit context, stop and dump timer
-        """
+        """Exit context, stop and dump timer"""
+        self.stop()
         if exc_type is None:
-            self.stop()
-            if self._print:
-                self.dump()
+            self.dump()
         return False
