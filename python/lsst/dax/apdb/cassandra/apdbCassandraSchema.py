@@ -26,7 +26,7 @@ __all__ = ["ApdbCassandraSchema"]
 import enum
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import felis.datamodel
 
@@ -493,13 +493,28 @@ class ApdbCassandraSchema(ApdbSchema):
         # Try to create keyspace if it does not exist
         if replication_factor is None:
             replication_factor = 1
-        query = (
-            f'CREATE KEYSPACE IF NOT EXISTS "{self._keyspace}"'
-            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': "
-            f"{replication_factor}"
-            "}"
-        )
-        self._session.execute(query)
+
+        # If keyspace exists check its replication factor.
+        query = "SELECT replication FROM system_schema.keyspaces WHERE keyspace_name = %s"
+        result = self._session.execute(query, (self._keyspace,))
+        if row := result.one():
+            # Check replication factor, ignore strategy class.
+            repl_config = cast(Mapping[str, str], row[0])
+            current_repl = int(repl_config["replication_factor"])
+            if replication_factor != current_repl:
+                raise ValueError(
+                    f"New replication factor {replication_factor} differs from the replication factor "
+                    f"for already existing keyspace: {current_repl}"
+                )
+        else:
+            # Need a new keyspace.
+            query = (
+                f'CREATE KEYSPACE "{self._keyspace}"'
+                " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': "
+                f"{replication_factor}"
+                "}"
+            )
+            self._session.execute(query)
 
         for table in self._apdb_tables:
             self._makeTableSchema(table, drop, part_range)
