@@ -45,7 +45,6 @@ from lsst.dax.apdb import (
     ReplicaChunk,
     VersionTuple,
 )
-from lsst.dax.apdb.sql import ApdbSql
 from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
 
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
@@ -139,8 +138,8 @@ class ApdbTest(TestCaseMixin, ABC):
     table_column_count = {
         ApdbTables.DiaObject: 8,
         ApdbTables.DiaObjectLast: 5,
-        ApdbTables.DiaSource: 10,
-        ApdbTables.DiaForcedSource: 4,
+        ApdbTables.DiaSource: 11,
+        ApdbTables.DiaForcedSource: 5,
         ApdbTables.SSObject: 3,
     }
 
@@ -250,18 +249,13 @@ class ApdbTest(TestCaseMixin, ABC):
         res = apdb.getDiaForcedSources(region, [1, 2, 3], visit_time)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
-        # test if a visit has objects/sources
+        # data_factory's ccdVisitId generation corresponds to (1, 1)
         if self.allow_visit_query:
-            res = apdb.containsVisitDetector(visit=0, detector=0)
+            res = apdb.containsVisitDetector(visit=1, detector=1)
             self.assertFalse(res)
         else:
             with self.assertRaises(NotImplementedError):
                 apdb.containsVisitDetector(visit=0, detector=0)
-
-        # alternative method not part of the Apdb API
-        if isinstance(apdb, ApdbSql):
-            res = apdb.containsCcdVisit(1)
-            self.assertFalse(res)
 
         # get sources by region
         if self.fsrc_requires_id_list:
@@ -303,16 +297,12 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # test if a visit has objects/sources
         if self.allow_visit_query:
-            res = apdb.containsVisitDetector(visit=0, detector=0)
+            # Database is empty, no images exist.
+            res = apdb.containsVisitDetector(visit=1, detector=1)
             self.assertFalse(res)
         else:
             with self.assertRaises(NotImplementedError):
                 apdb.containsVisitDetector(visit=0, detector=0)
-
-        # alternative method not part of the Apdb API
-        if isinstance(apdb, ApdbSql):
-            res = apdb.containsCcdVisit(1)
-            self.assertFalse(res)
 
     def test_storeObjects(self) -> None:
         """Store and retrieve DiaObjects."""
@@ -377,20 +367,16 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
         # test if a visit is present
-        # data_factory's ccdVisitId generation corresponds to (0, 0)
+        # data_factory's ccdVisitId generation corresponds to (1, 1)
         if self.allow_visit_query:
-            res = apdb.containsVisitDetector(visit=0, detector=0)
+            res = apdb.containsVisitDetector(visit=1, detector=1)
             self.assertTrue(res)
+            # non-existent image
+            res = apdb.containsVisitDetector(visit=2, detector=42)
+            self.assertFalse(res)
         else:
             with self.assertRaises(NotImplementedError):
                 apdb.containsVisitDetector(visit=0, detector=0)
-
-        # alternative method not part of the Apdb API
-        if isinstance(apdb, ApdbSql):
-            res = apdb.containsCcdVisit(1)
-            self.assertTrue(res)
-            res = apdb.containsCcdVisit(42)
-            self.assertFalse(res)
 
     def test_storeForcedSources(self) -> None:
         """Store and retrieve DiaForcedSources."""
@@ -415,14 +401,16 @@ class ApdbTest(TestCaseMixin, ABC):
         res = apdb.getDiaForcedSources(region, [], visit_time)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
-        # TODO: test apdb.contains with generic implementation from DM-41671
-
-        # alternative method not part of the Apdb API
-        if isinstance(apdb, ApdbSql):
-            res = apdb.containsCcdVisit(1)
+        # data_factory's ccdVisitId generation corresponds to (1, 1)
+        if self.allow_visit_query:
+            res = apdb.containsVisitDetector(visit=1, detector=1)
             self.assertTrue(res)
-            res = apdb.containsCcdVisit(42)
+            # non-existent image
+            res = apdb.containsVisitDetector(visit=2, detector=42)
             self.assertFalse(res)
+        else:
+            with self.assertRaises(NotImplementedError):
+                apdb.containsVisitDetector(visit=0, detector=0)
 
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
@@ -454,7 +442,7 @@ class ApdbTest(TestCaseMixin, ABC):
         start_id = 0
         for visit_time, objects in visits:
             sources = makeSourceCatalog(objects, visit_time, start_id=start_id)
-            fsources = makeForcedSourceCatalog(objects, visit_time, ccdVisitId=start_id)
+            fsources = makeForcedSourceCatalog(objects, visit_time, visit=start_id)
             apdb.store(visit_time, objects, sources, fsources)
             start_id += nobj
 
