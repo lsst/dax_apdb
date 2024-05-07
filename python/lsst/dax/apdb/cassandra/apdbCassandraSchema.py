@@ -107,7 +107,7 @@ class ApdbCassandraSchema(ApdbSchema):
         felis.datamodel.DataType.timestamp: "TIMESTAMP",
         felis.datamodel.DataType.long: "BIGINT",
         felis.datamodel.DataType.int: "INT",
-        felis.datamodel.DataType.short: "INT",
+        felis.datamodel.DataType.short: "SMALLINT",
         felis.datamodel.DataType.byte: "TINYINT",
         felis.datamodel.DataType.binary: "BLOB",
         felis.datamodel.DataType.char: "TEXT",

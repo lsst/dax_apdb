@@ -113,8 +113,8 @@ class ModelToSql:
             felis.datamodel.DataType.timestamp: sqlalchemy.types.TIMESTAMP,
             felis.datamodel.DataType.long: sqlalchemy.types.BigInteger,
             felis.datamodel.DataType.int: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.short: sqlalchemy.types.Integer,
-            felis.datamodel.DataType.byte: sqlalchemy.types.Integer,
+            felis.datamodel.DataType.short: sqlalchemy.types.SmallInteger,
+            felis.datamodel.DataType.byte: sqlalchemy.types.SmallInteger,  # Byte types are not very portable
             felis.datamodel.DataType.binary: sqlalchemy.types.LargeBinary,
             felis.datamodel.DataType.text: sqlalchemy.types.Text,
             felis.datamodel.DataType.string: sqlalchemy.types.CHAR,
