@@ -180,7 +180,9 @@ class Apdb(ABC):
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         """Return catalog of DiaObject instances from a given region.
 
-        This method returns only the last version of each DiaObject. Some
+        This method returns only the last version of each DiaObject,
+        and may return only the subset of the DiaObject columns needed
+        for AP association. Some
         records in a returned catalog may be outside the specified region, it
         is up to a client to ignore those records or cleanup the catalog before
         futher use.
