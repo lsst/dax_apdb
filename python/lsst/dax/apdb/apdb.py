@@ -278,7 +278,8 @@ class Apdb(ABC):
 
     @abstractmethod
     def containsVisitDetector(self, visit: int, detector: int) -> bool:
-        """Test whether data for a given visit-detector is present in the APDB.
+        """Test whether any sources for a given visit-detector are present in
+        the APDB.
 
         Parameters
         ----------
@@ -288,8 +289,8 @@ class Apdb(ABC):
         Returns
         -------
         present : `bool`
-            `True` if some DiaObject, DiaSource, or DiaForcedSource records
-            exist for the specified observation, `False` otherwise.
+            `True` if at least one DiaSource or DiaForcedSource record
+            may exist for the specified observation, `False` otherwise.
         """
         raise NotImplementedError()
 
@@ -341,6 +342,9 @@ class Apdb(ABC):
             catalog
           - source catalogs have ``diaObjectId`` column associating sources
             with objects
+
+        This operation need not be atomic, but DiaSources and DiaForcedSources
+        will not be stored until all DiaObjects are stored.
         """
         raise NotImplementedError()
 
