@@ -40,6 +40,7 @@ def main(args: Sequence[str] | None = None) -> None:
     _create_sql_subcommand(subparsers)
     _create_cassandra_subcommand(subparsers)
     _list_index_subcommand(subparsers)
+    _metadata_subcommand(subparsers)
 
     parsed_args = parser.parse_args(args)
     log_cli.process_args(parsed_args)
@@ -83,3 +84,55 @@ def _list_index_subcommand(subparsers: argparse._SubParsersAction) -> None:
         "index_path", help="Location of index file, if missing then $DAX_APDB_INDEX_URI is used.", nargs="?"
     )
     parser.set_defaults(method=scripts.list_index)
+
+
+def _metadata_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("metadata", help="Operations with APDB metadata table.")
+    subparsers = parser.add_subparsers(title="available subcommands", required=True)
+    _metadata_set_subcommand(subparsers)
+    _metadata_get_subcommand(subparsers)
+    _metadata_show_subcommand(subparsers)
+    _metadata_delete_subcommand(subparsers)
+
+
+def _metadata_show_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("show", help="Show contents of APDB metadata table.")
+    parser.add_argument(
+        "-j",
+        "--json",
+        dest="use_json",
+        help="Dump metadata in JSON format.",
+        default=False,
+        action="store_true",
+    )
+    parser.add_argument("config", help="Path or URI of APDB configuration file.")
+    parser.set_defaults(method=scripts.metadata_show)
+
+
+def _metadata_get_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("get", help="Print value of the metadata item.")
+    parser.add_argument("config", help="Path or URI of APDB configuration file.")
+    parser.add_argument("key", help="Metadata key, arbitrary string.")
+    parser.set_defaults(method=scripts.metadata_get)
+
+
+def _metadata_set_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("set", help="Add or update metadata item.")
+    parser.add_argument(
+        "-f",
+        "--force",
+        help="Force update of the existing key.",
+        default=False,
+        action="store_true",
+    )
+    parser.add_argument("config", help="Path or URI of APDB configuration file.")
+    parser.add_argument("key", help="Metadata key, arbitrary string.")
+    parser.add_argument("value", help="Corresponding metadata value.")
+    parser.set_defaults(method=scripts.metadata_set)
+
+
+def _metadata_delete_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("delete", help="Delete metadata item.")
+    parser.add_argument("config", help="Path or URI of APDB configuration file.")
+    parser.add_argument("key", help="Metadata key, arbitrary string.")
+    parser.set_defaults(method=scripts.metadata_delete)
