@@ -80,7 +80,7 @@ class VersionTuple(NamedTuple):
             raise ValueError(f"Invalid version  string '{versionStr}', must consist of three numbers")
         return cls(*version)
 
-    def checkCompatibility(self, database_version: VersionTuple, update: bool) -> bool:
+    def checkCompatibility(self, database_version: VersionTuple) -> bool:
         """Compare implementation schema version with schema version in
         database.
 
@@ -88,8 +88,6 @@ class VersionTuple(NamedTuple):
         ----------
         database_version : `VersionTuple`
             Version of the database schema.
-        update : `bool`
-            If True then read-write access is expected.
 
         Returns
         -------
@@ -102,17 +100,16 @@ class VersionTuple(NamedTuple):
 
             - if major numbers differ, schemas are not compatible;
             - otherwise, if minor versions are different then newer version can
-              read schema made by older version, but cannot write into it;
-              older version can neither read nor write into newer schema;
+              read and write schema made by older version; older version can
+              neither read nor write into newer schema;
             - otherwise, different patch versions are totally compatible.
         """
         if self.major != database_version.major:
             # different major versions are not compatible at all
             return False
         if self.minor != database_version.minor:
-            # different minor versions are backward compatible for read
-            # access only
-            return self.minor > database_version.minor and not update
+            # Different minor versions are backward compatible.
+            return self.minor > database_version.minor
         # patch difference does not matter
         return True
 

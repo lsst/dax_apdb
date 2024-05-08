@@ -22,3 +22,4 @@
 from .create_cassandra import create_cassandra
 from .create_sql import create_sql
 from .list_index import list_index
+from .metadata import metadata_delete, metadata_get, metadata_set, metadata_show
