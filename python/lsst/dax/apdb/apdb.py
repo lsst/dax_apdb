@@ -180,7 +180,9 @@ class Apdb(ABC):
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         """Return catalog of DiaObject instances from a given region.
 
-        This method returns only the last version of each DiaObject. Some
+        This method returns only the last version of each DiaObject,
+        and may return only the subset of the DiaObject columns needed
+        for AP association. Some
         records in a returned catalog may be outside the specified region, it
         is up to a client to ignore those records or cleanup the catalog before
         futher use.
@@ -278,7 +280,8 @@ class Apdb(ABC):
 
     @abstractmethod
     def containsVisitDetector(self, visit: int, detector: int) -> bool:
-        """Test whether data for a given visit-detector is present in the APDB.
+        """Test whether any sources for a given visit-detector are present in
+        the APDB.
 
         Parameters
         ----------
@@ -288,8 +291,8 @@ class Apdb(ABC):
         Returns
         -------
         present : `bool`
-            `True` if some DiaObject, DiaSource, or DiaForcedSource records
-            exist for the specified observation, `False` otherwise.
+            `True` if at least one DiaSource or DiaForcedSource record
+            may exist for the specified observation, `False` otherwise.
         """
         raise NotImplementedError()
 
@@ -341,6 +344,9 @@ class Apdb(ABC):
             catalog
           - source catalogs have ``diaObjectId`` column associating sources
             with objects
+
+        This operation need not be atomic, but DiaSources and DiaForcedSources
+        will not be stored until all DiaObjects are stored.
         """
         raise NotImplementedError()
 
