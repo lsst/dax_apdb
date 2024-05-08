@@ -426,12 +426,12 @@ class ApdbCassandra(Apdb):
 
         # For now there is no way to make read-only APDB instances, assume that
         # any access can do updates.
-        if not self._schema.schemaVersion().checkCompatibility(db_schema_version, True):
+        if not self._schema.schemaVersion().checkCompatibility(db_schema_version):
             raise IncompatibleVersionError(
                 f"Configured schema version {self._schema.schemaVersion()} "
                 f"is not compatible with database version {db_schema_version}"
             )
-        if not self.apdbImplementationVersion().checkCompatibility(db_code_version, True):
+        if not self.apdbImplementationVersion().checkCompatibility(db_code_version):
             raise IncompatibleVersionError(
                 f"Current code version {self.apdbImplementationVersion()} "
                 f"is not compatible with database version {db_code_version}"
@@ -441,7 +441,7 @@ class ApdbCassandra(Apdb):
         if self._schema.has_replica_chunks:
             db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
             code_replica_version = ApdbCassandraReplica.apdbReplicaImplementationVersion()
-            if not code_replica_version.checkCompatibility(db_replica_version, True):
+            if not code_replica_version.checkCompatibility(db_replica_version):
                 raise IncompatibleVersionError(
                     f"Current replication code version {code_replica_version} "
                     f"is not compatible with database version {db_replica_version}"
