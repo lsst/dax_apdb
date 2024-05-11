@@ -360,6 +360,39 @@ class ApdbCassandraSchema(ApdbSchema):
                 f"Only some required APDB tables exist: {existing_tables}, missing tables: {missing_tables}"
             )
 
+    def existing_tables(self, *args: ApdbTables) -> dict[ApdbTables, list[str]]:
+        """Return the list of existing table names for given table.
+
+        Parameters
+        ----------
+        *args : `ApdbTables`
+            Tables for which to return their existing table names.
+
+        Returns
+        -------
+        tables : `dict` [`ApdbTables`, `list`[`str`]]
+            Mapping of the APDB table to the list of the existing table names.
+            More than one name can be present in the list if configuration
+            specifies per-partition tables.
+        """
+        if self._time_partition_tables and not set(args).isdisjoint(self._time_partitioned_tables):
+            # Some of the tables should have per-partition tables.
+            query = "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s"
+            result = self._session.execute(query, (self._keyspace,))
+            table_names = set(row[0] for row in result.all())
+
+            tables = {}
+            for table_enum in args:
+                base_name = table_enum.table_name(self._prefix)
+                if table_enum in self._time_partitioned_tables:
+                    tables[table_enum] = [table for table in table_names if table.startswith(f"{base_name}_")]
+                else:
+                    tables[table_enum] = [base_name]
+            return tables
+        else:
+            # Do not check that they exist, we know that they should.
+            return {table_enum: [table_enum.table_name(self._prefix)] for table_enum in args}
+
     def tableName(self, table_name: ApdbTables | ExtraTables) -> str:
         """Return Cassandra table name for APDB table."""
         return table_name.table_name(self._prefix)

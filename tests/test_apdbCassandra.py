@@ -107,7 +107,7 @@ class ApdbCassandraMixin:
 class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     """A test case for ApdbCassandra class"""
 
-    allow_visit_query = False
+    allow_visit_query = True
     time_partition_tables = False
     time_partition_start: str | None = None
     time_partition_end: str | None = None

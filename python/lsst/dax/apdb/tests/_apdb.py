@@ -262,7 +262,7 @@ class ApdbTest(TestCaseMixin, ABC):
             with self.assertRaises(NotImplementedError):
                 apdb.getDiaForcedSources(region, None, visit_time)
         else:
-            apdb.getDiaForcedSources(region, None, visit_time)
+            res = apdb.getDiaForcedSources(region, None, visit_time)
             self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
     def test_empty_gets_0months(self) -> None:
