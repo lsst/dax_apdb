@@ -449,12 +449,14 @@ class ApdbCassandra(Apdb):
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
-        # Docstring inherited from base class.
-        return VERSION
+        """Return version number for current APDB implementation.
 
-    def apdbSchemaVersion(self) -> VersionTuple:
-        # Docstring inherited from base class.
-        return self._schema.schemaVersion()
+        Returns
+        -------
+        version : `VersionTuple`
+            Version of the code defined in implementation class.
+        """
+        return VERSION
 
     def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class

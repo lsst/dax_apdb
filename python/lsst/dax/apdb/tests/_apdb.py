@@ -678,17 +678,21 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         default_schema = config.schema_file
         apdb = Apdb.from_config(config)
-        self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
+        self.assertEqual(apdb._schema.schemaVersion(), VersionTuple(0, 1, 1))  # type: ignore[attr-defined]
 
         with update_schema_yaml(default_schema, version="") as schema_file:
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
-            self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 0))
+            self.assertEqual(
+                apdb._schema.schemaVersion(), VersionTuple(0, 1, 0)  # type: ignore[attr-defined]
+            )
 
         with update_schema_yaml(default_schema, version="99.0.0") as schema_file:
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
-            self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(99, 0, 0))
+            self.assertEqual(
+                apdb._schema.schemaVersion(), VersionTuple(99, 0, 0)  # type: ignore[attr-defined]
+            )
 
     def test_config_freeze(self) -> None:
         """Test that some config fields are correctly frozen in database."""
@@ -749,7 +753,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        self.assertEqual(apdb.apdbSchemaVersion(), VersionTuple(0, 1, 1))
+        self.assertEqual(apdb._schema.schemaVersion(), VersionTuple(0, 1, 1))  # type: ignore[attr-defined]
 
         # Claim that schema version is now 99.0.0, must raise an exception.
         with update_schema_yaml(config.schema_file, version="99.0.0") as schema_file:

@@ -344,7 +344,13 @@ class ApdbSql(Apdb):
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
-        # Docstring inherited from base class.
+        """Return version number for current APDB implementation.
+
+        Returns
+        -------
+        version : `VersionTuple`
+            Version of the code defined in implementation class.
+        """
         return VERSION
 
     @classmethod
@@ -434,10 +440,6 @@ class ApdbSql(Apdb):
         cls._makeSchema(config, drop=drop)
 
         return config
-
-    def apdbSchemaVersion(self) -> VersionTuple:
-        # Docstring inherited from base class.
-        return self._schema.schemaVersion()
 
     def get_replica(self) -> ApdbSqlReplica:
         """Return `ApdbReplica` instance for this database."""
