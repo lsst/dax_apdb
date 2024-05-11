@@ -38,7 +38,7 @@ import logging
 import os
 import unittest
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 try:
     from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
@@ -102,10 +102,6 @@ class ApdbCassandraMixin:
         # Delete per-test keyspace.
         query = f"DROP KEYSPACE {self.keyspace}"
         self._run_query(query)
-
-    if TYPE_CHECKING:
-        # For mypy.
-        def make_instance(self, **kwargs: Any) -> ApdbConfig: ...
 
 
 class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
