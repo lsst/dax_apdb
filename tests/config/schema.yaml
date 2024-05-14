@@ -10,13 +10,11 @@ tables:
   - name: name
     "@id": "#metadata.name"
     datatype: text
-    length: 1024
     nullable: false
     description: Name or key for a metadata item.
   - name: value
     "@id": "#metadata.value"
     datatype: text
-    length: 65535
     nullable: false
     description: Content of the metadata item in string representation.
   primaryKey: "#metadata.name"
@@ -30,28 +28,22 @@ tables:
     datatype: long
     nullable: false
     description: Unique id.
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: validityStart
     "@id": "#DiaObject.validityStart"
     datatype: timestamp
-    length: 6
     nullable: false
     description: Time when validity of this diaObject starts.
-    mysql:datatype: DATETIME
   - name: validityEnd
     "@id": "#DiaObject.validityEnd"
     datatype: timestamp
-    length: 6
     nullable: true
     description: Time when validity of this diaObject ends.
-    mysql:datatype: DATETIME
   - name: ra
     "@id": "#DiaObject.ra"
     datatype: double
     nullable: false
     description: RA-coordinate of the position of the object at time radecTai.
-    mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.ra
   - name: dec
@@ -59,21 +51,17 @@ tables:
     datatype: double
     nullable: false
     description: Dec-coordinate of the position of the object at time radecTai.
-    mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.dec
   - name: parallax
     "@id": "#DiaObject.parallax"
     datatype: float
     description: Parallax.
-    mysql:datatype: FLOAT
   - name: lastNonForcedSource
     "@id": "#DiaObject.lastNonForcedSource"
     datatype: timestamp
-    length: 6
     nullable: false
     description: Last time when non-forced DIASource was seen for this object.
-    mysql:datatype: DATETIME
   - name: nDiaSources
     "@id": "#DiaObject.nDiaSources"
     datatype: int
@@ -97,13 +85,11 @@ tables:
     datatype: long
     nullable: false
     description: Unique identifier.
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: arc
     "@id": "#SSObject.arc"
     datatype: float
     description: Arc of observation.
-    mysql:datatype: FLOAT
     fits:tunit: day
   - name: flags
     "@id": "#SSObject.flags"
@@ -111,7 +97,6 @@ tables:
     nullable: false
     description: Flags, bitwise OR tbd.
     value: 0
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.code
   primaryKey: "#SSObject.ssObjectId"
 - name: DiaSource
@@ -124,7 +109,6 @@ tables:
     datatype: long
     nullable: false
     description: Unique id.
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;obs.image
   - name: visit
     "@id": "#DiaSource.visit"
@@ -146,7 +130,6 @@ tables:
     description: Id of the diaObject this source was associated with, if any. If not,
       it is set to NULL (each diaSource will be associated with either a diaObject
       or ssObject).
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: ssObjectId
     "@id": "#DiaSource.ssObjectId"
@@ -155,21 +138,18 @@ tables:
     description: Id of the ssObject this source was associated with, if any. If not,
       it is set to NULL (each diaSource will be associated with either a diaObject
       or ssObject).
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: parentDiaSourceId
     "@id": "#DiaSource.parentDiaSourceId"
     datatype: long
     description: Id of the parent diaSource this diaSource has been deblended from,
       if any.
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: ra
     "@id": "#DiaSource.ra"
     datatype: double
     nullable: false
     description: RA-coordinate of the center of this diaSource.
-    mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.ra
   - name: dec
@@ -177,22 +157,18 @@ tables:
     datatype: double
     nullable: false
     description: " Decl-coordinate of the center of this diaSource."
-    mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.dec
   - name: ssObjectReassocTime
     "@id": "#DiaSource.ssObjectReassocTime"
     datatype: timestamp
-    length: 6
     description: Time when this diaSource was reassociated from diaObject to ssObject
       (if such reassociation happens, otherwise NULL).
-    mysql:datatype: DATETIME
   - name: midpointMjdTai
     "@id": "#DiaSource.midpointMjdTai"
     datatype: double
     nullable: false
     description: Effective mid-exposure time for this diaSource.
-    mysql:datatype: DOUBLE
     fits:tunit: d
     ivoa:ucd: time.epoch
   - name: flags
@@ -201,7 +177,6 @@ tables:
     nullable: false
     description: Flags, bitwise OR tbd.
     value: 0
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.code
   primaryKey: "#DiaSource.diaSourceId"
   indexes:
@@ -227,7 +202,6 @@ tables:
     "@id": "#DiaForcedSource.diaObjectId"
     datatype: long
     nullable: false
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: visit
     "@id": "#DiaForcedSource.visit"
@@ -255,7 +229,6 @@ tables:
     nullable: false
     description: Flags, bitwise OR tbd
     value: 0
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.code
   primaryKey:
   - "#DiaForcedSource.diaObjectId"
@@ -276,20 +249,17 @@ tables:
     datatype: long
     nullable: false
     description: Id of diaObject.
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: objectId
     "@id": "#DiaObject_To_Object_Match.objectId"
     datatype: long
     nullable: false
     description: Id of a nearby object.
-    mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
   - name: dist
     "@id": "#DiaObject_To_Object_Match.dist"
     datatype: float
     description: The distance between the diaObject and the object.
-    mysql:datatype: FLOAT
     fits:tunit: arcsec
   indexes:
   - name: IDX_DiaObjectToObjectMatch_diaObjectId
@@ -326,13 +296,38 @@ tables:
   - name: lastNonForcedSource
     "@id": "#DiaObjectLast.lastNonForcedSource"
     datatype: timestamp
-    length: 6
     nullable: false
     description: Last time when non-forced DIASource was seen for this object.
-    mysql:datatype: DATETIME
   - name: nDiaSources
     "@id": "#DiaObjectLast.nDiaSources"
     datatype: int
     nullable: false
     description: Total number of DiaSources associated with this DiaObject.
   primaryKey: "#DiaObjectLast.diaObjectId"
+- name: DetectorVisitProcessingSummary
+  '@id': '#DetectorVisitProcessingSummary'
+  description: Properties of an image from one processing of a single detector in a visit.
+  columns:
+  - name: visit
+    '@id': '#DetectorVisitProcessingSummary.visit'
+    datatype: long
+    nullable: false
+    description: Id of the visit this visit was a part of.
+    ivoa:ucd: meta.id;obs.image
+  - name: detector
+    '@id': '#DetectorVisitProcessingSummary.detector'
+    datatype: short
+    nullable: false
+    description: Id of the detector on the instrument that took this visit.
+      Datatype short instead of byte because of DB concerns about unsigned bytes.
+    ivoa:ucd: meta.id;obs.image
+  - name: ra
+    '@id': '#DetectorVisitProcessingSummary.ra'
+    datatype: double
+    description: Right Ascension of detector center.
+    fits:tunit: deg
+  - name: dec
+    '@id': '#DetectorVisitProcessingSummary.dec'
+    datatype: double
+    description: Declination of detector center.
+    fits:tunit: deg
