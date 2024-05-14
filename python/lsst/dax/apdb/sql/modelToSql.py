@@ -23,6 +23,7 @@ from __future__ import annotations
 
 __all__ = ["ModelToSql", "GUID"]
 
+import hashlib
 import uuid
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -94,6 +95,8 @@ class ModelToSql:
     ----------
     metadata : `sqlalchemy.schema.MetaData`
         Metadata object for created tables.
+    dialect : `sqlalchemy.engine.Dialect`
+        Backend dialect.
     prefix : `str`, optional
         Prefix to add to all schema elements.
     """
@@ -101,10 +104,12 @@ class ModelToSql:
     def __init__(
         self,
         metadata: sqlalchemy.schema.MetaData,
+        dialect: sqlalchemy.engine.Dialect,
         prefix: str = "",
     ):
         self._metadata = metadata
         self._prefix = prefix
+        self._dialect = dialect
 
         # Map model column types to SQLAlchemy.
         self._type_map: dict[felis.datamodel.DataType | schema_model.ExtraDataTypes, type] = {
@@ -210,19 +215,19 @@ class ModelToSql:
         constraints: list[sqlalchemy.schema.SchemaItem] = []
         if table.primary_key:
             # It is very useful to have named PK.
-            name = self._prefix + table.name + "_pk"
+            name = self._shrink_id(self._prefix + table.name + "_pk")
             constraints.append(
                 sqlalchemy.schema.PrimaryKeyConstraint(*[column.name for column in table.primary_key])
             )
         for index in table.indexes:
             if index.expressions:
                 raise TypeError(f"Expression indices are not supported: {table}")
-            name = self._prefix + index.name if index.name else ""
+            name = self._shrink_id(self._prefix + index.name) if index.name else ""
             constraints.append(sqlalchemy.schema.Index(name, *[column.name for column in index.columns]))
         for constraint in table.constraints:
             constr_name: str | None = None
             if constraint.name:
-                constr_name = self._prefix + constraint.name
+                constr_name = self._shrink_id(self._prefix + constraint.name)
             if isinstance(constraint, schema_model.UniqueConstraint):
                 constraints.append(
                     sqlalchemy.schema.UniqueConstraint(
@@ -292,3 +297,28 @@ class ModelToSql:
             raise ValueError(f"Dependency cycle in foreign keys: {tables}")
 
         return result
+
+    def _shrink_id(self, name: str) -> str:
+        """Shrink the name to the size acceptable by SQL backend.
+
+        Parameters
+        ----------
+        name : `str`
+            Identifier name to shrink.
+
+        Returns
+        -------
+        shrinked_name : `str`
+            Possibly shrinked name.
+        """
+        # Pieces of algorithm are stolen from daf_butler.
+        max_len = self._dialect.max_identifier_length
+        if max_len > 0 and len(name) > max_len:
+            # Use 8-byte hash and encode it into 18-character string
+            message = hashlib.blake2b(digest_size=8)
+            message.update(name.encode("ascii"))
+            hex_hash = message.digest().hex()
+            trunc = max_len - len(hex_hash) - 1
+            name = f"{name[:trunc]}_{hex_hash}"
+
+        return name
