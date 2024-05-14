@@ -725,7 +725,36 @@ class ApdbCassandra(Apdb):
 
     def containsVisitDetector(self, visit: int, detector: int) -> bool:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+        # The order of checks corresponds to order in store(), on potential
+        # store failure earlier tables have higher probability containing
+        # stored records. With per-partition tables there will be many tables
+        # in the list, but it is unlikely that we'll use that setup in
+        # production.
+        existing_tables = self._schema.existing_tables(ApdbTables.DiaSource, ApdbTables.DiaForcedSource)
+        tables_to_check = existing_tables[ApdbTables.DiaSource][:]
+        if self.config.use_insert_id:
+            tables_to_check.append(self._schema.tableName(ExtraTables.DiaSourceChunks))
+        tables_to_check.extend(existing_tables[ApdbTables.DiaForcedSource])
+        if self.config.use_insert_id:
+            tables_to_check.append(self._schema.tableName(ExtraTables.DiaForcedSourceChunks))
+
+        # I do not want to run concurrent queries as they are all full-scan
+        # queries, so we do one by one.
+        for table_name in tables_to_check:
+            # Try to find a single record with given visit/detector. This is a
+            # full scan query so ALLOW FILTERING is needed. It will probably
+            # guess PER PARTITION LIMIT itself, but let's help it.
+            query = (
+                f'SELECT * from "{self._keyspace}"."{table_name}" '
+                "WHERE visit = ? AND detector = ? "
+                "PER PARTITION LIMIT 1 LIMIT 1 ALLOW FILTERING"
+            )
+            with self._timer("contains_visit_detector_time", tags={"table": table_name}):
+                result = self._session.execute(self._preparer.prepare(query), (visit, detector))
+                if result.one() is not None:
+                    # There is a result.
+                    return True
+        return False
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
