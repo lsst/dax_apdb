@@ -96,6 +96,18 @@ class Timer:
         self._sumUser = 0.0
         self._sumSys = 0.0
 
+        self._extra_values: dict[str, int | float] = {}
+
+    def add_values(self, **values: int | float) -> None:
+        """Add values to dump together with timing information.
+
+        Parameters
+        ----------
+        **values : int | float
+            Key/values to add to timer information.
+        """
+        self._extra_values.update(values)
+
     def start(self) -> Timer:
         """Start timer."""
         self._startReal = time.time()
@@ -136,14 +148,16 @@ class Timer:
             sys += ru.ru_stime - self._startSys
         return (real, user, sys)
 
-    def as_dict(self, prefix: str = "") -> dict[str, float]:
-        """Return accumulated real, user, and system times as dictionary."""
+    def as_dict(self, prefix: str = "") -> dict[str, int | float]:
+        """Return timers and extra values as dictionary."""
         real, user, sys = self.accumulated()
-        return {
+        values = {
             f"{prefix}real": real,
             f"{prefix}user": user,
             f"{prefix}sys": sys,
         }
+        values.update(self._extra_values)
+        return values
 
     def __str__(self) -> str:
         real, user, sys = self.accumulated()

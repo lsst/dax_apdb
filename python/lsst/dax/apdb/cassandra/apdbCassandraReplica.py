@@ -103,15 +103,16 @@ class ApdbCassandraReplica(ApdbReplica):
             f'FROM "{self._config.keyspace}"."{table_name}" WHERE partition = ?'
         )
 
-        with self._timer("chunks_select_time"):
+        with self._timer("chunks_select_time") as timer:
             result = self._session.execute(
                 self._preparer.prepare(query),
                 (partition,),
                 timeout=self._config.read_timeout,
                 execution_profile="read_tuples",
             )
-        # order by last_update_time
-        rows = sorted(result)
+            # order by last_update_time
+            rows = sorted(result)
+            timer.add_values(row_count=len(rows))
         return [
             ReplicaChunk(
                 id=row[1],
@@ -128,6 +129,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
         # There is 64k limit on number of markers in Cassandra CQL
         for chunk_ids in chunk_iterable(chunks, 20_000):
+            chunk_list = list(chunk_ids)
             params = ",".join("?" * len(chunk_ids))
 
             # everything goes into a single partition
@@ -139,12 +141,13 @@ class ApdbCassandraReplica(ApdbReplica):
                 f"WHERE partition = ? AND apdb_replica_chunk IN ({params})"
             )
 
-            with self._timer("chunks_delete_time"):
+            with self._timer("chunks_delete_time") as timer:
                 self._session.execute(
                     self._preparer.prepare(query),
-                    [partition] + list(chunk_ids),
+                    [partition] + chunk_list,
                     timeout=self._config.remove_timeout,
                 )
+                timer.add_values(row_count=len(chunk_list))
 
             # Also remove those chunk_ids from Dia*Chunks tables.
             for table in (
@@ -157,12 +160,13 @@ class ApdbCassandraReplica(ApdbReplica):
                     f'DELETE FROM "{self._config.keyspace}"."{table_name}"'
                     f" WHERE apdb_replica_chunk IN ({params})"
                 )
-                with self._timer("table_chunk_detele_time", tags={"table": table_name}):
+                with self._timer("table_chunk_detele_time", tags={"table": table_name}) as timer:
                     self._session.execute(
                         self._preparer.prepare(query),
-                        chunk_ids,
+                        chunk_list,
                         timeout=self._config.remove_timeout,
                     )
+                    timer.add_values(row_count=len(chunk_list))
 
     def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
@@ -194,7 +198,8 @@ class ApdbCassandraReplica(ApdbReplica):
         )
         statement = self._preparer.prepare(query)
 
-        with self._timer("table_chunk_select_time", tags={"table": table_name}):
+        with self._timer("table_chunk_select_time", tags={"table": table_name}) as timer:
             result = self._session.execute(statement, chunks, execution_profile="read_raw")
             table_data = cast(ApdbCassandraTableData, result._current_rows)
+            timer.add_values(row_count=len(table_data.rows()))
         return table_data

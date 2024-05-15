@@ -110,13 +110,14 @@ class ApdbSqlReplica(ApdbReplica):
         query = sql.select(
             table.columns["apdb_replica_chunk"], table.columns["last_update_time"], table.columns["unique_id"]
         ).order_by(table.columns["last_update_time"])
-        with self._timer("chunks_select_time"):
+        with self._timer("chunks_select_time") as timer:
             with self._engine.connect() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
                 ids = []
                 for row in result:
                     last_update_time = astropy.time.Time(row[1].timestamp(), format="unix_tai")
                     ids.append(ReplicaChunk(id=row[0], last_update_time=last_update_time, unique_id=row[2]))
+                timer.add_values(row_count=len(ids))
                 return ids
 
     def deleteReplicaChunks(self, chunks: Iterable[int]) -> None:
@@ -125,11 +126,13 @@ class ApdbSqlReplica(ApdbReplica):
             raise ValueError("APDB is not configured for replication")
 
         table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
-        where_clause = table.columns["apdb_replica_chunk"].in_(chunks)
+        chunk_list = list(chunks)
+        where_clause = table.columns["apdb_replica_chunk"].in_(chunk_list)
         stmt = table.delete().where(where_clause)
-        with self._timer("chunks_delete_time"):
+        with self._timer("chunks_delete_time") as timer:
             with self._engine.begin() as conn:
                 conn.execute(stmt)
+            timer.add_values(row_count=len(chunk_list))
 
     def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
@@ -165,7 +168,9 @@ class ApdbSqlReplica(ApdbReplica):
         query = sql.select(chunk_id_column, *apdb_columns).select_from(join).where(where_clause)
 
         # execute select
-        with self._timer("table_chunk_select_time", tags={"table": table.name}):
+        with self._timer("table_chunk_select_time", tags={"table": table.name}) as timer:
             with self._engine.begin() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
-                return ApdbSqlTableData(result)
+                table_data = ApdbSqlTableData(result)
+                timer.add_values(row_count=len(table_data.rows()))
+                return table_data
