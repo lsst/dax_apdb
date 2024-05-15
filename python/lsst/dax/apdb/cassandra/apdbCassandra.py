@@ -746,13 +746,14 @@ class ApdbCassandra(Apdb):
             _MON.add_record(
                 "select_query_stats", values={"num_sp_part": len(sp_where), "num_queries": len(statements)}
             )
-            with self._timer("select_time"):
+            with self._timer("select_time") as timer:
                 objects = cast(
                     pandas.DataFrame,
                     select_concurrent(
                         self._session, statements, "read_pandas_multi", self.config.read_concurrency
                     ),
                 )
+                timer.add_values(row_count=len(objects))
 
         _LOG.debug("found %s DiaObjects", objects.shape[0])
         return objects
@@ -807,9 +808,11 @@ class ApdbCassandra(Apdb):
                 "WHERE visit = ? AND detector = ? "
                 "PER PARTITION LIMIT 1 LIMIT 1 ALLOW FILTERING"
             )
-            with self._timer("contains_visit_detector_time", tags={"table": table_name}):
+            with self._timer("contains_visit_detector_time", tags={"table": table_name}) as timer:
                 result = self._session.execute(self._preparer.prepare(query), (visit, detector))
-                if result.one() is not None:
+                found = result.one() is not None
+                timer.add_values(found=int(found))
+                if found:
                     # There is a result.
                     return True
         return False
@@ -820,9 +823,10 @@ class ApdbCassandra(Apdb):
         query = f'SELECT * from "{self._keyspace}"."{tableName}"'
 
         objects = None
-        with self._timer("select_time", tags={"table": "SSObject"}):
+        with self._timer("select_time", tags={"table": "SSObject"}) as timer:
             result = self._session.execute(query, execution_profile="read_pandas")
             objects = result._current_rows
+            timer.add_values(row_count=len(objects))
 
         _LOG.debug("found %s SSObjects", objects.shape[0])
         return objects
@@ -944,8 +948,9 @@ class ApdbCassandra(Apdb):
                         queries.add(self._preparer.prepare(query), values)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
-        with self._timer("update_time", tags={"table": table_name}):
+        with self._timer("source_reassign_time") as timer:
             self._session.execute(queries, execution_profile="write")
+            timer.add_values(source_count=len(idMap))
 
     def dailyJob(self) -> None:
         # docstring is inherited from a base class
@@ -1077,13 +1082,14 @@ class ApdbCassandra(Apdb):
             _MON.add_record(
                 "select_query_stats", values={"num_sp_part": len(sp_where), "num_queries": len(statements)}
             )
-            with self._timer("select_time"):
+            with self._timer("select_time") as timer:
                 catalog = cast(
                     pandas.DataFrame,
                     select_concurrent(
                         self._session, statements, "read_pandas_multi", self.config.read_concurrency
                     ),
                 )
+                timer.add_values(row_count=len(catalog))
 
         # filter by given object IDs
         if len(object_id_set) > 0:
@@ -1300,8 +1306,9 @@ class ApdbCassandra(Apdb):
                 queries.add(statement, values)
 
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
-        with self._timer("insert_time", tags={"table": table_name.name}):
+        with self._timer("insert_time", tags={"table": table_name.name}) as timer:
             self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
+            timer.add_values(row_count=len(records))
 
     def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spatial partition for each record and add it to a
