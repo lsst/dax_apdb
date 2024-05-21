@@ -182,6 +182,9 @@ class ModelToSql:
             if column.length is not None:
                 if ctype not in (sqlalchemy.types.Text, sqlalchemy.types.TIMESTAMP):
                     ctype = ctype(length=column.length)
+            if ctype is sqlalchemy.types.TIMESTAMP:
+                # Use TIMESTAMP WITH TIMEZONE.
+                ctype = ctype(timezone=True)
             column_defs.append(sqlalchemy.schema.Column(column.name, ctype, **kwargs))
 
         return column_defs
