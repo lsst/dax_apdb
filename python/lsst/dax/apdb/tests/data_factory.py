@@ -188,6 +188,8 @@ def makeForcedSourceCatalog(
             "diaObjectId": objects["diaObjectId"],
             "visit": numpy.full(nrows, visit, dtype=numpy.int64),
             "detector": numpy.full(nrows, detector, dtype=numpy.int16),
+            "ra": objects["ra"],
+            "dec": objects["dec"],
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
         }
