@@ -29,6 +29,7 @@ __all__ = ["ApdbSqlSchema", "ExtraTables"]
 import enum
 import itertools
 import logging
+import warnings
 from collections.abc import Mapping
 
 import felis.datamodel
@@ -61,6 +62,9 @@ class ExtraTables(enum.Enum):
     DiaForcedSourceChunks = "DiaForcedSourceChunks"
     """Name of the table for DIAForcedSource chunk data."""
 
+    DetectorVisitProcessingSummaryChunks = "DetectorVisitProcessingSummaryChunks"
+    """Name of the table for DetectorVisitProcessingSummary chunk data."""
+
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
         return prefix + self.value
@@ -74,6 +78,7 @@ class ExtraTables(enum.Enum):
             cls.DiaObjectChunks: ApdbTables.DiaObject,
             cls.DiaSourceChunks: ApdbTables.DiaSource,
             cls.DiaForcedSourceChunks: ApdbTables.DiaForcedSource,
+            cls.DetectorVisitProcessingSummaryChunks: ApdbTables.DetectorVisitProcessingSummary,
         }
 
 
@@ -171,7 +176,7 @@ class ApdbSqlSchema(ApdbSchema):
         apdb_tables = self._make_apdb_tables()
         extra_tables = self._make_extra_tables(apdb_tables)
 
-        converter = ModelToSql(metadata=self._metadata, prefix=self._prefix)
+        converter = ModelToSql(metadata=self._metadata, dialect=engine.dialect, prefix=self._prefix)
         id_to_table = converter.make_tables(itertools.chain(apdb_tables.values(), extra_tables.values()))
 
         self._apdb_tables = {
@@ -383,7 +388,22 @@ class ApdbSqlSchema(ApdbSchema):
         )
         tables[ExtraTables.ApdbReplicaChunks] = parent_table
 
+        # Create all replica chunk tables, each table has a foreign key to
+        # the original APD table and to the ApdbReplicaChunks table.
         for table_enum, apdb_enum in ExtraTables.replica_chunk_tables().items():
+            # If original APDB table does not have PK defined there is no
+            # reasonable way to create a foreign key for it. One possible
+            # way out is to make a full copy of all columns, but I prefer to
+            # handle everything uniformly. Also it is not likely that
+            # replication will eve be used with SQL backend.
+            table_def = self.tableSchemas[apdb_enum]
+            if not table_def.primary_key:
+                warnings.warn(
+                    f"Table {table_def.name} does not define primary key, "
+                    "replica chunks table will not be created for it."
+                )
+                continue
+
             apdb_table = apdb_tables[apdb_enum]
             table_name = table_enum.table_name(self._prefix)
 

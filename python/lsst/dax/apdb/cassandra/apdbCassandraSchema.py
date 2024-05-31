@@ -60,6 +60,9 @@ class ExtraTables(enum.Enum):
     DiaForcedSourceChunks = "DiaForcedSourceChunks"
     """Name of the table for DIAForcedSource chunk data."""
 
+    DetectorVisitProcessingSummaryChunks = "DetectorVisitProcessingSummaryChunks"
+    """Name of the table for DetectorVisitProcessingSummary chunk data."""
+
     DiaSourceToPartition = "DiaSourceToPartition"
     "Maps diaSourceId to its partition values (pixel and time)."
 
@@ -76,6 +79,7 @@ class ExtraTables(enum.Enum):
             cls.DiaObjectChunks: ApdbTables.DiaObject,
             cls.DiaSourceChunks: ApdbTables.DiaSource,
             cls.DiaForcedSourceChunks: ApdbTables.DiaForcedSource,
+            cls.DetectorVisitProcessingSummaryChunks: ApdbTables.DetectorVisitProcessingSummary,
         }
 
 
@@ -179,6 +183,21 @@ class ApdbCassandraSchema(ApdbSchema):
                 # it in one query, add an extra column for partition.
                 part_columns = ["meta_part"]
                 add_columns = part_columns
+            elif table is ApdbTables.DetectorVisitProcessingSummary:
+                # DetectorVisitProcessingSummary is very special as it is
+                # presently does not even define primary key. I need to make up
+                # partition key and PK myself. It is not queried by AP pipeline
+                # so actual key probably does not matter, more important is to
+                # make replica table correctly.
+                timestamp_column = schema_model.Column(
+                    id="#visit_time",
+                    name="visit_time",
+                    datatype=felis.datamodel.DataType.timestamp,
+                    nullable=False,
+                )
+                apdb_table_def.columns.append(timestamp_column)
+                part_columns = ["visit"]
+                primary_key = [apdb_table_def.column("detector"), timestamp_column]
             else:
                 # TODO: Do not know what to do with the other tables
                 continue

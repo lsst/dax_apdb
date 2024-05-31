@@ -85,6 +85,9 @@ class ApdbTables(enum.Enum):
     SSObject = "SSObject"
     """Name of the table for SSObject records."""
 
+    DetectorVisitProcessingSummary = "DetectorVisitProcessingSummary"
+    """Name of the table for processing summary of a single visit+detector."""
+
     DiaObject_To_Object_Match = "DiaObject_To_Object_Match"
     """Name of the table for DiaObject_To_Object_Match records."""
 

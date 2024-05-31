@@ -403,6 +403,29 @@ class Table:
         )
         return table
 
+    def column(self, name: str) -> Column:
+        """Return column definition give its name.
+
+        Parameters
+        ----------
+        name : `str`
+            Column name to find.
+
+        Returns
+        -------
+        column : `Column`
+            Column definition.
+
+        Raises
+        ------
+        LookupError
+            Raised if column with a given name is not present.
+        """
+        for column in self.columns:
+            if column.name == name:
+                return column
+        raise LookupError(f"Column with name {name!r} does not exist in table {self.name!r}")
+
 
 @dataclasses.dataclass
 class Schema:

@@ -196,6 +196,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.metadata))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DetectorVisitProcessingSummary))
 
         # Test from_uri factory method with the same config.
         with tempfile.NamedTemporaryFile() as tmpfile:
@@ -207,6 +208,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaSource))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.DiaForcedSource))
         self.assertIsNotNone(apdb.tableDef(ApdbTables.metadata))
+        self.assertIsNotNone(apdb.tableDef(ApdbTables.DetectorVisitProcessingSummary))
 
     def test_empty_gets(self) -> None:
         """Test for getting data from empty database.

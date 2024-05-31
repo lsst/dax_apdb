@@ -51,6 +51,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         ApdbTables.DiaForcedSource: 5,
         ApdbTables.SSObject: 3,
         ApdbTables.metadata: 2,
+        ApdbTables.DetectorVisitProcessingSummary: 4,
     }
 
     def _assertTable(self, table: sqlalchemy.schema.Table, name: str, ncol: int) -> None:
@@ -112,6 +113,15 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(
             len(schema.get_apdb_columns(ApdbTables.metadata)),
             self.table_column_count[ApdbTables.metadata],
+        )
+        self._assertTable(
+            schema.get_table(ApdbTables.DetectorVisitProcessingSummary),
+            "DetectorVisitProcessingSummary",
+            self.table_column_count[ApdbTables.DetectorVisitProcessingSummary],
+        )
+        self.assertEqual(
+            len(schema.get_apdb_columns(ApdbTables.DetectorVisitProcessingSummary)),
+            self.table_column_count[ApdbTables.DetectorVisitProcessingSummary],
         )
         for table_enum in ExtraTables:
             with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
@@ -218,6 +228,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaSourceChunks)), 2)
         self._assertTable(schema.get_table(ExtraTables.DiaForcedSourceChunks), "DiaForcedSourceChunks", 4)
         self.assertEqual(len(schema.get_apdb_columns(ExtraTables.DiaForcedSourceChunks)), 4)
+        # No replica table for DetectorVisitProcessingSummary as it does not
+        # define primary key (yet).
+        with self.assertRaises(ValueError):
+            schema.get_table(ExtraTables.DetectorVisitProcessingSummaryChunks)
 
     def test_makeSchema_nometa(self) -> None:
         """Make schema using old yaml file without metadata table."""
