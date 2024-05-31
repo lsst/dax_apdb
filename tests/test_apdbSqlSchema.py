@@ -48,7 +48,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         ApdbTables.DiaObject: 8,
         ApdbTables.DiaObjectLast: 5,
         ApdbTables.DiaSource: 11,
-        ApdbTables.DiaForcedSource: 5,
+        ApdbTables.DiaForcedSource: 7,
         ApdbTables.SSObject: 3,
         ApdbTables.metadata: 2,
     }

@@ -634,12 +634,12 @@ class ApdbSql(Apdb):
                 self._storeReplicaChunk(replica_chunk, visit_time, connection)
 
             # fill pixelId column for DiaObjects
-            objects = self._add_obj_htm_index(objects)
+            objects = self._add_spatial_index(objects)
             self._storeDiaObjects(objects, visit_time, replica_chunk, connection)
 
             if sources is not None:
-                # copy pixelId column from DiaObjects to DiaSources
-                sources = self._add_src_htm_index(sources, objects)
+                # fill pixelId column for DiaSources
+                sources = self._add_spatial_index(sources)
                 self._storeDiaSources(sources, replica_chunk, connection)
 
             if forced_sources is not None:
@@ -1099,8 +1099,20 @@ class ApdbSql(Apdb):
 
         return sql.expression.or_(*exprlist)
 
-    def _add_obj_htm_index(self, df: pandas.DataFrame) -> pandas.DataFrame:
-        """Calculate HTM index for each record and add it to a DataFrame.
+    def _add_spatial_index(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Calculate spatial index for each record and add it to a DataFrame.
+
+        Parameters
+        ----------
+        df : `pandas.DataFrame`
+            DataFrame which has to contain ra/dec columns, names of these
+            columns are defined by configuration ``ra_dec_columns`` field.
+
+        Returns
+        -------
+        df : `pandas.DataFrame`
+            DataFrame with ``pixelId`` column which contains pixel index
+            for ra/dec coordinates.
 
         Notes
         -----
@@ -1118,32 +1130,3 @@ class ApdbSql(Apdb):
         df = df.copy()
         df[self.config.htm_index_column] = htm_index
         return df
-
-    def _add_src_htm_index(self, sources: pandas.DataFrame, objs: pandas.DataFrame) -> pandas.DataFrame:
-        """Add pixelId column to DiaSource catalog.
-
-        Notes
-        -----
-        This method copies pixelId value from a matching DiaObject record.
-        DiaObject catalog needs to have a pixelId column filled by
-        ``_add_obj_htm_index`` method and DiaSource records need to be
-        associated to DiaObjects via ``diaObjectId`` column.
-
-        This overrides any existing column in a DataFrame with the same name
-        (pixelId). Original DataFrame is not changed, copy of a DataFrame is
-        returned.
-        """
-        pixel_id_map: dict[int, int] = {
-            diaObjectId: pixelId
-            for diaObjectId, pixelId in zip(objs["diaObjectId"], objs[self.config.htm_index_column])
-        }
-        # DiaSources associated with SolarSystemObjects do not have an
-        # associated DiaObject hence we skip them and set their htmIndex
-        # value to 0.
-        pixel_id_map[0] = 0
-        htm_index = np.zeros(sources.shape[0], dtype=np.int64)
-        for i, diaObjId in enumerate(sources["diaObjectId"]):
-            htm_index[i] = pixel_id_map[diaObjId]
-        sources = sources.copy()
-        sources[self.config.htm_index_column] = htm_index
-        return sources

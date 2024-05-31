@@ -784,17 +784,17 @@ class ApdbCassandra(Apdb):
             self._storeReplicaChunk(replica_chunk, visit_time)
 
         # fill region partition column for DiaObjects
-        objects = self._add_obj_part(objects)
+        objects = self._add_apdb_part(objects)
         self._storeDiaObjects(objects, visit_time, replica_chunk)
 
         if sources is not None:
             # copy apdb_part column from DiaObjects to DiaSources
-            sources = self._add_src_part(sources, objects)
+            sources = self._add_apdb_part(sources)
             self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time, replica_chunk)
             self._storeDiaSourcesPartitions(sources, visit_time, replica_chunk)
 
         if forced_sources is not None:
-            forced_sources = self._add_fsrc_part(forced_sources, objects)
+            forced_sources = self._add_apdb_part(forced_sources)
             self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, visit_time, replica_chunk)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
@@ -1242,17 +1242,29 @@ class ApdbCassandra(Apdb):
         with self._timer("insert_time", tags={"table": table_name.name}):
             self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
 
-    def _add_obj_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
+    def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spatial partition for each record and add it to a
         DataFrame.
+
+        Parameters
+        ----------
+        df : `pandas.DataFrame`
+            DataFrame which has to contain ra/dec columns, names of these
+            columns are defined by configuration ``ra_dec_columns`` field.
+
+        Returns
+        -------
+        df : `pandas.DataFrame`
+            DataFrame with ``apdb_part`` column which contains pixel index
+            for ra/dec coordinates.
 
         Notes
         -----
         This overrides any existing column in a DataFrame with the same name
-        (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
-        returned.
+        (``apdb_part``). Original DataFrame is not changed, copy of a DataFrame
+        is returned.
         """
-        # calculate HTM index for every DiaObject
+        # Calculate pixelization index for every record.
         apdb_part = np.zeros(df.shape[0], dtype=np.int64)
         ra_col, dec_col = self.config.ra_dec_columns
         for i, (ra, dec) in enumerate(zip(df[ra_col], df[dec_col])):
@@ -1262,65 +1274,6 @@ class ApdbCassandra(Apdb):
         df = df.copy()
         df["apdb_part"] = apdb_part
         return df
-
-    def _add_src_part(self, sources: pandas.DataFrame, objs: pandas.DataFrame) -> pandas.DataFrame:
-        """Add apdb_part column to DiaSource catalog.
-
-        Notes
-        -----
-        This method copies apdb_part value from a matching DiaObject record.
-        DiaObject catalog needs to have a apdb_part column filled by
-        ``_add_obj_part`` method and DiaSource records need to be
-        associated to DiaObjects via ``diaObjectId`` column.
-
-        This overrides any existing column in a DataFrame with the same name
-        (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
-        returned.
-        """
-        pixel_id_map: dict[int, int] = {
-            diaObjectId: apdb_part for diaObjectId, apdb_part in zip(objs["diaObjectId"], objs["apdb_part"])
-        }
-        apdb_part = np.zeros(sources.shape[0], dtype=np.int64)
-        ra_col, dec_col = self.config.ra_dec_columns
-        for i, (diaObjId, ra, dec) in enumerate(
-            zip(sources["diaObjectId"], sources[ra_col], sources[dec_col])
-        ):
-            if diaObjId == 0:
-                # DiaSources associated with SolarSystemObjects do not have an
-                # associated DiaObject hence we skip them and set partition
-                # based on its own ra/dec
-                uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
-                idx = self._pixelization.pixel(uv3d)
-                apdb_part[i] = idx
-            else:
-                apdb_part[i] = pixel_id_map[diaObjId]
-        sources = sources.copy()
-        sources["apdb_part"] = apdb_part
-        return sources
-
-    def _add_fsrc_part(self, sources: pandas.DataFrame, objs: pandas.DataFrame) -> pandas.DataFrame:
-        """Add apdb_part column to DiaForcedSource catalog.
-
-        Notes
-        -----
-        This method copies apdb_part value from a matching DiaObject record.
-        DiaObject catalog needs to have a apdb_part column filled by
-        ``_add_obj_part`` method and DiaSource records need to be
-        associated to DiaObjects via ``diaObjectId`` column.
-
-        This overrides any existing column in a DataFrame with the same name
-        (apdb_part). Original DataFrame is not changed, copy of a DataFrame is
-        returned.
-        """
-        pixel_id_map: dict[int, int] = {
-            diaObjectId: apdb_part for diaObjectId, apdb_part in zip(objs["diaObjectId"], objs["apdb_part"])
-        }
-        apdb_part = np.zeros(sources.shape[0], dtype=np.int64)
-        for i, diaObjId in enumerate(sources["diaObjectId"]):
-            apdb_part[i] = pixel_id_map[diaObjId]
-        sources = sources.copy()
-        sources["apdb_part"] = apdb_part
-        return sources
 
     @classmethod
     def _time_partition_cls(cls, time: float | astropy.time.Time, epoch_mjd: float, part_days: int) -> int:
