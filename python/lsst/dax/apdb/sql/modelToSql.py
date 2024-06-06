@@ -117,9 +117,9 @@ class ModelToSql:
             felis.datamodel.DataType.byte: sqlalchemy.types.SmallInteger,  # Byte types are not very portable
             felis.datamodel.DataType.binary: sqlalchemy.types.LargeBinary,
             felis.datamodel.DataType.text: sqlalchemy.types.Text,
-            felis.datamodel.DataType.string: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.string: sqlalchemy.types.VARCHAR,
             felis.datamodel.DataType.char: sqlalchemy.types.CHAR,
-            felis.datamodel.DataType.unicode: sqlalchemy.types.CHAR,
+            felis.datamodel.DataType.unicode: sqlalchemy.types.NVARCHAR,
             felis.datamodel.DataType.boolean: sqlalchemy.types.Boolean,
             schema_model.ExtraDataTypes.UUID: GUID,
         }
