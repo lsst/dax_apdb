@@ -1228,6 +1228,8 @@ class ApdbCassandra(Apdb):
                     if column_map[field].datatype is felis.datamodel.DataType.timestamp:
                         if isinstance(value, pandas.Timestamp):
                             value = literal(value.to_pydatetime())
+                        elif value is pandas.NaT:
+                            value = None
                         else:
                             # Assume it's seconds since epoch, Cassandra
                             # datetime is in milliseconds
