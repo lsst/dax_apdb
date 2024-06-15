@@ -19,9 +19,30 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from .create_cassandra import create_cassandra
-from .create_sql import create_sql
-from .delete_cassandra import delete_cassandra
-from .list_cassandra import list_cassandra
-from .list_index import list_index
-from .metadata import metadata_delete, metadata_get, metadata_set, metadata_show
+from __future__ import annotations
+
+__all__ = ["delete_cassandra"]
+
+from ..cassandra import ApdbCassandra
+
+
+def delete_cassandra(host: str, keyspace: str, confirm: bool) -> None:
+    """Delete APDB instance from Cassandra cluster.
+
+    Parameters
+    ----------
+    host : `str`
+        Name of one of the hosts in Cassandra cluster.
+    keyspace : `str`
+        Cassandra keyspace name containing APDB tables.
+    confirm : `bool`
+        If True do not ask for confirmation.
+    """
+    if not confirm:
+        try:
+            answer = input(f"Type 'yes' to confirm deletion of keyspace {keyspace!r} and all of its data: ")
+            if answer != "yes":
+                return
+        except EOFError:
+            return
+    ApdbCassandra.delete_database(host=host, keyspace=keyspace)

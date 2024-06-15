@@ -19,9 +19,21 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from .create_cassandra import create_cassandra
-from .create_sql import create_sql
-from .delete_cassandra import delete_cassandra
-from .list_cassandra import list_cassandra
-from .list_index import list_index
-from .metadata import metadata_delete, metadata_get, metadata_set, metadata_show
+from __future__ import annotations
+
+__all__ = ["list_cassandra"]
+
+from ..cassandra import ApdbCassandra
+
+
+def list_cassandra(host: str) -> None:
+    """List APDB instances in Cassandra cluster.
+
+    Parameters
+    ----------
+    host : `str`
+        Name of one of the hosts in Cassandra cluster.
+    """
+    databases = ApdbCassandra.list_databases(host=host)
+    for database in sorted(databases):
+        print(database)

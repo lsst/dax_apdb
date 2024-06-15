@@ -53,7 +53,8 @@ class LoggingCli:
     def process_args(self, args: argparse.Namespace) -> None:
         """Configure Python logging based on command line options."""
         global_level = logging.INFO
-        logger_levels: dict[str, int] = {}
+        # Suppress chatty cassandra.cluster logger by default.
+        logger_levels: dict[str, int] = {"cassandra.cluster": logging.WARNING}
         for level_str in args.log_level:
             for spec in level_str.split(","):
                 logger_name, sep, level_name = spec.rpartition("=")
