@@ -62,7 +62,7 @@ from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
 from .apdbCassandraReplica import ApdbCassandraReplica
-from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
+from .apdbCassandraSchema import ApdbCassandraSchema, CreateTableOptions, ExtraTables
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .cassandra_utils import (
     PreparedStatementCache,
@@ -489,6 +489,7 @@ class ApdbCassandra(Apdb):
         ra_dec_columns: list[str] | None = None,
         replication_factor: int | None = None,
         drop: bool = False,
+        table_options: CreateTableOptions | None = None,
     ) -> ApdbCassandraConfig:
         """Initialize new APDB instance and make configuration object for it.
 
@@ -546,6 +547,8 @@ class ApdbCassandra(Apdb):
             already exists its replication factor is not changed.
         drop : `bool`, optional
             If `True` then drop existing tables before re-creating the schema.
+        table_options : `CreateTableOptions`, optional
+            Options used when creating Cassandra tables.
 
         Returns
         -------
@@ -592,7 +595,7 @@ class ApdbCassandra(Apdb):
         if ra_dec_columns is not None:
             config.ra_dec_columns = ra_dec_columns
 
-        cls._makeSchema(config, drop=drop, replication_factor=replication_factor)
+        cls._makeSchema(config, drop=drop, replication_factor=replication_factor, table_options=table_options)
 
         return config
 
@@ -604,7 +607,12 @@ class ApdbCassandra(Apdb):
 
     @classmethod
     def _makeSchema(
-        cls, config: ApdbConfig, *, drop: bool = False, replication_factor: int | None = None
+        cls,
+        config: ApdbConfig,
+        *,
+        drop: bool = False,
+        replication_factor: int | None = None,
+        table_options: CreateTableOptions | None = None,
     ) -> None:
         # docstring is inherited from a base class
 
@@ -633,9 +641,14 @@ class ApdbCassandra(Apdb):
                 cls._time_partition_cls(time_partition_start, part_epoch, part_days),
                 cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
             )
-            schema.makeSchema(drop=drop, part_range=part_range, replication_factor=replication_factor)
+            schema.makeSchema(
+                drop=drop,
+                part_range=part_range,
+                replication_factor=replication_factor,
+                table_options=table_options,
+            )
         else:
-            schema.makeSchema(drop=drop, replication_factor=replication_factor)
+            schema.makeSchema(drop=drop, replication_factor=replication_factor, table_options=table_options)
 
         meta_table_name = ApdbTables.metadata.table_name(config.prefix)
         metadata = ApdbMetadataCassandra(session, meta_table_name, config.keyspace, "read_tuples", "write")

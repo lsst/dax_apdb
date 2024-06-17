@@ -21,3 +21,4 @@
 
 from .apdbCassandra import *
 from .apdbCassandraReplica import *
+from .apdbCassandraSchema import CreateTableOptions, TableOptions

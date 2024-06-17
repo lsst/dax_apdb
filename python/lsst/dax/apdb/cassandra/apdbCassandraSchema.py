@@ -21,14 +21,15 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbCassandraSchema"]
+__all__ = ["ApdbCassandraSchema", "CreateTableOptions", "TableOptions"]
 
 import enum
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import felis.datamodel
+import pydantic
 
 from .. import schema_model
 from ..apdbSchema import ApdbSchema, ApdbTables
@@ -42,6 +43,36 @@ _LOG = logging.getLogger(__name__)
 
 class InconsistentSchemaError(RuntimeError):
     """Exception raised when schema state is inconsistent."""
+
+
+class TableOptions(pydantic.BaseModel):
+    """Set of per-table options for creating Cassandra tables."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    tables: list[str]
+    """List of table names for which the options should be applied."""
+
+    options: str
+
+
+class CreateTableOptions(pydantic.BaseModel):
+    """Set of options for creating Cassandra tables."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    table_options: list[TableOptions] = pydantic.Field(default_factory=list)
+    """Collection of per-table options."""
+
+    default_table_options: str = ""
+    """Default options used for tables that are not in the above list."""
+
+    def get_options(self, table_name: str) -> str:
+        """Find table options for a given table name."""
+        for table_options in self.table_options:
+            if table_name in table_options.tables:
+                return table_options.options
+        return self.default_table_options
 
 
 @enum.unique
@@ -473,6 +504,7 @@ class ApdbCassandraSchema(ApdbSchema):
         drop: bool = False,
         part_range: tuple[int, int] | None = None,
         replication_factor: int | None = None,
+        table_options: CreateTableOptions | None = None,
     ) -> None:
         """Create or re-create all tables.
 
@@ -493,18 +525,33 @@ class ApdbCassandraSchema(ApdbSchema):
         # Try to create keyspace if it does not exist
         if replication_factor is None:
             replication_factor = 1
-        query = (
-            f'CREATE KEYSPACE IF NOT EXISTS "{self._keyspace}"'
-            " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': "
-            f"{replication_factor}"
-            "}"
-        )
-        self._session.execute(query)
+
+        # If keyspace exists check its replication factor.
+        query = "SELECT replication FROM system_schema.keyspaces WHERE keyspace_name = %s"
+        result = self._session.execute(query, (self._keyspace,))
+        if row := result.one():
+            # Check replication factor, ignore strategy class.
+            repl_config = cast(Mapping[str, str], row[0])
+            current_repl = int(repl_config["replication_factor"])
+            if replication_factor != current_repl:
+                raise ValueError(
+                    f"New replication factor {replication_factor} differs from the replication factor "
+                    f"for already existing keyspace: {current_repl}"
+                )
+        else:
+            # Need a new keyspace.
+            query = (
+                f'CREATE KEYSPACE "{self._keyspace}"'
+                " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': "
+                f"{replication_factor}"
+                "}"
+            )
+            self._session.execute(query)
 
         for table in self._apdb_tables:
-            self._makeTableSchema(table, drop, part_range)
+            self._makeTableSchema(table, drop, part_range, table_options)
         for extra_table in self._extra_tables:
-            self._makeTableSchema(extra_table, drop, part_range)
+            self._makeTableSchema(extra_table, drop, part_range, table_options)
         # Reset cached information.
         self._has_replica_chunks = None
 
@@ -513,6 +560,7 @@ class ApdbCassandraSchema(ApdbSchema):
         table: ApdbTables | ExtraTables,
         drop: bool = False,
         part_range: tuple[int, int] | None = None,
+        table_options: CreateTableOptions | None = None,
     ) -> None:
         _LOG.debug("Making table %s", table)
 
@@ -533,10 +581,13 @@ class ApdbCassandraSchema(ApdbSchema):
                 _LOG.debug("query finished: %s", future.query)
 
         queries = []
+        options = table_options.get_options(fullTable).strip() if table_options else None
         for table_name in table_list:
             if_not_exists = "" if drop else "IF NOT EXISTS"
             columns = ", ".join(self._tableColumns(table))
             query = f'CREATE TABLE {if_not_exists} "{self._keyspace}"."{table_name}" ({columns})'
+            if options:
+                query = f"{query} WITH {options}"
             _LOG.debug("query: %s", query)
             queries.append(query)
         futures = [self._session.execute_async(query, timeout=None) for query in queries]

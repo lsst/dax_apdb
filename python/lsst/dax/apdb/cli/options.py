@@ -99,6 +99,9 @@ def cassandra_config_options(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--replication-factor", help="Replication factor used when creating new keyspace.", type=int
     )
+    group.add_argument(
+        "--table-options", help="Path or URI of YAML file containing table options.", metavar="URI"
+    )
     _option_from_pex_field(
         group, ApdbCassandraConfig.read_consistency, choices=["ONE", "TWO", "THREE", "QUORUM", "ALL"]
     )
