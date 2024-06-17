@@ -1,5 +1,5 @@
 astropy
-numpy
+numpy < 2.0
 pandas
 pydantic
 pyyaml >= 5.1
