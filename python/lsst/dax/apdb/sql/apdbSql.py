@@ -39,10 +39,12 @@ import sqlalchemy.dialects.postgresql
 import sqlalchemy.dialects.sqlite
 from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
+from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
 from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
 
+from .._auth import DB_AUTH_ENVVAR, DB_AUTH_PATH
 from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
@@ -292,13 +294,36 @@ class ApdbSql(Apdb):
             elif config.db_url.startswith(("postgresql", "mysql")):
                 conn_args.update(connect_timeout=config.connection_timeout)
         kw.update(connect_args=conn_args)
-        engine = sqlalchemy.create_engine(config.db_url, **kw)
+        engine = sqlalchemy.create_engine(cls._connection_url(config.db_url), **kw)
 
         if engine.dialect.name == "sqlite":
             # Need to enable foreign keys on every new connection.
             sqlalchemy.event.listen(engine, "connect", _onSqlite3Connect)
 
         return engine
+
+    @classmethod
+    def _connection_url(cls, config_url: str) -> sqlalchemy.engine.URL | str:
+        """Generate a complete URL for database with proper credentials.
+
+        Parameters
+        ----------
+        config_url : `str`
+            Database URL as specified in configuration.
+
+        Returns
+        -------
+        connection_url : `sqlalchemy.engine.URL`
+            Connection URL including credentials.
+        """
+        try:
+            db_auth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
+            url = db_auth.getUrl(config_url)
+            return url
+        except DbAuthNotFoundError:
+            # Credentials file doesn't exist or no matching credentials, use
+            # default auth.
+            return config_url
 
     def _versionCheck(self, metadata: ApdbMetadataSql) -> None:
         """Check schema version compatibility."""

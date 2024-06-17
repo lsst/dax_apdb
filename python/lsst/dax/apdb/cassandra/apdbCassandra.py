@@ -52,6 +52,7 @@ from lsst.pex.config import ChoiceField, Field, ListField
 from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
 
+from .._auth import DB_AUTH_ENVVAR, DB_AUTH_PATH
 from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
@@ -85,14 +86,6 @@ VERSION = VersionTuple(0, 1, 0)
 updated following compatibility rules when schema produced by this code
 changes.
 """
-
-# Copied from daf_butler.
-DB_AUTH_ENVVAR = "LSST_DB_AUTH"
-"""Default name of the environmental variable that will be used to locate DB
-credentials configuration file. """
-
-DB_AUTH_PATH = "~/.lsst/db-auth.yaml"
-"""Default path at which it is expected that DB credentials are found."""
 
 
 class CassandraMissingError(Exception):
