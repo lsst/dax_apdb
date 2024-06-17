@@ -39,6 +39,8 @@ def main(args: Sequence[str] | None = None) -> None:
     subparsers = parser.add_subparsers(title="available subcommands", required=True)
     _create_sql_subcommand(subparsers)
     _create_cassandra_subcommand(subparsers)
+    _list_cassandra_subcommand(subparsers)
+    _delete_cassandra_subcommand(subparsers)
     _list_index_subcommand(subparsers)
     _metadata_subcommand(subparsers)
 
@@ -76,6 +78,26 @@ def _create_cassandra_subcommand(subparsers: argparse._SubParsersAction) -> None
         "--drop", help="If True then drop existing tables.", default=False, action="store_true"
     )
     parser.set_defaults(method=scripts.create_cassandra)
+
+
+def _list_cassandra_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("list-cassandra", help="List APDB instances in Cassandra cluster.")
+    parser.add_argument("host", help="One of the host names for Cassandra cluster.")
+    parser.set_defaults(method=scripts.list_cassandra)
+
+
+def _delete_cassandra_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("delete-cassandra", help="Delete APDB instance from Cassandra cluster.")
+    parser.add_argument("host", help="One of the host names for Cassandra cluster.")
+    parser.add_argument("keyspace", help="Cassandra keyspace name for APDB tables.")
+    parser.add_argument(
+        "-y",
+        "--confirm",
+        help="Assume 'yes' answer for confirmation.",
+        default=False,
+        action="store_true",
+    )
+    parser.set_defaults(method=scripts.delete_cassandra)
 
 
 def _list_index_subcommand(subparsers: argparse._SubParsersAction) -> None:

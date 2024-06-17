@@ -592,6 +592,62 @@ class ApdbCassandra(Apdb):
 
         return config
 
+    @classmethod
+    def list_databases(cls, host: str) -> Iterable[str]:
+        """Return the list of keyspaces with APDB databases.
+
+        Parameters
+        ----------
+        host : `str`
+            Name of one of the hosts in Cassandra cluster.
+
+        Returns
+        -------
+        keyspaces : `~collections.abc.Iterable` [`str`]
+            Names of keyspaces that contain APDB instance.
+        """
+        # For DbAuth we need to use database name "*" to try to match any
+        # database.
+        config = ApdbCassandraConfig(contact_points=[host], keyspace="*")
+        cluster, session = cls._make_session(config)
+
+        # Get names of all keyspaces containing DiaSource table
+        table_name = ApdbTables.DiaSource.table_name()
+        query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
+        result = session.execute(query, (table_name,))
+        keyspaces = [row[0] for row in result.all()]
+
+        # Need explicit shutdown.
+        cluster.shutdown()
+
+        return keyspaces
+
+    @classmethod
+    def delete_database(cls, host: str, keyspace: str, *, timeout: int = 3600) -> None:
+        """Delete APDB database by dropping its keyspace.
+
+        Parameters
+        ----------
+        host : `str`
+            Name of one of the hosts in Cassandra cluster.
+        keyspace : `str`
+            Name of keyspace to delete.
+        timeout : `int`, optional
+            Timeout for delete operation in seconds. Dropping a large keyspace
+            can be a long operation, but this default value of one hour should
+            be sufficient for most or all cases.
+        """
+        # For DbAuth we need to use database name "*" to try to match any
+        # database.
+        config = ApdbCassandraConfig(contact_points=[host], keyspace="*")
+        cluster, session = cls._make_session(config)
+
+        query = f"DROP KEYSPACE {quote_id(keyspace)}"
+        session.execute(query, timeout=timeout)
+
+        # Need explicit shutdown.
+        cluster.shutdown()
+
     def get_replica(self) -> ApdbCassandraReplica:
         """Return `ApdbReplica` instance for this database."""
         # Note that this instance has to stay alive while replica exists, so

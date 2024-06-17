@@ -100,8 +100,7 @@ class ApdbCassandraMixin:
 
     def tearDown(self) -> None:
         # Delete per-test keyspace.
-        query = f"DROP KEYSPACE {self.keyspace}"
-        self._run_query(query)
+        ApdbCassandra.delete_database(self.cluster_host, self.keyspace)
 
 
 class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
