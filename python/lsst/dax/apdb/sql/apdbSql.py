@@ -27,6 +27,7 @@ from __future__ import annotations
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
 import logging
+import urllib.parse
 from collections.abc import Iterable, Mapping, MutableMapping
 from contextlib import closing, suppress
 from typing import TYPE_CHECKING, Any, cast
@@ -316,6 +317,13 @@ class ApdbSql(Apdb):
         connection_url : `sqlalchemy.engine.URL`
             Connection URL including credentials.
         """
+        # Allow 3rd party authentication mechanisms by assuming connection
+        # string is correct when we can not recognize (dialect, host, database)
+        # matching keys.
+        components = urllib.parse.urlparse(config_url)
+        if any((components.scheme is None, components.hostname is None, components.path is None)):
+            return config_url
+
         try:
             db_auth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
             url = db_auth.getUrl(config_url)
