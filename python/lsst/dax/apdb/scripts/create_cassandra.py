@@ -30,6 +30,7 @@ import yaml
 from lsst.resources import ResourcePath
 
 from ..cassandra import ApdbCassandra, CreateTableOptions
+from . import metadata
 
 
 def create_cassandra(
@@ -49,6 +50,8 @@ def create_cassandra(
         Keyword arguments passed to `ApdbCassandra.init_database` method.
     """
     instrument = kwargs.pop("instrument")
+    metadata.check_instrument(instrument)
+
     options = _read_table_options(table_options)
     ra_dec_list: list[str] | None = None
     if ra_dec_columns:

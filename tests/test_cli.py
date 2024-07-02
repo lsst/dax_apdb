@@ -61,6 +61,26 @@ class CreateSqlTestCase(unittest.TestCase):
         apdb = Apdb.from_uri(self.config_path)
         self.assertEqual(apdb.metadata.get("instrument"), "lsst.obs.lsst.LsstCam")
 
+    def test_create_sql_bad_instrument(self) -> None:
+        """Check that bad instrument names raise a useful error.
+
+        Only works if both pipe_base and obs_lsst are available.
+        """
+        try:
+            import lsst.pipe.base  # noqa: F401
+        except ModuleNotFoundError:
+            raise unittest.SkipTest("pipe_base and obs_lsst must be setup to run this tests.")
+        args = [
+            "create-sql",
+            "--schema-file",
+            TEST_SCHEMA,
+            self.db_url,
+            self.config_path,
+            "lsst.obs.lsst.LsStCam",
+        ]
+        with self.assertRaisesRegex(RuntimeError, "invalid or unknown instrument name"):
+            apdb_cli.main(args)
+
 
 if __name__ == "__main__":
     unittest.main()
