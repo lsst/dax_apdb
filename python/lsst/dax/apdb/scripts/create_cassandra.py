@@ -48,6 +48,7 @@ def create_cassandra(
     **kwargs
         Keyword arguments passed to `ApdbCassandra.init_database` method.
     """
+    instrument = kwargs.pop("instrument")
     options = _read_table_options(table_options)
     ra_dec_list: list[str] | None = None
     if ra_dec_columns:
@@ -55,6 +56,9 @@ def create_cassandra(
     kwargs["hosts"] = kwargs.pop("host")
     config = ApdbCassandra.init_database(ra_dec_columns=ra_dec_list, table_options=options, **kwargs)
     config.save(output_config)
+
+    apdb = ApdbCassandra.from_config(config)
+    apdb.metadata.set("instrument", instrument)
 
 
 def _read_table_options(table_options: str | None = None) -> CreateTableOptions | None:

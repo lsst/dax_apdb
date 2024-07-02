@@ -45,13 +45,21 @@ class CreateSqlTestCase(unittest.TestCase):
 
     def test_create_sql(self) -> None:
         """Create SQLite APDB instance and config file for it."""
-        args = ["create-sql", "--schema-file", TEST_SCHEMA, self.db_url, self.config_path]
+        args = [
+            "create-sql",
+            "--schema-file",
+            TEST_SCHEMA,
+            self.db_url,
+            self.config_path,
+            "lsst.obs.lsst.LsstCam",
+        ]
         apdb_cli.main(args)
         self.assertTrue(os.path.exists(f"{self.tempdir}/apdb.sqlite3"))
         self.assertTrue(os.path.exists(self.config_path))
 
         # Make Apdb instance from this new config.
-        Apdb.from_uri(self.config_path)
+        apdb = Apdb.from_uri(self.config_path)
+        self.assertEqual(apdb.metadata.get("instrument"), "lsst.obs.lsst.LsstCam")
 
 
 if __name__ == "__main__":
