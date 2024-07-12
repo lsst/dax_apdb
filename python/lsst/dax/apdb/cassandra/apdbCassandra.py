@@ -40,6 +40,7 @@ try:
     from cassandra.auth import AuthProvider, PlainTextAuthProvider
     from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile, Session
     from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
+    from cassandra.query import UNSET_VALUE
 
     CASSANDRA_IMPORTED = True
 except ImportError:
@@ -1289,17 +1290,18 @@ class ApdbCassandra(Apdb):
                     value = getattr(rec, field)
                     if column_map[field].datatype is felis.datamodel.DataType.timestamp:
                         if isinstance(value, pandas.Timestamp):
-                            value = literal(value.to_pydatetime())
+                            value = value.to_pydatetime()
                         elif value is pandas.NaT:
                             value = None
                         else:
                             # Assume it's seconds since epoch, Cassandra
                             # datetime is in milliseconds
                             value = int(value * 1000)
-                    values.append(literal(value))
+                    value = literal(value)
+                    values.append(UNSET_VALUE if value is None else value)
                 for field in extra_fields:
-                    value = extra_columns[field]
-                    values.append(literal(value))
+                    value = literal(extra_columns[field])
+                    values.append(UNSET_VALUE if value is None else value)
                 queries.add(statement, values)
 
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
