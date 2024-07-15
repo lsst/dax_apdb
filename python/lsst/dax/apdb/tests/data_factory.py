@@ -152,6 +152,7 @@ def makeSourceCatalog(
             "dec": objects["dec"],
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
+            "ssObjectId": None,
         }
     )
     return df
