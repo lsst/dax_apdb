@@ -23,8 +23,6 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
-import dataclasses
-import json
 import logging
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
@@ -176,57 +174,6 @@ class ApdbCassandraConfig(ApdbConfig):
             "(DiaObjectsChunks has the same data)."
         ),
     )
-
-
-@dataclasses.dataclass
-class _FrozenApdbCassandraConfig:
-    """Part of the configuration that is saved in metadata table and read back.
-
-    The attributes are a subset of attributes in `ApdbCassandraConfig` class.
-
-    Parameters
-    ----------
-    config : `ApdbSqlConfig`
-        Configuration used to copy initial values of attributes.
-    """
-
-    use_insert_id: bool
-    part_pixelization: str
-    part_pix_level: int
-    ra_dec_columns: list[str]
-    time_partition_tables: bool
-    time_partition_days: int
-    use_insert_id_skips_diaobjects: bool
-
-    def __init__(self, config: ApdbCassandraConfig):
-        self.use_insert_id = config.use_insert_id
-        self.part_pixelization = config.part_pixelization
-        self.part_pix_level = config.part_pix_level
-        self.ra_dec_columns = list(config.ra_dec_columns)
-        self.time_partition_tables = config.time_partition_tables
-        self.time_partition_days = config.time_partition_days
-        self.use_insert_id_skips_diaobjects = config.use_insert_id_skips_diaobjects
-
-    def to_json(self) -> str:
-        """Convert this instance to JSON representation."""
-        return json.dumps(dataclasses.asdict(self))
-
-    def update(self, json_str: str) -> None:
-        """Update attribute values from a JSON string.
-
-        Parameters
-        ----------
-        json_str : str
-            String containing JSON representation of configuration.
-        """
-        data = json.loads(json_str)
-        if not isinstance(data, dict):
-            raise TypeError(f"JSON string must be convertible to object: {json_str!r}")
-        allowed_names = {field.name for field in dataclasses.fields(self)}
-        for key, value in data.items():
-            if key not in allowed_names:
-                raise ValueError(f"JSON object contains unknown key: {key}")
-            setattr(self, key, value)
 
 
 if CASSANDRA_IMPORTED:
