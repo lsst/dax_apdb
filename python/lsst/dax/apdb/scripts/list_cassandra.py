@@ -23,17 +23,56 @@ from __future__ import annotations
 
 __all__ = ["list_cassandra"]
 
+from astropy.table import Table
+
 from ..cassandra import ApdbCassandra
 
 
-def list_cassandra(host: str) -> None:
+def list_cassandra(host: str, verbose: bool) -> None:
     """List APDB instances in Cassandra cluster.
 
     Parameters
     ----------
     host : `str`
         Name of one of the hosts in Cassandra cluster.
+    verbose : `bool`
+        If `True` provide detailed output.
     """
     databases = ApdbCassandra.list_databases(host=host)
-    for database in sorted(databases):
-        print(database)
+    if verbose:
+        columns = ["Keyspace", "Role", "Permissions"]
+        sort_columns = columns[:2]
+    else:
+        columns = ["Keyspace", "Roles[access]"]
+        sort_columns = columns[:1]
+    if databases:
+        table = Table(names=columns, dtype=[str] * len(columns))
+        for database in databases:
+            if database.permissions:
+                if verbose:
+                    for role, perm_list in database.permissions.items():
+                        permissions = ", ".join(sorted(perm_list))
+                        table.add_row([database.name, role, permissions])
+                else:
+                    roles = []
+                    for role, perm_list in database.permissions.items():
+                        access = _access(perm_list)
+                        roles.append(f"{role}[{access}]")
+                    table.add_row([database.name, " ".join(sorted(roles))])
+            else:
+                table.add_row([database.name] + ["-"] * (len(columns) - 1))
+        table.sort(sort_columns)
+        table.pprint_all(align="<")
+
+
+def _access(permissions: list[str]) -> str:
+    """Convert list of Cassandra permissions into access mode string"""
+    perms = set(permissions)
+    if {"CREATE", "DROP"} & perms:
+        return "manage"
+    elif "MODIFY" in perms:
+        return "update"
+    elif "SELECT" in perms:
+        return "read"
+    else:
+        return "none"

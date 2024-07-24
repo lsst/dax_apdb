@@ -83,6 +83,13 @@ def _create_cassandra_subcommand(subparsers: argparse._SubParsersAction) -> None
 def _list_cassandra_subcommand(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser("list-cassandra", help="List APDB instances in Cassandra cluster.")
     parser.add_argument("host", help="One of the host names for Cassandra cluster.")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        help="Provide detailed output.",
+        default=False,
+        action="store_true",
+    )
     parser.set_defaults(method=scripts.list_cassandra)
 
 

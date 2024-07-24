@@ -23,7 +23,9 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
+import dataclasses
 import logging
+import warnings
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
 
@@ -174,6 +176,17 @@ class ApdbCassandraConfig(ApdbConfig):
             "(DiaObjectsChunks has the same data)."
         ),
     )
+
+
+@dataclasses.dataclass
+class DatabaseInfo:
+    """Collection of information about database."""
+
+    name: str
+    """Keyspace name."""
+
+    permissions: dict[str, list[str]] | None = None
+    """Roles that can access the database and their permissions."""
 
 
 if CASSANDRA_IMPORTED:
@@ -541,7 +554,7 @@ class ApdbCassandra(Apdb):
         return config
 
     @classmethod
-    def list_databases(cls, host: str) -> Iterable[str]:
+    def list_databases(cls, host: str) -> Iterable[DatabaseInfo]:
         """Return the list of keyspaces with APDB databases.
 
         Parameters
@@ -551,8 +564,8 @@ class ApdbCassandra(Apdb):
 
         Returns
         -------
-        keyspaces : `~collections.abc.Iterable` [`str`]
-            Names of keyspaces that contain APDB instance.
+        databases : `~collections.abc.Iterable` [`DatabaseInfo`]
+            Information about databases that contain APDB instance.
         """
         # For DbAuth we need to use database name "*" to try to match any
         # database.
@@ -565,10 +578,42 @@ class ApdbCassandra(Apdb):
         result = session.execute(query, (table_name,))
         keyspaces = [row[0] for row in result.all()]
 
+        infos = {keyspace: DatabaseInfo(name=keyspace) for keyspace in keyspaces}
+        if keyspaces:
+            # Retrieve roles for each keyspace.
+            template = ", ".join(["%s"] * len(keyspaces))
+            query = (
+                "SELECT resource, role, permissions FROM system_auth.role_permissions "
+                f"WHERE resource IN ({template}) ALLOW FILTERING"
+            )
+            resources = [f"data/{keyspace}" for keyspace in keyspaces]
+            try:
+                result = session.execute(query, resources)
+                for row in result:
+                    _, _, keyspace = row[0].partition("/")
+                    role: str = row[1]
+                    role_permissions: list[str] = list(row[2])
+                    info = infos[keyspace]
+                    if info.permissions is None:
+                        info.permissions = {role: role_permissions}
+                    else:
+                        info.permissions[role] = role_permissions
+            except cassandra.Unauthorized as exc:
+                # Likely that access to role_permissions is not granted for
+                # current user.
+                warnings.warn(
+                    f"Authentication information is not accessible to current user - {exc}", stacklevel=2
+                )
+                for info in infos.values():
+                    info.permissions = {"N/A": []}
+
+            # Would be nice to get size estimate, but this is not available via
+            # CQL queries.
+
         # Need explicit shutdown.
         cluster.shutdown()
 
-        return keyspaces
+        return infos.values()
 
     @classmethod
     def delete_database(cls, host: str, keyspace: str, *, timeout: int = 3600) -> None:
