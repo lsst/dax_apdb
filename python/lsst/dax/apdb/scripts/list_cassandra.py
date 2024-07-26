@@ -23,17 +23,65 @@ from __future__ import annotations
 
 __all__ = ["list_cassandra"]
 
+from astropy.table import Table
+
 from ..cassandra import ApdbCassandra
 
 
-def list_cassandra(host: str) -> None:
+def list_cassandra(host: str, verbose: bool) -> None:
     """List APDB instances in Cassandra cluster.
 
     Parameters
     ----------
     host : `str`
         Name of one of the hosts in Cassandra cluster.
+    verbose : `bool`
+        If `True` provide detailed output.
     """
     databases = ApdbCassandra.list_databases(host=host)
-    for database in sorted(databases):
-        print(database)
+    if databases:
+        if verbose:
+            table = Table(names=["Keyspace", "Role", "Permissions"], dtype=[str, str, str])
+            for database in databases:
+                if database.permissions is None:
+                    # Can't access auth info.
+                    table.add_row([database.name, "N/A", ""])
+                elif database.permissions:
+                    for role, perm_list in database.permissions.items():
+                        permissions = ", ".join(sorted(perm_list))
+                        table.add_row([database.name, role, permissions])
+                else:
+                    # Anonymous access should have all permissions, do not
+                    # list any specific permissions for that. Anon access
+                    # should not be enabled in production.
+                    table.add_row([database.name, "anonymous", ""])
+            table.sort(["Keyspace", "Role"])
+        else:
+            table = Table(names=["Keyspace", "Roles[access]"], dtype=[str, str])
+            for database in databases:
+                if database.permissions is None:
+                    # Can't access auth info.
+                    table.add_row([database.name, "N/A"])
+                elif database.permissions:
+                    roles = []
+                    for role, perm_list in database.permissions.items():
+                        access = _access(perm_list)
+                        roles.append(f"{role}[{access}]")
+                    table.add_row([database.name, ", ".join(sorted(roles))])
+                else:
+                    table.add_row([database.name, "anonymous"])
+            table.sort("Keyspace")
+
+        table.pprint_all(align="<")
+
+
+def _access(permissions: set[str]) -> str:
+    """Convert list of Cassandra permissions into access mode string"""
+    if {"CREATE", "DROP"} & permissions:
+        return "manage"
+    elif "MODIFY" in permissions:
+        return "update"
+    elif "SELECT" in permissions:
+        return "read"
+    else:
+        return "none"

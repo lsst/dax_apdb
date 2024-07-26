@@ -40,7 +40,13 @@ The name of the CLI script is ``apdb-cli`` and it has a number of subcommands:
 
   - ``create-cassandra`` is used to create new APDB instances based on Cassandra storage technology.
 
+  - ``list-cassandra`` command lists the names of APDB keyspaces and associated accounts for a specified Cassandra cluster.
+
+  - ``delete-cassandra`` drops an existing APDB instance from a Cassandra cluster.
+
   - ``list-index`` dumps the contents of the APDB index file.
+
+  - ``metadata`` provides support for operations on APDB metadata table.
 
 Each sub-command provides command line help describing its arguments.
 

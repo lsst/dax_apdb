@@ -24,8 +24,8 @@ from __future__ import annotations
 __all__ = ["ApdbCassandraConfig", "ApdbCassandra"]
 
 import dataclasses
-import json
 import logging
+import warnings
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
 
@@ -179,54 +179,19 @@ class ApdbCassandraConfig(ApdbConfig):
 
 
 @dataclasses.dataclass
-class _FrozenApdbCassandraConfig:
-    """Part of the configuration that is saved in metadata table and read back.
+class DatabaseInfo:
+    """Collection of information about a specific database."""
 
-    The attributes are a subset of attributes in `ApdbCassandraConfig` class.
+    name: str
+    """Keyspace name."""
 
-    Parameters
-    ----------
-    config : `ApdbSqlConfig`
-        Configuration used to copy initial values of attributes.
+    permissions: dict[str, set[str]] | None = None
+    """Roles that can access the database and their permissions.
+
+    `None` means that authentication information is not accessible due to
+    system table permissions. If anonymous access is enabled then dictionary
+    will be empty but not `None`.
     """
-
-    use_insert_id: bool
-    part_pixelization: str
-    part_pix_level: int
-    ra_dec_columns: list[str]
-    time_partition_tables: bool
-    time_partition_days: int
-    use_insert_id_skips_diaobjects: bool
-
-    def __init__(self, config: ApdbCassandraConfig):
-        self.use_insert_id = config.use_insert_id
-        self.part_pixelization = config.part_pixelization
-        self.part_pix_level = config.part_pix_level
-        self.ra_dec_columns = list(config.ra_dec_columns)
-        self.time_partition_tables = config.time_partition_tables
-        self.time_partition_days = config.time_partition_days
-        self.use_insert_id_skips_diaobjects = config.use_insert_id_skips_diaobjects
-
-    def to_json(self) -> str:
-        """Convert this instance to JSON representation."""
-        return json.dumps(dataclasses.asdict(self))
-
-    def update(self, json_str: str) -> None:
-        """Update attribute values from a JSON string.
-
-        Parameters
-        ----------
-        json_str : str
-            String containing JSON representation of configuration.
-        """
-        data = json.loads(json_str)
-        if not isinstance(data, dict):
-            raise TypeError(f"JSON string must be convertible to object: {json_str!r}")
-        allowed_names = {field.name for field in dataclasses.fields(self)}
-        for key, value in data.items():
-            if key not in allowed_names:
-                raise ValueError(f"JSON object contains unknown key: {key}")
-            setattr(self, key, value)
 
 
 if CASSANDRA_IMPORTED:
@@ -594,7 +559,7 @@ class ApdbCassandra(Apdb):
         return config
 
     @classmethod
-    def list_databases(cls, host: str) -> Iterable[str]:
+    def list_databases(cls, host: str) -> Iterable[DatabaseInfo]:
         """Return the list of keyspaces with APDB databases.
 
         Parameters
@@ -604,24 +569,53 @@ class ApdbCassandra(Apdb):
 
         Returns
         -------
-        keyspaces : `~collections.abc.Iterable` [`str`]
-            Names of keyspaces that contain APDB instance.
+        databases : `~collections.abc.Iterable` [`DatabaseInfo`]
+            Information about databases that contain APDB instance.
         """
         # For DbAuth we need to use database name "*" to try to match any
         # database.
         config = ApdbCassandraConfig(contact_points=[host], keyspace="*")
         cluster, session = cls._make_session(config)
 
-        # Get names of all keyspaces containing DiaSource table
-        table_name = ApdbTables.DiaSource.table_name()
-        query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
-        result = session.execute(query, (table_name,))
-        keyspaces = [row[0] for row in result.all()]
+        with cluster, session:
 
-        # Need explicit shutdown.
-        cluster.shutdown()
+            # Get names of all keyspaces containing DiaSource table
+            table_name = ApdbTables.DiaSource.table_name()
+            query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
+            result = session.execute(query, (table_name,))
+            keyspaces = [row[0] for row in result.all()]
 
-        return keyspaces
+            if not keyspaces:
+                return []
+
+            # Retrieve roles for each keyspace.
+            template = ", ".join(["%s"] * len(keyspaces))
+            query = (
+                "SELECT resource, role, permissions FROM system_auth.role_permissions "
+                f"WHERE resource IN ({template}) ALLOW FILTERING"
+            )
+            resources = [f"data/{keyspace}" for keyspace in keyspaces]
+            try:
+                result = session.execute(query, resources)
+                # If anonymous access is enabled then result will be empty,
+                # set infos to have empty permissions dict in that case.
+                infos = {keyspace: DatabaseInfo(name=keyspace, permissions={}) for keyspace in keyspaces}
+                for row in result:
+                    _, _, keyspace = row[0].partition("/")
+                    role: str = row[1]
+                    role_permissions: set[str] = set(row[2])
+                    infos[keyspace].permissions[role] = role_permissions  # type: ignore[index]
+            except cassandra.Unauthorized as exc:
+                # Likely that access to role_permissions is not granted for
+                # current user.
+                warnings.warn(
+                    f"Authentication information is not accessible to current user - {exc}", stacklevel=2
+                )
+                infos = {keyspace: DatabaseInfo(name=keyspace) for keyspace in keyspaces}
+
+            # Would be nice to get size estimate, but this is not available
+            # via CQL queries.
+            return infos.values()
 
     @classmethod
     def delete_database(cls, host: str, keyspace: str, *, timeout: int = 3600) -> None:
@@ -642,12 +636,9 @@ class ApdbCassandra(Apdb):
         # database.
         config = ApdbCassandraConfig(contact_points=[host], keyspace="*")
         cluster, session = cls._make_session(config)
-
-        query = f"DROP KEYSPACE {quote_id(keyspace)}"
-        session.execute(query, timeout=timeout)
-
-        # Need explicit shutdown.
-        cluster.shutdown()
+        with cluster, session:
+            query = f"DROP KEYSPACE {quote_id(keyspace)}"
+            session.execute(query, timeout=timeout)
 
     def get_replica(self) -> ApdbCassandraReplica:
         """Return `ApdbReplica` instance for this database."""
@@ -670,57 +661,61 @@ class ApdbCassandra(Apdb):
             raise TypeError(f"Unexpected type of configuration object: {type(config)}")
 
         cluster, session = cls._make_session(config)
-
-        schema = ApdbCassandraSchema(
-            session=session,
-            keyspace=config.keyspace,
-            schema_file=config.schema_file,
-            schema_name=config.schema_name,
-            prefix=config.prefix,
-            time_partition_tables=config.time_partition_tables,
-            enable_replica=config.use_insert_id,
-        )
-
-        # Ask schema to create all tables.
-        if config.time_partition_tables:
-            time_partition_start = astropy.time.Time(config.time_partition_start, format="isot", scale="tai")
-            time_partition_end = astropy.time.Time(config.time_partition_end, format="isot", scale="tai")
-            part_epoch = float(cls.partition_zero_epoch.mjd)
-            part_days = config.time_partition_days
-            part_range = (
-                cls._time_partition_cls(time_partition_start, part_epoch, part_days),
-                cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
+        with cluster, session:
+            schema = ApdbCassandraSchema(
+                session=session,
+                keyspace=config.keyspace,
+                schema_file=config.schema_file,
+                schema_name=config.schema_name,
+                prefix=config.prefix,
+                time_partition_tables=config.time_partition_tables,
+                enable_replica=config.use_insert_id,
             )
-            schema.makeSchema(
-                drop=drop,
-                part_range=part_range,
-                replication_factor=replication_factor,
-                table_options=table_options,
-            )
-        else:
-            schema.makeSchema(drop=drop, replication_factor=replication_factor, table_options=table_options)
 
-        meta_table_name = ApdbTables.metadata.table_name(config.prefix)
-        metadata = ApdbMetadataCassandra(session, meta_table_name, config.keyspace, "read_tuples", "write")
-
-        # Fill version numbers, overrides if they existed before.
-        if metadata.table_exists():
-            metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
-            metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
-
-            if config.use_insert_id:
-                # Only store replica code version if replica is enabled.
-                metadata.set(
-                    cls.metadataReplicaVersionKey,
-                    str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
-                    force=True,
+            # Ask schema to create all tables.
+            if config.time_partition_tables:
+                time_partition_start = astropy.time.Time(
+                    config.time_partition_start, format="isot", scale="tai"
+                )
+                time_partition_end = astropy.time.Time(config.time_partition_end, format="isot", scale="tai")
+                part_epoch = float(cls.partition_zero_epoch.mjd)
+                part_days = config.time_partition_days
+                part_range = (
+                    cls._time_partition_cls(time_partition_start, part_epoch, part_days),
+                    cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
+                )
+                schema.makeSchema(
+                    drop=drop,
+                    part_range=part_range,
+                    replication_factor=replication_factor,
+                    table_options=table_options,
+                )
+            else:
+                schema.makeSchema(
+                    drop=drop, replication_factor=replication_factor, table_options=table_options
                 )
 
-            # Store frozen part of a configuration in metadata.
-            freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
-            metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
+            meta_table_name = ApdbTables.metadata.table_name(config.prefix)
+            metadata = ApdbMetadataCassandra(
+                session, meta_table_name, config.keyspace, "read_tuples", "write"
+            )
 
-        cluster.shutdown()
+            # Fill version numbers, overrides if they existed before.
+            if metadata.table_exists():
+                metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+                metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+                if config.use_insert_id:
+                    # Only store replica code version if replica is enabled.
+                    metadata.set(
+                        cls.metadataReplicaVersionKey,
+                        str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
+                        force=True,
+                    )
+
+                # Store frozen part of a configuration in metadata.
+                freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
+                metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
