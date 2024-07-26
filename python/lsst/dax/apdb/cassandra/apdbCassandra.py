@@ -636,12 +636,9 @@ class ApdbCassandra(Apdb):
         # database.
         config = ApdbCassandraConfig(contact_points=[host], keyspace="*")
         cluster, session = cls._make_session(config)
-
-        query = f"DROP KEYSPACE {quote_id(keyspace)}"
-        session.execute(query, timeout=timeout)
-
-        # Need explicit shutdown.
-        cluster.shutdown()
+        with cluster, session:
+            query = f"DROP KEYSPACE {quote_id(keyspace)}"
+            session.execute(query, timeout=timeout)
 
     def get_replica(self) -> ApdbCassandraReplica:
         """Return `ApdbReplica` instance for this database."""
@@ -664,57 +661,61 @@ class ApdbCassandra(Apdb):
             raise TypeError(f"Unexpected type of configuration object: {type(config)}")
 
         cluster, session = cls._make_session(config)
-
-        schema = ApdbCassandraSchema(
-            session=session,
-            keyspace=config.keyspace,
-            schema_file=config.schema_file,
-            schema_name=config.schema_name,
-            prefix=config.prefix,
-            time_partition_tables=config.time_partition_tables,
-            enable_replica=config.use_insert_id,
-        )
-
-        # Ask schema to create all tables.
-        if config.time_partition_tables:
-            time_partition_start = astropy.time.Time(config.time_partition_start, format="isot", scale="tai")
-            time_partition_end = astropy.time.Time(config.time_partition_end, format="isot", scale="tai")
-            part_epoch = float(cls.partition_zero_epoch.mjd)
-            part_days = config.time_partition_days
-            part_range = (
-                cls._time_partition_cls(time_partition_start, part_epoch, part_days),
-                cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
+        with cluster, session:
+            schema = ApdbCassandraSchema(
+                session=session,
+                keyspace=config.keyspace,
+                schema_file=config.schema_file,
+                schema_name=config.schema_name,
+                prefix=config.prefix,
+                time_partition_tables=config.time_partition_tables,
+                enable_replica=config.use_insert_id,
             )
-            schema.makeSchema(
-                drop=drop,
-                part_range=part_range,
-                replication_factor=replication_factor,
-                table_options=table_options,
-            )
-        else:
-            schema.makeSchema(drop=drop, replication_factor=replication_factor, table_options=table_options)
 
-        meta_table_name = ApdbTables.metadata.table_name(config.prefix)
-        metadata = ApdbMetadataCassandra(session, meta_table_name, config.keyspace, "read_tuples", "write")
-
-        # Fill version numbers, overrides if they existed before.
-        if metadata.table_exists():
-            metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
-            metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
-
-            if config.use_insert_id:
-                # Only store replica code version if replica is enabled.
-                metadata.set(
-                    cls.metadataReplicaVersionKey,
-                    str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
-                    force=True,
+            # Ask schema to create all tables.
+            if config.time_partition_tables:
+                time_partition_start = astropy.time.Time(
+                    config.time_partition_start, format="isot", scale="tai"
+                )
+                time_partition_end = astropy.time.Time(config.time_partition_end, format="isot", scale="tai")
+                part_epoch = float(cls.partition_zero_epoch.mjd)
+                part_days = config.time_partition_days
+                part_range = (
+                    cls._time_partition_cls(time_partition_start, part_epoch, part_days),
+                    cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
+                )
+                schema.makeSchema(
+                    drop=drop,
+                    part_range=part_range,
+                    replication_factor=replication_factor,
+                    table_options=table_options,
+                )
+            else:
+                schema.makeSchema(
+                    drop=drop, replication_factor=replication_factor, table_options=table_options
                 )
 
-            # Store frozen part of a configuration in metadata.
-            freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
-            metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
+            meta_table_name = ApdbTables.metadata.table_name(config.prefix)
+            metadata = ApdbMetadataCassandra(
+                session, meta_table_name, config.keyspace, "read_tuples", "write"
+            )
 
-        cluster.shutdown()
+            # Fill version numbers, overrides if they existed before.
+            if metadata.table_exists():
+                metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+                metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+
+                if config.use_insert_id:
+                    # Only store replica code version if replica is enabled.
+                    metadata.set(
+                        cls.metadataReplicaVersionKey,
+                        str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
+                        force=True,
+                    )
+
+                # Store frozen part of a configuration in metadata.
+                freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
+                metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
