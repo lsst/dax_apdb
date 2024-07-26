@@ -86,7 +86,7 @@ def _list_cassandra_subcommand(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "-v",
         "--verbose",
-        help="Provide detailed output.",
+        help="Provide full list of roles and associated permissions.",
         default=False,
         action="store_true",
     )

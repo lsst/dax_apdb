@@ -100,6 +100,7 @@ class ApdbCassandraMixin:
 
     def tearDown(self) -> None:
         # Delete per-test keyspace.
+        assert self.cluster_host is not None
         ApdbCassandra.delete_database(self.cluster_host, self.keyspace)
 
 
