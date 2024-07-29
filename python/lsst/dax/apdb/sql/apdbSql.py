@@ -26,6 +26,7 @@ from __future__ import annotations
 
 __all__ = ["ApdbSqlConfig", "ApdbSql"]
 
+import datetime
 import logging
 import urllib.parse
 from collections.abc import Iterable, Mapping, MutableMapping
@@ -67,7 +68,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 0)
+VERSION = VersionTuple(0, 1, 1)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -884,7 +885,10 @@ class ApdbSql(Apdb):
         visit_time: astropy.time.Time,
         connection: sqlalchemy.engine.Connection,
     ) -> None:
-        dt = visit_time.datetime
+        # `visit_time.datetime` returns naive datetime, even though all astropy
+        # times are in UTC. Add UTC timezone to timestampt so that database
+        # can store a correct value.
+        dt = datetime.datetime.fromtimestamp(visit_time.unix_tai, tz=datetime.timezone.utc)
 
         table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
 
