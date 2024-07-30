@@ -576,9 +576,10 @@ class ApdbSql(Apdb):
         # _LOG.debug("query: %s", query)
 
         # execute select
-        with self._timer("select_time", tags={"table": "DiaObject"}):
+        with self._timer("select_time", tags={"table": "DiaObject"}) as timer:
             with self._engine.begin() as conn:
                 objects = pandas.read_sql_query(query, conn)
+            timer.add_values(row_count=len(objects))
         _LOG.debug("found %s DiaObjects", len(objects))
         return objects
 
@@ -613,10 +614,11 @@ class ApdbSql(Apdb):
         midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_forced_sources_months)
         _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
 
-        with self._timer("select_time", tags={"table": "DiaForcedSource"}):
+        with self._timer("select_time", tags={"table": "DiaForcedSource"}) as timer:
             sources = self._getSourcesByIDs(
                 ApdbTables.DiaForcedSource, list(object_ids), midpointMjdTai_start
             )
+            timer.add_values(row_count=len(sources))
 
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
@@ -645,9 +647,10 @@ class ApdbSql(Apdb):
         query = sql.select(*columns)
 
         # execute select
-        with self._timer("SSObject_select_time", tags={"table": "SSObject"}):
+        with self._timer("SSObject_select_time", tags={"table": "SSObject"}) as timer:
             with self._engine.begin() as conn:
                 objects = pandas.read_sql_query(query, conn)
+            timer.add_values(row_count=len(objects))
         _LOG.debug("found %s SSObjects", len(objects))
         return objects
 
@@ -788,9 +791,10 @@ class ApdbSql(Apdb):
         query = query.where(where)
 
         # execute select
-        with self._timer("DiaSource_select_time", tags={"table": "DiaSource"}):
+        with self._timer("DiaSource_select_time", tags={"table": "DiaSource"}) as timer:
             with self._engine.begin() as conn:
                 sources = pandas.read_sql_query(query, conn)
+            timer.add_values(row_counts=len(sources))
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
 
@@ -814,8 +818,9 @@ class ApdbSql(Apdb):
         midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_sources_months)
         _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
 
-        with self._timer("select_time", tags={"table": "DiaSource"}):
+        with self._timer("select_time", tags={"table": "DiaSource"}) as timer:
             sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, midpointMjdTai_start)
+            timer.add_values(row_count=len(sources))
 
         _LOG.debug("found %s DiaSources", len(sources))
         return sources
@@ -945,8 +950,9 @@ class ApdbSql(Apdb):
             # Drop the previous objects (pandas cannot upsert).
             query = table.delete().where(table.columns["diaObjectId"].in_(ids))
 
-            with self._timer("delete_time", tags={"table": table.name}):
+            with self._timer("delete_time", tags={"table": table.name}) as timer:
                 res = connection.execute(query)
+                timer.add_values(row_count=res.rowcount)
             _LOG.debug("deleted %s objects", res.rowcount)
 
             # DiaObjectLast is a subset of DiaObject, strip missing columns
@@ -963,7 +969,7 @@ class ApdbSql(Apdb):
                 last_objs.set_index(extra_column.index, inplace=True)
                 last_objs = pandas.concat([last_objs, extra_column], axis="columns")
 
-            with self._timer("insert_time", tags={"table": "DiaObjectLast"}):
+            with self._timer("insert_time", tags={"table": "DiaObjectLast"}) as timer:
                 last_objs.to_sql(
                     table.name,
                     connection,
@@ -971,6 +977,7 @@ class ApdbSql(Apdb):
                     index=False,
                     schema=table.schema,
                 )
+                timer.add_values(row_count=len(last_objs))
         else:
             # truncate existing validity intervals
             table = self._schema.get_table(ApdbTables.DiaObject)
@@ -986,8 +993,9 @@ class ApdbSql(Apdb):
                 )
             )
 
-            with self._timer("truncate_time", tags={"table": table.name}):
+            with self._timer("truncate_time", tags={"table": table.name}) as timer:
                 res = connection.execute(update)
+                timer.add_values(row_count=res.rowcount)
             _LOG.debug("truncated %s intervals", res.rowcount)
 
         objs = _coerce_uint64(objs)
@@ -1027,11 +1035,13 @@ class ApdbSql(Apdb):
             replica_stmt = replica_table.insert()
 
         # insert new versions
-        with self._timer("insert_time", tags={"table": table.name}):
+        with self._timer("insert_time", tags={"table": table.name}) as timer:
             objs.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            timer.add_values(row_count=len(objs))
         if replica_stmt is not None:
-            with self._timer("insert_time", tags={"table": replica_table_name}):
+            with self._timer("insert_time", tags={"table": replica_table_name}) as timer:
                 connection.execute(replica_stmt, replica_data)
+                timer.add_values(row_count=len(replica_data))
 
     def _storeDiaSources(
         self,
@@ -1062,12 +1072,14 @@ class ApdbSql(Apdb):
             replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
-        with self._timer("insert_time", tags={"table": table.name}):
+        with self._timer("insert_time", tags={"table": table.name}) as timer:
             sources = _coerce_uint64(sources)
             sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            timer.add_values(row_count=len(sources))
         if replica_stmt is not None:
-            with self._timer("replica_insert_time", tags={"table": replica_table_name}):
+            with self._timer("replica_insert_time", tags={"table": replica_table_name}) as timer:
                 connection.execute(replica_stmt, replica_data)
+                timer.add_values(row_count=len(replica_data))
 
     def _storeDiaForcedSources(
         self,
@@ -1098,12 +1110,14 @@ class ApdbSql(Apdb):
             replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
-        with self._timer("insert_time", tags={"table": table.name}):
+        with self._timer("insert_time", tags={"table": table.name}) as timer:
             sources = _coerce_uint64(sources)
             sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
+            timer.add_values(row_count=len(sources))
         if replica_stmt is not None:
             with self._timer("insert_time", tags={"table": replica_table_name}):
                 connection.execute(replica_stmt, replica_data)
+                timer.add_values(row_count=len(replica_data))
 
     def _htm_indices(self, region: Region) -> list[tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.
