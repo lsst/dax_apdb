@@ -217,7 +217,7 @@ class ApdbSql(Apdb):
     """Names of the config parameters to be frozen in metadata table."""
 
     def __init__(self, config: ApdbSqlConfig):
-        self._engine = self._makeEngine(config)
+        self._engine = self._makeEngine(config, create=False)
 
         sa_metadata = sqlalchemy.MetaData(schema=config.namespace)
         meta_table_name = ApdbTables.metadata.table_name(prefix=config.prefix)
@@ -271,13 +271,16 @@ class ApdbSql(Apdb):
         return Timer(name, *self._timer_args, tags=tags)
 
     @classmethod
-    def _makeEngine(cls, config: ApdbSqlConfig) -> sqlalchemy.engine.Engine:
+    def _makeEngine(cls, config: ApdbSqlConfig, *, create: bool) -> sqlalchemy.engine.Engine:
         """Make SQLALchemy engine based on configured parameters.
 
         Parameters
         ----------
         config : `ApdbSqlConfig`
             Configuration object.
+        create : `bool`
+            Whether to try to create new database file, only relevant for
+            SQLite backend which always creates new files by default.
         """
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
@@ -296,7 +299,7 @@ class ApdbSql(Apdb):
             elif config.db_url.startswith(("postgresql", "mysql")):
                 conn_args.update(connect_timeout=config.connection_timeout)
         kw.update(connect_args=conn_args)
-        engine = sqlalchemy.create_engine(cls._connection_url(config.db_url), **kw)
+        engine = sqlalchemy.create_engine(cls._connection_url(config.db_url, create=create), **kw)
 
         if engine.dialect.name == "sqlite":
             # Need to enable foreign keys on every new connection.
@@ -305,34 +308,76 @@ class ApdbSql(Apdb):
         return engine
 
     @classmethod
-    def _connection_url(cls, config_url: str) -> sqlalchemy.engine.URL | str:
+    def _connection_url(cls, config_url: str, *, create: bool) -> sqlalchemy.engine.URL | str:
         """Generate a complete URL for database with proper credentials.
 
         Parameters
         ----------
         config_url : `str`
             Database URL as specified in configuration.
+        create : `bool`
+            Whether to try to create new database file, only relevant for
+            SQLite backend which always creates new files by default.
 
         Returns
         -------
-        connection_url : `sqlalchemy.engine.URL`
+        connection_url : `sqlalchemy.engine.URL` or `str`
             Connection URL including credentials.
         """
         # Allow 3rd party authentication mechanisms by assuming connection
         # string is correct when we can not recognize (dialect, host, database)
         # matching keys.
         components = urllib.parse.urlparse(config_url)
-        if any((components.scheme is None, components.hostname is None, components.path is None)):
-            return config_url
+        if all((components.scheme is not None, components.hostname is not None, components.path is not None)):
+            try:
+                db_auth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
+                config_url = db_auth.getUrl(config_url)
+            except DbAuthNotFoundError:
+                # Credentials file doesn't exist or no matching credentials,
+                # use default auth.
+                pass
 
+        # SQLite has a nasty habit creating empty databases when they do not
+        # exist, tell it not to do that unless we do need to create it.
+        if not create:
+            config_url = cls._update_sqlite_url(config_url)
+
+        return config_url
+
+    @classmethod
+    def _update_sqlite_url(cls, url_string: str) -> str:
+        """If URL refers to sqlite dialect, update it so that the backend does
+        not try to create database file if it does not exist already.
+
+        Parameters
+        ----------
+        url_string : `str`
+            Connection string.
+
+        Returns
+        -------
+        url_string : `str`
+            Possibly updated connection string.
+        """
         try:
-            db_auth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
-            url = db_auth.getUrl(config_url)
-            return url
-        except DbAuthNotFoundError:
-            # Credentials file doesn't exist or no matching credentials, use
-            # default auth.
-            return config_url
+            url = sqlalchemy.make_url(url_string)
+        except sqlalchemy.exc.SQLAlchemyError:
+            # If parsing fails it means some special format, likely not
+            # sqlite so we just return it unchanged.
+            return url_string
+
+        if url.get_backend_name() == "sqlite":
+            # Massage url so that database name starts with "file:" and
+            # option string has "mode=rw&uri=true". Database name
+            # should look like a path (:memory: is not supported by
+            # Apdb, but someone could still try to use it).
+            database = url.database
+            if database and not database.startswith((":", "file:")):
+                query = dict(url.query, mode="rw", uri="true")
+                url = url.set(database=f"file:{database}", query=query)
+                url_string = url.render_as_string()
+
+        return url_string
 
     def _versionCheck(self, metadata: ApdbMetadataSql) -> None:
         """Check schema version compatibility."""
@@ -473,6 +518,10 @@ class ApdbSql(Apdb):
 
         cls._makeSchema(config, drop=drop)
 
+        # SQLite has a nasty habit of creating empty database by default,
+        # update URL in config file to disable that behavior.
+        config.db_url = cls._update_sqlite_url(config.db_url)
+
         return config
 
     def get_replica(self) -> ApdbSqlReplica:
@@ -514,7 +563,7 @@ class ApdbSql(Apdb):
         if not isinstance(config, ApdbSqlConfig):
             raise TypeError(f"Unexpected type of configuration object: {type(config)}")
 
-        engine = cls._makeEngine(config)
+        engine = cls._makeEngine(config, create=True)
 
         # Ask schema class to create all tables.
         schema = ApdbSqlSchema(
