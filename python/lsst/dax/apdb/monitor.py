@@ -26,7 +26,9 @@ __all__ = ["MonAgent", "MonService", "LoggingMonHandler"]
 import contextlib
 import json
 import logging
+import os
 import time
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any
@@ -37,6 +39,10 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
 _TagsType = Mapping[str, str | int]
+
+
+_CONFIG_ENV = "DAX_APDB_MONITOR_CONFIG"
+"""Name of the envvar specifying service configuration."""
 
 
 class MonHandler(ABC):
@@ -76,7 +82,7 @@ class MonAgent:
     ----------
     name : `str`
         Client agent name, this is used for filtering of the records by the
-        service and ia also passed to monitoring handler as ``agent_name``.
+        service and is also passed to monitoring handler as ``agent_name``.
     """
 
     def __init__(self, name: str = ""):
@@ -170,7 +176,7 @@ class MonFilter:
         Parameters
         ----------
         agent_name : `str`
-            Name of the clent agent that produces monitoring record.
+            Name of the client agent that produces monitoring record.
 
         Returns
         -------
@@ -209,6 +215,9 @@ class MonService(metaclass=Singleton):
 
     _filters: list[MonFilter] = []
     """Sequence of filters for agent names."""
+
+    _initialized: bool = False
+    """False before initialization."""
 
     def set_filters(self, rules: Iterable[str]) -> None:
         """Define a sequence of rules for filtering of the agent names.
@@ -257,6 +266,15 @@ class MonService(metaclass=Singleton):
         timestamp: float | None = None,
     ) -> None:
         """Add one monitoring record, this method is for use by agents only."""
+        if not self._initialized:
+            try:
+                self._default_init()
+                self._initialized = True
+            except Exception as exc:
+                # Complain but continue.
+                message = f"Error in configuration of monitoring service: {exc}"
+                # Stack level does not really matter.
+                warnings.warn(message, stacklevel=3)
         if self._handlers:
             accept: bool | None = None
             # Check every filter, accept if none makes any decision.
@@ -278,6 +296,38 @@ class MonService(metaclass=Singleton):
             for handler in self._handlers:
                 handler.handle(record_name, timestamp, tags, values, agent_name)
 
+    def _default_init(self) -> None:
+        """Perform default initialization of the service."""
+        if env := os.environ.get(_CONFIG_ENV):
+            # Configuration is specified as colon-separated list of key:value
+            # pairs or simple values. Simple values are treated as filters
+            # (see set_filters for syntax). key-values pairs pairs specify
+            # handlers, for now the only supported handler is logging, it
+            # is specified as "logging:<logger-name>[:<level>]".
+            filters = []
+            handlers: list[MonHandler] = []
+            for item in env.split(","):
+                pieces = item.split(":")
+                if len(pieces) in (2, 3) and pieces[0] == "logging":
+                    logger_name = pieces[1]
+                    if len(pieces) == 3:
+                        level_name = pieces[2]
+                        level = logging.getLevelNamesMapping().get(level_name.upper())
+                        if level is None:
+                            raise ValueError(
+                                f"Unknown logging level name {level_name!r} in {_CONFIG_ENV}={env!r}"
+                            )
+                    else:
+                        level = logging.INFO
+                    handlers.append(LoggingMonHandler(logger_name, level))
+                elif len(pieces) == 1:
+                    filters.extend(pieces)
+                else:
+                    raise ValueError(f"Unexpected format of item {item!r} in {_CONFIG_ENV}={env!r}")
+            for handler in handlers:
+                self.add_handler(handler)
+            self.set_filters(filters)
+
     @property
     def handlers(self) -> Iterable[MonHandler]:
         """Set of handlers defined currently."""
@@ -291,11 +341,14 @@ class MonService(metaclass=Singleton):
         handler : `MonHandler`
             Handler instance.
         """
+        # Manually adding handler means default initialization should be
+        # skipped.
+        self._initialized = True
         if handler not in self._handlers:
             self._handlers.append(handler)
 
     def remove_handler(self, handler: MonHandler) -> None:
-        """Add one monitoring handler.
+        """Remove a monitoring handler.
 
         Parameters
         ----------
