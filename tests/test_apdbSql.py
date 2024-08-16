@@ -31,6 +31,7 @@ from typing import Any
 from unittest.mock import patch
 
 import lsst.utils.tests
+import sqlalchemy
 from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
 from lsst.dax.apdb.sql import ApdbSql
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
@@ -239,6 +240,14 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
         with patch.dict(os.environ, new_env, clear=True):
             with self.assertRaises(TypeError):
                 Apdb.from_uri("label:label")
+
+    def test_remove_database_file(self) -> None:
+        """Check that SQLite does not try to recreate database after it was
+        removed, but config persisted.
+        """
+        os.unlink(f"{self.tempdir}/apdb.sqlite3")
+        with self.assertRaisesRegex(sqlalchemy.exc.OperationalError, "unable to open database file"):
+            Apdb.from_uri(self.config_path)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
