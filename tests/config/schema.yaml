@@ -197,6 +197,11 @@ tables:
     value: 0
     mysql:datatype: BIGINT
     ivoa:ucd: meta.code
+  - name: time_processed
+    "@id": "#DiaSource.time_processed"
+    datatype: timestamp
+    nullable: false
+    description: Time when the image was processed and this DiaSource record was generated.
   primaryKey: "#DiaSource.diaSourceId"
   indexes:
   - name: IDX_DiaSource_visitDetector
@@ -265,6 +270,11 @@ tables:
     value: 0
     mysql:datatype: BIGINT
     ivoa:ucd: meta.code
+  - name: time_processed
+    "@id": "#DiaForcedSource.time_processed"
+    datatype: timestamp
+    nullable: false
+    description: Time when this record was generated.
   primaryKey:
   - "#DiaForcedSource.diaObjectId"
   - "#DiaForcedSource.visit"

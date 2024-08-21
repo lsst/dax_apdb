@@ -47,8 +47,8 @@ class ApdbSchemaTestCase(unittest.TestCase):
     table_column_count = {
         ApdbTables.DiaObject: 8,
         ApdbTables.DiaObjectLast: 5,
-        ApdbTables.DiaSource: 11,
-        ApdbTables.DiaForcedSource: 7,
+        ApdbTables.DiaSource: 12,
+        ApdbTables.DiaForcedSource: 8,
         ApdbTables.SSObject: 3,
         ApdbTables.metadata: 2,
     }

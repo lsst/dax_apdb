@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import datetime
 import random
 from collections.abc import Iterator
 from typing import Any
@@ -141,6 +142,9 @@ def makeSourceCatalog(
     """
     nrows = len(objects)
     midpointMjdTai = visit_time.mjd
+    # Note that for now we use naive datetime for time_processed, to have it
+    # consistent with ap_association.
+    time_processed = datetime.datetime.now()
     df = pandas.DataFrame(
         {
             "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
@@ -153,6 +157,7 @@ def makeSourceCatalog(
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
             "ssObjectId": None,
+            "time_processed": time_processed,
         }
     )
     return df
@@ -184,6 +189,9 @@ def makeForcedSourceCatalog(
     """
     nrows = len(objects)
     midpointMjdTai = visit_time.mjd
+    # Note that for now we use naive datetime for time_processed, to have it
+    # consistent with ap_association.
+    time_processed = datetime.datetime.now()
     df = pandas.DataFrame(
         {
             "diaObjectId": objects["diaObjectId"],
@@ -193,6 +201,7 @@ def makeForcedSourceCatalog(
             "dec": objects["dec"],
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
+            "time_processed": time_processed,
         }
     )
     return df
