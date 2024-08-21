@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
+import datetime
 import os
 import tempfile
 import unittest
@@ -130,6 +131,9 @@ class ApdbTest(TestCaseMixin, ABC):
 
     schema_path: str
     """Location of the Felis schema file."""
+
+    timestamp_type_name: str
+    """Type name of timestamp columns in DataFrames returned from queries."""
 
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
@@ -391,6 +395,34 @@ class ApdbTest(TestCaseMixin, ABC):
         # non-existent image
         res = apdb.containsVisitDetector(visit=2, detector=42)
         self.assertFalse(res)
+
+    def test_timestamps(self) -> None:
+        """Check that timestamp return type is as expected."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region = _make_region()
+        visit_time = self.visit_time
+
+        # have to store Objects first
+        time_before = datetime.datetime.now()
+        objects = makeObjectCatalog(region, 100, visit_time)
+        oids = list(objects["diaObjectId"])
+        catalog = makeForcedSourceCatalog(objects, visit_time)
+        time_after = datetime.datetime.now()
+
+        apdb.store(visit_time, objects, forced_sources=catalog)
+
+        # read it back and check sizes
+        res = apdb.getDiaForcedSources(region, oids, visit_time)
+        assert res is not None
+        self.assert_catalog(res, len(catalog), ApdbTables.DiaForcedSource)
+
+        self.assertIn("time_processed", res.dtypes)
+        dtype = res.dtypes["time_processed"]
+        self.assertEqual(dtype.name, self.timestamp_type_name)
+        # Verify that returned time is sensible.
+        self.assertTrue(all(time_before <= dt <= time_after for dt in res["time_processed"]))
 
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""

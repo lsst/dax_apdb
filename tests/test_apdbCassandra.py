@@ -110,6 +110,9 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     time_partition_tables = False
     time_partition_start: str | None = None
     time_partition_end: str | None = None
+    # Cassandra stores timestamps with millisecond precision internally,
+    # but pandas seem to convert them to nanosecond type.
+    timestamp_type_name = "datetime64[ns]"
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
