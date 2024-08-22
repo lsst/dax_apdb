@@ -142,8 +142,9 @@ def makeSourceCatalog(
     """
     nrows = len(objects)
     midpointMjdTai = visit_time.mjd
-    # Note that for now we use naive datetime for time_processed, to have it
-    # consistent with ap_association.
+    # TODO: Note that for now we use naive datetime for time_processed, to have
+    # it consistent with ap_association, will need to update once we migrate
+    # to aware times everywhere.
     time_processed = datetime.datetime.now()
     df = pandas.DataFrame(
         {
@@ -189,8 +190,9 @@ def makeForcedSourceCatalog(
     """
     nrows = len(objects)
     midpointMjdTai = visit_time.mjd
-    # Note that for now we use naive datetime for time_processed, to have it
-    # consistent with ap_association.
+    # TODO: Note that for now we use naive datetime for time_processed, to have
+    # it consistent with ap_association, will need to update once we migrate
+    # to aware times everywhere.
     time_processed = datetime.datetime.now()
     df = pandas.DataFrame(
         {
