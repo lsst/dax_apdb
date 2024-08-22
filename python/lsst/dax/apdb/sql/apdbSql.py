@@ -1018,7 +1018,7 @@ class ApdbSql(Apdb):
             if "lastNonForcedSource" in last_objs.columns:
                 # lastNonForcedSource is defined NOT NULL, fill it with visit
                 # time just in case.
-                last_objs["lastNonForcedSource"].fillna(dt, inplace=True)
+                last_objs.fillna({"lastNonForcedSource": dt}, inplace=True)
             else:
                 extra_column = pandas.Series([dt] * len(objs), name="lastNonForcedSource")
                 last_objs.set_index(extra_column.index, inplace=True)
@@ -1068,7 +1068,7 @@ class ApdbSql(Apdb):
         if "lastNonForcedSource" in objs.columns:
             # lastNonForcedSource is defined NOT NULL, fill it with visit time
             # just in case.
-            objs["lastNonForcedSource"] = objs["lastNonForcedSource"].fillna(dt)
+            objs.fillna({"lastNonForcedSource": dt}, inplace=True)
         else:
             extra_columns.append(pandas.Series([dt] * len(objs), name="lastNonForcedSource"))
         if extra_columns:
