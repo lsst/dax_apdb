@@ -50,6 +50,7 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
     fsrc_requires_id_list = True
     dia_object_index = "baseline"
     schema_path = TEST_SCHEMA
+    timestamp_type_name = "datetime64[ns]"
 
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
@@ -109,6 +110,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
     postgresql: Any
     enable_replica = True
     schema_path = TEST_SCHEMA
+    timestamp_type_name = "datetime64[ns]"
 
     @classmethod
     def setUpClass(cls) -> None:

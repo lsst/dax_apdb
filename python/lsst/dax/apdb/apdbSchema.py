@@ -49,7 +49,7 @@ _LOG = logging.getLogger(__name__)
 _dtype_map: Mapping[felis.datamodel.DataType | ExtraDataTypes, type | str] = {
     felis.datamodel.DataType.double: numpy.float64,
     felis.datamodel.DataType.float: numpy.float32,
-    felis.datamodel.DataType.timestamp: "datetime64[ms]",
+    felis.datamodel.DataType.timestamp: "datetime64[ns]",
     felis.datamodel.DataType.long: numpy.int64,
     felis.datamodel.DataType.int: numpy.int32,
     felis.datamodel.DataType.short: numpy.int16,

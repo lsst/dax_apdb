@@ -630,7 +630,7 @@ class ApdbSql(Apdb):
                 objects = pandas.read_sql_query(query, conn)
             timer.add_values(row_count=len(objects))
         _LOG.debug("found %s DiaObjects", len(objects))
-        return objects
+        return self._fix_timestamps(objects)
 
     def getDiaSources(
         self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
@@ -701,7 +701,7 @@ class ApdbSql(Apdb):
                 objects = pandas.read_sql_query(query, conn)
             timer.add_values(row_count=len(objects))
         _LOG.debug("found %s SSObjects", len(objects))
-        return objects
+        return self._fix_timestamps(objects)
 
     def store(
         self,
@@ -845,7 +845,7 @@ class ApdbSql(Apdb):
                 sources = pandas.read_sql_query(query, conn)
             timer.add_values(row_counts=len(sources))
         _LOG.debug("found %s DiaSources", len(sources))
-        return sources
+        return self._fix_timestamps(sources)
 
     def _getDiaSourcesByIDs(self, object_ids: list[int], visit_time: astropy.time.Time) -> pandas.DataFrame:
         """Return catalog of DiaSource instances given set of DiaObject IDs.
@@ -931,7 +931,7 @@ class ApdbSql(Apdb):
             else:
                 sources = pandas.concat(data_frames)
         assert sources is not None, "Catalog cannot be None"
-        return sources
+        return self._fix_timestamps(sources)
 
     def _storeReplicaChunk(
         self,
@@ -1229,4 +1229,17 @@ class ApdbSql(Apdb):
             htm_index[i] = idx
         df = df.copy()
         df[self.config.htm_index_column] = htm_index
+        return df
+
+    def _fix_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Update timestamp columns to be naive datetime type.
+
+        AP pipeline code expects DataFrames to contain naive datetime columns,
+        while Postgres queries return timezone-aware type. This method converts
+        those columns to naive datetime in UTC timezone.
+        """
+        # Find all columns with aware timestamps.
+        columns = [column for column, dtype in df.dtypes.items() if isinstance(dtype, pandas.DatetimeTZDtype)]
+        for column in columns:
+            df[column] = df[column].dt.tz_convert(None)
         return df
