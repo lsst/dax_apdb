@@ -839,6 +839,11 @@ class ApdbCassandra(Apdb):
         forced_sources: pandas.DataFrame | None = None,
     ) -> None:
         # docstring is inherited from a base class
+        objects = self._fix_input_timestamps(objects)
+        if sources is not None:
+            sources = self._fix_input_timestamps(sources)
+        if forced_sources is not None:
+            forced_sources = self._fix_input_timestamps(forced_sources)
 
         replica_chunk: ReplicaChunk | None = None
         if self._schema.has_replica_chunks:
@@ -861,6 +866,7 @@ class ApdbCassandra(Apdb):
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
+        objects = self._fix_input_timestamps(objects)
         self._storeObjectsPandas(objects, ApdbTables.SSObject)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
@@ -1544,3 +1550,18 @@ class ApdbCassandra(Apdb):
                 temporal_where = [(f'"apdb_time_part" IN ({time_part_list})', ())]
 
         return tables, temporal_where
+
+    def _fix_input_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Update timestamp columns in input DataFrame to be naive datetime
+        type.
+
+        Clients may or may not generate aware timestamps, code in this class
+        assumes that timestamps are naive, so we convert them to UTC and
+        drop timezone.
+        """
+        # Find all columns with aware timestamps.
+        columns = [column for column, dtype in df.dtypes.items() if isinstance(dtype, pandas.DatetimeTZDtype)]
+        for column in columns:
+            # tz_convert(None) will convert to UTC and drop timezone.
+            df[column] = df[column].dt.tz_convert(None)
+        return df
