@@ -857,12 +857,12 @@ class ApdbCassandra(Apdb):
         if sources is not None:
             # copy apdb_part column from DiaObjects to DiaSources
             sources = self._add_apdb_part(sources)
-            self._storeDiaSources(ApdbTables.DiaSource, sources, visit_time, replica_chunk)
+            self._storeDiaSources(ApdbTables.DiaSource, sources, replica_chunk)
             self._storeDiaSourcesPartitions(sources, visit_time, replica_chunk)
 
         if forced_sources is not None:
             forced_sources = self._add_apdb_part(forced_sources)
-            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, visit_time, replica_chunk)
+            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
@@ -1171,7 +1171,6 @@ class ApdbCassandra(Apdb):
         self,
         table_name: ApdbTables,
         sources: pandas.DataFrame,
-        visit_time: astropy.time.Time,
         replica_chunk: ReplicaChunk | None,
     ) -> None:
         """Store catalog of DIASources or DIAForcedSources from current visit.
@@ -1187,13 +1186,25 @@ class ApdbCassandra(Apdb):
         replica_chunk : `ReplicaChunk` or `None`
             Replica chunk identifier if replication is configured.
         """
-        time_part: int | None = self._time_partition(visit_time)
+        # Time partitioning has to be based on midpointMjdTai, not visit_time
+        # as visit_time is not really a visit time.
+        tp_sources = sources.copy(deep=False)
+        tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(self._time_partition)
         extra_columns: dict[str, Any] = {}
         if not self.config.time_partition_tables:
-            extra_columns["apdb_time_part"] = time_part
-            time_part = None
-
-        self._storeObjectsPandas(sources, table_name, extra_columns=extra_columns, time_part=time_part)
+            self._storeObjectsPandas(tp_sources, table_name)
+        else:
+            # Group by time partition
+            partitions = set(tp_sources["apdb_time_part"])
+            if len(partitions) == 1:
+                # Single partition - just save the whole thing.
+                time_part = partitions.pop()
+                self._storeObjectsPandas(sources, table_name, time_part=time_part)
+            else:
+                # group by time partition.
+                for time_part, sub_frame in tp_sources.groupby(by="apdb_time_part"):
+                    sub_frame.drop(columns="apdb_time_part", inplace=True)
+                    self._storeObjectsPandas(sub_frame, table_name, time_part=time_part)
 
         if replica_chunk is not None:
             extra_columns = dict(apdb_replica_chunk=replica_chunk.id)
