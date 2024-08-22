@@ -630,7 +630,7 @@ class ApdbSql(Apdb):
                 objects = pandas.read_sql_query(query, conn)
             timer.add_values(row_count=len(objects))
         _LOG.debug("found %s DiaObjects", len(objects))
-        return self._fix_timestamps(objects)
+        return self._fix_result_timestamps(objects)
 
     def getDiaSources(
         self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
@@ -701,7 +701,7 @@ class ApdbSql(Apdb):
                 objects = pandas.read_sql_query(query, conn)
             timer.add_values(row_count=len(objects))
         _LOG.debug("found %s SSObjects", len(objects))
-        return self._fix_timestamps(objects)
+        return self._fix_result_timestamps(objects)
 
     def store(
         self,
@@ -711,6 +711,11 @@ class ApdbSql(Apdb):
         forced_sources: pandas.DataFrame | None = None,
     ) -> None:
         # docstring is inherited from a base class
+        objects = self._fix_input_timestamps(objects)
+        if sources is not None:
+            sources = self._fix_input_timestamps(sources)
+        if forced_sources is not None:
+            forced_sources = self._fix_input_timestamps(forced_sources)
 
         # We want to run all inserts in one transaction.
         with self._engine.begin() as connection:
@@ -733,6 +738,7 @@ class ApdbSql(Apdb):
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
+        objects = self._fix_input_timestamps(objects)
 
         idColumn = "ssObjectId"
         table = self._schema.get_table(ApdbTables.SSObject)
@@ -845,7 +851,7 @@ class ApdbSql(Apdb):
                 sources = pandas.read_sql_query(query, conn)
             timer.add_values(row_counts=len(sources))
         _LOG.debug("found %s DiaSources", len(sources))
-        return self._fix_timestamps(sources)
+        return self._fix_result_timestamps(sources)
 
     def _getDiaSourcesByIDs(self, object_ids: list[int], visit_time: astropy.time.Time) -> pandas.DataFrame:
         """Return catalog of DiaSource instances given set of DiaObject IDs.
@@ -931,7 +937,7 @@ class ApdbSql(Apdb):
             else:
                 sources = pandas.concat(data_frames)
         assert sources is not None, "Catalog cannot be None"
-        return self._fix_timestamps(sources)
+        return self._fix_result_timestamps(sources)
 
     def _storeReplicaChunk(
         self,
@@ -1231,8 +1237,33 @@ class ApdbSql(Apdb):
         df[self.config.htm_index_column] = htm_index
         return df
 
-    def _fix_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:
-        """Update timestamp columns to be naive datetime type.
+    def _fix_input_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Update timestamp columns in input DataFrame to be aware datetime
+        type in in UTC.
+
+        AP pipeline generates naive datetime instances, we want them to be
+        aware before they go to database. All naive timestamps are assumed to
+        be in UTC timezone (they should be TAI).
+        """
+        # Find all columns with aware non-UTC timestamps and convert to UTC.
+        columns = [
+            column
+            for column, dtype in df.dtypes.items()
+            if isinstance(dtype, pandas.DatetimeTZDtype) and dtype.tz is not datetime.timezone.utc
+        ]
+        for column in columns:
+            df[column] = df[column].dt.tz_convert(datetime.timezone.utc)
+        # Find all columns with naive timestamps and add UTC timezone.
+        columns = [
+            column for column, dtype in df.dtypes.items() if pandas.api.types.is_datetime64_dtype(dtype)
+        ]
+        for column in columns:
+            df[column] = df[column].dt.tz_localize(datetime.timezone.utc)
+        return df
+
+    def _fix_result_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:
+        """Update timestamp columns to be naive datetime type in returned
+        DataFrame.
 
         AP pipeline code expects DataFrames to contain naive datetime columns,
         while Postgres queries return timezone-aware type. This method converts
@@ -1241,5 +1272,6 @@ class ApdbSql(Apdb):
         # Find all columns with aware timestamps.
         columns = [column for column, dtype in df.dtypes.items() if isinstance(dtype, pandas.DatetimeTZDtype)]
         for column in columns:
+            # tz_convert(None) will convert to UTC and drop timezone.
             df[column] = df[column].dt.tz_convert(None)
         return df
