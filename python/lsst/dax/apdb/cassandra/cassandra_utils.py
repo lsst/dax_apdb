@@ -278,7 +278,7 @@ def literal(v: Any) -> Any:
     if v is None:
         pass
     elif isinstance(v, datetime):
-        v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1)) * 1000
+        v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1) * 1000)
     elif isinstance(v, (bytes, str, UUID, int)):
         pass
     else:

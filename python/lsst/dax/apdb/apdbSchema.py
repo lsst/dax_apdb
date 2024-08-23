@@ -45,7 +45,9 @@ _LOG = logging.getLogger(__name__)
 
 # In most cases column types are determined by Cassandra driver, but in some
 # cases we need to create Pandas Dataframe ourselves and we use this map to
-# infer types of columns from their YAML schema.
+# infer types of columns from their YAML schema. Note that Cassandra saves
+# timestamps with millisecond precision, but pandas maps datetime type to
+# "datetime64[ns]".
 _dtype_map: Mapping[felis.datamodel.DataType | ExtraDataTypes, type | str] = {
     felis.datamodel.DataType.double: numpy.float64,
     felis.datamodel.DataType.float: numpy.float32,

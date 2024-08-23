@@ -406,6 +406,9 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # have to store Objects first
         time_before = datetime.datetime.now()
+        # Cassandra has a millisecond precision, so subtract 1ms to allow for
+        # truncated returned values.
+        time_before -= datetime.timedelta(milliseconds=1)
         objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
         catalog = makeForcedSourceCatalog(objects, visit_time)
