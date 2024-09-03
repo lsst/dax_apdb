@@ -252,6 +252,10 @@ class ApdbCassandra(Apdb):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
+        self._timer_args: list[MonAgent | logging.Logger] = [_MON]
+        if config.timer:
+            self._timer_args.append(_LOG)
+
         self._keyspace = config.keyspace
 
         self._cluster, self._session = self._make_session(config)
@@ -262,14 +266,15 @@ class ApdbCassandra(Apdb):
         )
 
         # Read frozen config from metadata.
-        config_json = self._metadata.get(self.metadataConfigKey)
-        if config_json is not None:
-            # Update config from metadata.
-            freezer = ApdbConfigFreezer[ApdbCassandraConfig](self._frozen_parameters)
-            self.config = freezer.update(config, config_json)
-        else:
-            self.config = config
-        self.config.validate()
+        with self._timer("read_metadata_config"):
+            config_json = self._metadata.get(self.metadataConfigKey)
+            if config_json is not None:
+                # Update config from metadata.
+                freezer = ApdbConfigFreezer[ApdbCassandraConfig](self._frozen_parameters)
+                self.config = freezer.update(config, config_json)
+            else:
+                self.config = config
+            self.config.validate()
 
         self._pixelization = Pixelization(
             self.config.part_pixelization,
@@ -289,7 +294,8 @@ class ApdbCassandra(Apdb):
         self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
         if self._metadata.table_exists():
-            self._versionCheck(self._metadata)
+            with self._timer("version_check"):
+                self._versionCheck(self._metadata)
 
         # Cache for prepared statements
         self._preparer = PreparedStatementCache(self._session)
@@ -297,10 +303,6 @@ class ApdbCassandra(Apdb):
         _LOG.debug("ApdbCassandra Configuration:")
         for key, value in self.config.items():
             _LOG.debug("    %s: %s", key, value)
-
-        self._timer_args: list[MonAgent | logging.Logger] = [_MON]
-        if self.config.timer:
-            self._timer_args.append(_LOG)
 
     def __del__(self) -> None:
         if hasattr(self, "_cluster"):
@@ -317,15 +319,20 @@ class ApdbCassandra(Apdb):
         if config.private_ips:
             addressTranslator = _AddressTranslator(list(config.contact_points), list(config.private_ips))
 
-        cluster = Cluster(
-            execution_profiles=cls._makeProfiles(config),
-            contact_points=config.contact_points,
-            port=config.port,
-            address_translator=addressTranslator,
-            protocol_version=config.protocol_version,
-            auth_provider=cls._make_auth_provider(config),
-        )
-        session = cluster.connect()
+        timer_args: list[MonAgent | logging.Logger] = [_MON]
+        if config.timer:
+            timer_args.append(_LOG)
+        with Timer("cluster_connect", *timer_args):
+            cluster = Cluster(
+                execution_profiles=cls._makeProfiles(config),
+                contact_points=config.contact_points,
+                port=config.port,
+                address_translator=addressTranslator,
+                protocol_version=config.protocol_version,
+                auth_provider=cls._make_auth_provider(config),
+            )
+            session = cluster.connect()
+
         # Disable result paging
         session.default_fetch_size = None
 
