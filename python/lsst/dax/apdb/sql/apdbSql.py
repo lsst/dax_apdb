@@ -29,6 +29,7 @@ __all__ = ["ApdbSqlConfig", "ApdbSql"]
 import datetime
 import logging
 import urllib.parse
+import warnings
 from collections.abc import Iterable, Mapping, MutableMapping
 from contextlib import closing, suppress
 from typing import TYPE_CHECKING, Any, cast
@@ -374,6 +375,18 @@ class ApdbSql(Apdb):
             database = url.database
             if database and not database.startswith((":", "file:")):
                 query = dict(url.query, mode="rw", uri="true")
+                # If ``database`` is an absolute path then original URL should
+                # include four slashes after "sqlite:". Humans are bad at
+                # counting things beyond four and sometimes an extra slash gets
+                # added unintentionally, which causes sqlite to treat initial
+                # element as "authority" and to complain. Strip extra slashes
+                # at the start of the path to avoid that (DM-46077).
+                if database.startswith("//"):
+                    warnings.warn(
+                        f"Database URL contains extra leading slashes which will be removed: {url}",
+                        stacklevel=3,
+                    )
+                    database = "/" + database.lstrip("/")
                 url = url.set(database=f"file:{database}", query=query)
                 url_string = url.render_as_string()
 
