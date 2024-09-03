@@ -277,7 +277,7 @@ class Constraint:
                 ),
             )
         else:
-            raise TypeError(f"Unexpected constraint type: {dm_constr.type}")
+            raise TypeError(f"Unexpected constraint type: {dm_constr}")
 
 
 @dataclasses.dataclass
