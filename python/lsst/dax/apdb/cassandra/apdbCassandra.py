@@ -176,6 +176,17 @@ class ApdbCassandraConfig(ApdbConfig):
             "(DiaObjectsChunks has the same data)."
         ),
     )
+    idle_heartbeat_interval = Field[int](
+        doc=(
+            "Interval, in seconds, on which to heartbeat idle connections. "
+            "Zero (default) disables heartbeats."
+        ),
+        default=0,
+    )
+    idle_heartbeat_timeout = Field[int](
+        doc="Timeout, in seconds, on which the heartbeat wait for idle connection responses.",
+        default=30,
+    )
 
 
 @dataclasses.dataclass
@@ -330,6 +341,8 @@ class ApdbCassandra(Apdb):
                 address_translator=addressTranslator,
                 protocol_version=config.protocol_version,
                 auth_provider=cls._make_auth_provider(config),
+                idle_heartbeat_interval=config.idle_heartbeat_interval,
+                idle_heartbeat_timeout=config.idle_heartbeat_timeout,
             )
             session = cluster.connect()
 
