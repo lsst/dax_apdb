@@ -1319,33 +1319,39 @@ class ApdbCassandra(Apdb):
             holders = ",".join(["?"] * len(qfields))
             query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
             statement = self._preparer.prepare(query)
-            queries = cassandra.query.BatchStatement()
-            for rec in records.itertuples(index=False):
-                values = []
-                for field in df_fields:
-                    if field not in column_map:
-                        continue
-                    value = getattr(rec, field)
-                    if column_map[field].datatype is felis.datamodel.DataType.timestamp:
-                        if isinstance(value, pandas.Timestamp):
-                            value = value.to_pydatetime()
-                        elif value is pandas.NaT:
-                            value = None
-                        else:
-                            # Assume it's seconds since epoch, Cassandra
-                            # datetime is in milliseconds
-                            value = int(value * 1000)
-                    value = literal(value)
-                    values.append(UNSET_VALUE if value is None else value)
-                for field in extra_fields:
-                    value = literal(extra_columns[field])
-                    values.append(UNSET_VALUE if value is None else value)
-                queries.add(statement, values)
+            # Cassandra has 64k limit on batch size, normally that should be
+            # enough but some tests generate too many forced sources.
+            queries = []
+            for rec_chunk in chunk_iterable(records.itertuples(index=False), 50_000_000):
+                batch = cassandra.query.BatchStatement()
+                for rec in rec_chunk:
+                    values = []
+                    for field in df_fields:
+                        if field not in column_map:
+                            continue
+                        value = getattr(rec, field)
+                        if column_map[field].datatype is felis.datamodel.DataType.timestamp:
+                            if isinstance(value, pandas.Timestamp):
+                                value = value.to_pydatetime()
+                            elif value is pandas.NaT:
+                                value = None
+                            else:
+                                # Assume it's seconds since epoch, Cassandra
+                                # datetime is in milliseconds
+                                value = int(value * 1000)
+                        value = literal(value)
+                        values.append(UNSET_VALUE if value is None else value)
+                    for field in extra_fields:
+                        value = literal(extra_columns[field])
+                        values.append(UNSET_VALUE if value is None else value)
+                    batch.add(statement, values)
+                queries.append(batch)
 
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
         with self._timer("insert_time", tags={"table": table_name.name}) as timer:
-            self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
-            timer.add_values(row_count=len(records))
+            for batch in queries:
+                self._session.execute(batch, timeout=self.config.write_timeout, execution_profile="write")
+            timer.add_values(row_count=sum(len(batch) for batch in records))
 
     def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spatial partition for each record and add it to a
