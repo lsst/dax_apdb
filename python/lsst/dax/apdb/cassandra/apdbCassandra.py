@@ -130,8 +130,8 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Pixelization used for partitioning index.",
         default="mq3c",
     )
-    part_pix_level = Field[int](doc="Pixelization level used for partitioning index.", default=10)
-    part_pix_max_ranges = Field[int](doc="Max number of ranges in pixelization envelope", default=64)
+    part_pix_level = Field[int](doc="Pixelization level used for partitioning index.", default=11)
+    part_pix_max_ranges = Field[int](doc="Max number of ranges in pixelization envelope", default=128)
     ra_dec_columns = ListField[str](default=["ra", "dec"], doc="Names of ra/dec columns in DiaObject table")
     timer = Field[bool](doc="If True then print/log timing information", default=False)
     time_partition_tables = Field[bool](
@@ -598,7 +598,6 @@ class ApdbCassandra(Apdb):
         cluster, session = cls._make_session(config)
 
         with cluster, session:
-
             # Get names of all keyspaces containing DiaSource table
             table_name = ApdbTables.DiaSource.table_name()
             query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
