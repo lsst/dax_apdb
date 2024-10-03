@@ -130,8 +130,8 @@ class ApdbCassandraConfig(ApdbConfig):
         doc="Pixelization used for partitioning index.",
         default="mq3c",
     )
-    part_pix_level = Field[int](doc="Pixelization level used for partitioning index.", default=10)
-    part_pix_max_ranges = Field[int](doc="Max number of ranges in pixelization envelope", default=64)
+    part_pix_level = Field[int](doc="Pixelization level used for partitioning index.", default=11)
+    part_pix_max_ranges = Field[int](doc="Max number of ranges in pixelization envelope", default=128)
     ra_dec_columns = ListField[str](default=["ra", "dec"], doc="Names of ra/dec columns in DiaObject table")
     timer = Field[bool](doc="If True then print/log timing information", default=False)
     time_partition_tables = Field[bool](
@@ -175,6 +175,17 @@ class ApdbCassandraConfig(ApdbConfig):
             "If True then do not store DiaObjects when use_insert_id is True "
             "(DiaObjectsChunks has the same data)."
         ),
+    )
+    idle_heartbeat_interval = Field[int](
+        doc=(
+            "Interval, in seconds, on which to heartbeat idle connections. "
+            "Zero (default) disables heartbeats."
+        ),
+        default=0,
+    )
+    idle_heartbeat_timeout = Field[int](
+        doc="Timeout, in seconds, on which the heartbeat wait for idle connection responses.",
+        default=30,
     )
 
 
@@ -330,6 +341,8 @@ class ApdbCassandra(Apdb):
                 address_translator=addressTranslator,
                 protocol_version=config.protocol_version,
                 auth_provider=cls._make_auth_provider(config),
+                idle_heartbeat_interval=config.idle_heartbeat_interval,
+                idle_heartbeat_timeout=config.idle_heartbeat_timeout,
             )
             session = cluster.connect()
 
@@ -585,7 +598,6 @@ class ApdbCassandra(Apdb):
         cluster, session = cls._make_session(config)
 
         with cluster, session:
-
             # Get names of all keyspaces containing DiaSource table
             table_name = ApdbTables.DiaSource.table_name()
             query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
@@ -1306,33 +1318,39 @@ class ApdbCassandra(Apdb):
             holders = ",".join(["?"] * len(qfields))
             query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
             statement = self._preparer.prepare(query)
-            queries = cassandra.query.BatchStatement()
-            for rec in records.itertuples(index=False):
-                values = []
-                for field in df_fields:
-                    if field not in column_map:
-                        continue
-                    value = getattr(rec, field)
-                    if column_map[field].datatype is felis.datamodel.DataType.timestamp:
-                        if isinstance(value, pandas.Timestamp):
-                            value = value.to_pydatetime()
-                        elif value is pandas.NaT:
-                            value = None
-                        else:
-                            # Assume it's seconds since epoch, Cassandra
-                            # datetime is in milliseconds
-                            value = int(value * 1000)
-                    value = literal(value)
-                    values.append(UNSET_VALUE if value is None else value)
-                for field in extra_fields:
-                    value = literal(extra_columns[field])
-                    values.append(UNSET_VALUE if value is None else value)
-                queries.add(statement, values)
+            # Cassandra has 64k limit on batch size, normally that should be
+            # enough but some tests generate too many forced sources.
+            queries = []
+            for rec_chunk in chunk_iterable(records.itertuples(index=False), 50_000_000):
+                batch = cassandra.query.BatchStatement()
+                for rec in rec_chunk:
+                    values = []
+                    for field in df_fields:
+                        if field not in column_map:
+                            continue
+                        value = getattr(rec, field)
+                        if column_map[field].datatype is felis.datamodel.DataType.timestamp:
+                            if isinstance(value, pandas.Timestamp):
+                                value = value.to_pydatetime()
+                            elif value is pandas.NaT:
+                                value = None
+                            else:
+                                # Assume it's seconds since epoch, Cassandra
+                                # datetime is in milliseconds
+                                value = int(value * 1000)
+                        value = literal(value)
+                        values.append(UNSET_VALUE if value is None else value)
+                    for field in extra_fields:
+                        value = literal(extra_columns[field])
+                        values.append(UNSET_VALUE if value is None else value)
+                    batch.add(statement, values)
+                queries.append(batch)
 
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
         with self._timer("insert_time", tags={"table": table_name.name}) as timer:
-            self._session.execute(queries, timeout=self.config.write_timeout, execution_profile="write")
-            timer.add_values(row_count=len(records))
+            for batch in queries:
+                self._session.execute(batch, timeout=self.config.write_timeout, execution_profile="write")
+            timer.add_values(row_count=sum(len(batch) for batch in records))
 
     def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spatial partition for each record and add it to a
