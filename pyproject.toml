@@ -58,6 +58,9 @@ license-files = ["COPYRIGHT", "LICENSE"]
 [tool.setuptools.dynamic]
 version = { attr = "lsst_versions.get_lsst_version" }
 
+[project.scripts]
+apdb-cli = "lsst.dax.apdb.cli.apdb_cli:main"
+
 [tool.black]
 line-length = 110
 target-version = ["py311"]
