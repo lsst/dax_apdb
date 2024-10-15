@@ -63,14 +63,14 @@ def _genPointsInRegion(region: Region, count: int) -> Iterator[LonLat]:
 
 
 def makeObjectCatalog(
-    region: Region, count: int, visit_time: astropy.time.Time, *, start_id: int = 1, **kwargs: Any
+    region: Region | LonLat, count: int, visit_time: astropy.time.Time, *, start_id: int = 1, **kwargs: Any
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaObjects inside a region.
 
     Parameters
     ----------
-    region : `lsst.sphgeom.Region`
-        Spherical region.
+    region : `lsst.sphgeom.Region` or `lsst.sphgeom.LonLat`
+        Spherical region or spherical coordinate.
     count : `int`
         Number of records to generate.
     visit_time : `astropy.time.Time`
@@ -90,7 +90,10 @@ def makeObjectCatalog(
     Returned catalog only contains three columns - ``diaObjectId`, ``ra``, and
     ``dec`` (in degrees).
     """
-    points = list(_genPointsInRegion(region, count))
+    if isinstance(region, Region):
+        points = list(_genPointsInRegion(region, count))
+    else:
+        points = [region] * count
     # diaObjectId=0 may be used in some code for DiaSource foreign key to mean
     # the same as ``None``.
     ids = numpy.arange(start_id, len(points) + start_id, dtype=numpy.int64)

@@ -36,7 +36,9 @@ from typing import TYPE_CHECKING, Any
 import astropy.time
 import pandas
 import yaml
-from lsst.dax.apdb import (
+from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
+
+from .. import (
     Apdb,
     ApdbConfig,
     ApdbReplica,
@@ -46,11 +48,10 @@ from lsst.dax.apdb import (
     ReplicaChunk,
     VersionTuple,
 )
-from lsst.sphgeom import Angle, Circle, Region, UnitVector3d
-
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
 
 if TYPE_CHECKING:
+    from ..pixelization import Pixelization
 
     class TestCaseMixin(unittest.TestCase):
         """Base class for mixin test classes that use TestCase methods."""
@@ -152,6 +153,11 @@ class ApdbTest(TestCaseMixin, ABC):
     @abstractmethod
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def pixelization(self, config: ApdbConfig) -> Pixelization:
+        """Return pixelization used by implementation."""
         raise NotImplementedError()
 
     def assert_catalog(self, catalog: Any, rows: int, table: ApdbTables) -> None:
@@ -329,6 +335,40 @@ class ApdbTest(TestCaseMixin, ABC):
         with self.assertLogs("lsst.dax.apdb", level="DEBUG") as cm:
             apdb.store(visit_time, catalog)
         self.assertIn("No objects", "\n".join(cm.output))
+
+    def test_storeMovingObject(self) -> None:
+        """Store and retrieve DiaObject which changes its position."""
+        # don't care about sources.
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        pixelization = self.pixelization(config)
+
+        lon_deg, lat_deg = 0.0, 0.0
+        lonlat1 = LonLat.fromDegrees(lon_deg - 1.0, lat_deg)
+        lonlat2 = LonLat.fromDegrees(lon_deg + 1.0, lat_deg)
+        uv1 = UnitVector3d(lonlat1)
+        uv2 = UnitVector3d(lonlat2)
+
+        # Check that they fall into different pixels.
+        self.assertNotEqual(pixelization.pixel(uv1), pixelization.pixel(uv2))
+
+        # Store one object at two different positions.
+        visit_time1 = self.visit_time
+        catalog1 = makeObjectCatalog(lonlat1, 1, visit_time1)
+        apdb.store(visit_time1, catalog1)
+
+        visit_time2 = visit_time1 + astropy.time.TimeDelta(120.0, format="sec")
+        catalog1 = makeObjectCatalog(lonlat2, 1, visit_time2)
+        apdb.store(visit_time2, catalog1)
+
+        # Make region covering both points.
+        region = Circle(UnitVector3d(LonLat.fromDegrees(lon_deg, lat_deg)), Angle.fromDegrees(1.1))
+        self.assertTrue(region.contains(uv1))
+        self.assertTrue(region.contains(uv2))
+
+        # Read it back, must return the latest one.
+        res = apdb.getDiaObjects(region)
+        self.assert_catalog(res, 1, self.getDiaObjects_table())
 
     def test_storeSources(self) -> None:
         """Store and retrieve DiaSources."""
