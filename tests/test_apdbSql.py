@@ -33,7 +33,8 @@ from unittest.mock import patch
 import lsst.utils.tests
 import sqlalchemy
 from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
-from lsst.dax.apdb.sql import ApdbSql
+from lsst.dax.apdb.pixelization import Pixelization
+from lsst.dax.apdb.sql import ApdbSql, ApdbSqlConfig
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
 try:
@@ -44,7 +45,30 @@ except ImportError:
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 
-class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
+class ApdbSQLTest(ApdbTest):
+    """A common base class for SQL APDB tests."""
+
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
+        """Create database and return its config."""
+        kw = {
+            "schema_file": TEST_SCHEMA,
+            "dia_object_index": self.dia_object_index,
+            "use_insert_id": self.enable_replica,
+        }
+        kw.update(kwargs)
+        return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
+
+    def getDiaObjects_table(self) -> ApdbTables:
+        """Return type of table returned from getDiaObjects method."""
+        return ApdbTables.DiaObject
+
+    def pixelization(self, config: ApdbConfig) -> Pixelization:
+        """Return pixelization used by implementation."""
+        assert isinstance(config, ApdbSqlConfig), "Only expect ApdbSqlConfig here"
+        return Pixelization("htm", config.htm_level, config.htm_max_ranges)
+
+
+class ApdbSQLiteTestCase(ApdbSQLTest, unittest.TestCase):
     """A test case for ApdbSql class using SQLite backend."""
 
     fsrc_requires_id_list = True
@@ -60,19 +84,7 @@ class ApdbSQLiteTestCase(ApdbTest, unittest.TestCase):
         shutil.rmtree(self.tempdir, ignore_errors=True)
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
-        """Make config class instance used in all tests."""
-        kw = {
-            "db_url": self.db_url,
-            "schema_file": TEST_SCHEMA,
-            "dia_object_index": self.dia_object_index,
-            "use_insert_id": self.enable_replica,
-        }
-        kw.update(kwargs)
-        return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
-
-    def getDiaObjects_table(self) -> ApdbTables:
-        """Return type of table returned from getDiaObjects method."""
-        return ApdbTables.DiaObject
+        return super().make_instance(db_url=self.db_url, **kwargs)
 
 
 class ApdbSQLiteTestCaseLastObject(ApdbSQLiteTestCase):
@@ -102,7 +114,7 @@ class ApdbSQLiteTestCaseReplica(ApdbSQLiteTestCase):
 
 
 @unittest.skipUnless(testing is not None, "testing.postgresql module not found")
-class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
+class ApdbPostgresTestCase(ApdbSQLTest, unittest.TestCase):
     """A test case for ApdbSql class using Postgres backend."""
 
     fsrc_requires_id_list = True
@@ -133,15 +145,7 @@ class ApdbPostgresTestCase(ApdbTest, unittest.TestCase):
         self.server = self.postgresql()
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
-        """Make config class instance used in all tests."""
-        kw = {
-            "db_url": self.server.url(),
-            "schema_file": TEST_SCHEMA,
-            "dia_object_index": self.dia_object_index,
-            "use_insert_id": self.enable_replica,
-        }
-        kw.update(kwargs)
-        return ApdbSql.init_database(**kw)
+        return super().make_instance(db_url=self.server.url(), **kwargs)
 
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""

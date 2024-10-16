@@ -43,7 +43,7 @@ import pandas
 # If cassandra-driver is not there the module can still be imported
 # but things will not work.
 try:
-    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Session
+    from cassandra.cluster import Session
     from cassandra.concurrent import execute_concurrent
     from cassandra.query import PreparedStatement
 
@@ -54,39 +54,6 @@ except ImportError:
 from ..apdbReplica import ApdbTableData
 
 _LOG = logging.getLogger(__name__)
-
-
-if CASSANDRA_IMPORTED:
-
-    class SessionWrapper:
-        """Special wrapper class to workaround ``execute_concurrent()`` issue
-        which does not allow non-default execution profile.
-
-        Instance of this class can be passed to execute_concurrent() instead
-        of `Session` instance. This class implements a small set of methods
-        that are needed by ``execute_concurrent()``. When
-        ``execute_concurrent()`` is fixed to accept exectution profiles, this
-        wrapper can be dropped.
-        """
-
-        def __init__(self, session: Session, execution_profile: Any = EXEC_PROFILE_DEFAULT):
-            self._session = session
-            self._execution_profile = execution_profile
-
-        def execute_async(
-            self,
-            *args: Any,
-            execution_profile: Any = EXEC_PROFILE_DEFAULT,
-            **kwargs: Any,
-        ) -> Any:
-            # explicit parameter can override our settings
-            if execution_profile is EXEC_PROFILE_DEFAULT:
-                execution_profile = self._execution_profile
-            return self._session.execute_async(*args, execution_profile=execution_profile, **kwargs)
-
-        def submit(self, *args: Any, **kwargs: Any) -> Any:
-            # internal method
-            return self._session.submit(*args, **kwargs)
 
 
 class ApdbCassandraTableData(ApdbTableData):
@@ -209,19 +176,19 @@ def select_concurrent(
     This method can raise any exception that is raised by one of the provided
     statements.
     """
-    session_wrap = SessionWrapper(session, execution_profile)
     results = execute_concurrent(
-        session_wrap,
+        session,
         statements,
         results_generator=True,
         raise_on_first_error=False,
         concurrency=concurrency,
+        execution_profile=execution_profile,
     )
 
     ep = session.get_execution_profile(execution_profile)
     if ep.row_factory is raw_data_factory:
         # Collect rows into a single list and build Dataframe out of that
-        _LOG.debug("making pandas data frame out of rows/columns")
+        _LOG.debug("making raw data out of rows/columns")
         table_data: ApdbCassandraTableData | None = None
         for success, result in results:
             if success:

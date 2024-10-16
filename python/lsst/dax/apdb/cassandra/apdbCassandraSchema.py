@@ -94,6 +94,9 @@ class ExtraTables(enum.Enum):
     DiaSourceToPartition = "DiaSourceToPartition"
     "Maps diaSourceId to its partition values (pixel and time)."
 
+    DiaObjectLastToPartition = "DiaObjectLastToPartition"
+    "Maps last diaObjectId version to its partition (pixel)."
+
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
         return prefix + self.value
@@ -276,6 +279,27 @@ class ApdbCassandraSchema(ApdbSchema):
             indexes=[],
             constraints=[],
             annotations={"cassandra:partitioning_columns": ["diaSourceId"]},
+        )
+
+        # This table maps diaObjectId to its partition in DiaObjectLast table.
+        extra_tables[ExtraTables.DiaObjectLastToPartition] = schema_model.Table(
+            id="#" + ExtraTables.DiaObjectLastToPartition.value,
+            name=ExtraTables.DiaObjectLastToPartition.table_name(self._prefix),
+            columns=[
+                schema_model.Column(
+                    id="#diaObjectId",
+                    name="diaObjectId",
+                    datatype=felis.datamodel.DataType.long,
+                    nullable=False,
+                ),
+                schema_model.Column(
+                    id="#apdb_part", name="apdb_part", datatype=felis.datamodel.DataType.long, nullable=False
+                ),
+            ],
+            primary_key=[],
+            indexes=[],
+            constraints=[],
+            annotations={"cassandra:partitioning_columns": ["diaObjectId"]},
         )
 
         replica_chunk_column = schema_model.Column(
