@@ -44,6 +44,8 @@ test = [
     "pytest-flake8 >= 1.0.4",
     "pytest-openfiles >= 0.5.0"
 ]
+postgres = ["psycopg2"]
+cassandra = ["cassandra-driver"]
 
 [tool.setuptools.packages.find]
 where = ["python"]
