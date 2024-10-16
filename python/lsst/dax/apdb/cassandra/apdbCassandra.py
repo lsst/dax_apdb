@@ -56,7 +56,7 @@ from lsst.utils.iteration import chunk_iterable
 from .._auth import DB_AUTH_ENVVAR, DB_AUTH_PATH
 from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
-from ..apdbReplica import ReplicaChunk
+from ..apdbReplica import ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
 from ..pixelization import Pixelization
@@ -82,11 +82,16 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 0)
+VERSION = VersionTuple(0, 1, 1)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
 """
+
+
+def _dump_query(rf: Any) -> None:
+    """Dump cassandra query to debug log."""
+    _LOG.debug("Cassandra query: %s", rf.query)
 
 
 class CassandraMissingError(Exception):
@@ -205,6 +210,22 @@ class DatabaseInfo:
     """
 
 
+@dataclasses.dataclass
+class _DbVersions:
+    """Versions defined in APDB metadata table."""
+
+    schema_version: VersionTuple
+    """Version of the schema from which database was created."""
+
+    code_version: VersionTuple
+    """Version of ApdbCassandra with which database was created."""
+
+    replica_version: VersionTuple | None
+    """Version of ApdbCassandraReplica with which database was created, None
+    if replication was not configured.
+    """
+
+
 if CASSANDRA_IMPORTED:
 
     class _AddressTranslator(AddressTranslator):
@@ -304,9 +325,17 @@ class ApdbCassandra(Apdb):
         )
         self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
+        self._db_versions: _DbVersions | None = None
         if self._metadata.table_exists():
             with self._timer("version_check"):
-                self._versionCheck(self._metadata)
+                self._db_versions = self._versionCheck(self._metadata)
+
+        # Support for DiaObjectLastToPartition was added at code version 0.1.1
+        # in a backward-compatible way (we only use the table if it is there).
+        if self._db_versions:
+            self._has_dia_object_last_to_partition = self._db_versions.code_version >= VersionTuple(0, 1, 1)
+        else:
+            self._has_dia_object_last_to_partition = False
 
         # Cache for prepared statements
         self._preparer = PreparedStatementCache(self._session)
@@ -350,6 +379,10 @@ class ApdbCassandra(Apdb):
             )
             session = cluster.connect()
 
+        # Dump queries if debug level is enabled.
+        if _LOG.isEnabledFor(logging.DEBUG):
+            session.add_request_init_listener(_dump_query)
+
         # Disable result paging
         session.default_fetch_size = None
 
@@ -388,7 +421,7 @@ class ApdbCassandra(Apdb):
 
         return None
 
-    def _versionCheck(self, metadata: ApdbMetadataCassandra) -> None:
+    def _versionCheck(self, metadata: ApdbMetadataCassandra) -> _DbVersions:
         """Check schema version compatibility."""
 
         def _get_version(key: str, default: VersionTuple) -> VersionTuple:
@@ -421,6 +454,7 @@ class ApdbCassandra(Apdb):
             )
 
         # Check replica code version only if replica is enabled.
+        db_replica_version: VersionTuple | None = None
         if self._schema.has_replica_chunks:
             db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
             code_replica_version = ApdbCassandraReplica.apdbReplicaImplementationVersion()
@@ -429,6 +463,10 @@ class ApdbCassandra(Apdb):
                     f"Current replication code version {code_replica_version} "
                     f"is not compatible with database version {db_replica_version}"
                 )
+
+        return _DbVersions(
+            schema_version=db_schema_version, code_version=db_code_version, replica_version=db_replica_version
+        )
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
@@ -1151,6 +1189,73 @@ class ApdbCassandra(Apdb):
             execution_profile="write",
         )
 
+    def _queryDiaObjectLastPartitions(self, ids: Iterable[int]) -> Mapping[int, int]:
+        """Return existing mapping of diaObjectId to its last partition."""
+        table_name = self._schema.tableName(ExtraTables.DiaObjectLastToPartition)
+        queries = []
+        object_count = 0
+        for id_chunk in chunk_iterable(ids, 10_000):
+            id_chunk_list = list(id_chunk)
+            query = (
+                f'SELECT "diaObjectId", apdb_part FROM "{self._keyspace}"."{table_name}" '
+                f'WHERE "diaObjectId" in ({",".join(str(oid) for oid in id_chunk_list)})'
+            )
+            queries.append((query, ()))
+            object_count += len(id_chunk_list)
+
+        with self._timer("query_object_last_partitions") as timer:
+            data = cast(
+                ApdbTableData,
+                select_concurrent(self._session, queries, "read_raw_multi", self.config.read_concurrency),
+            )
+            timer.add_values(object_count=object_count, row_count=len(data.rows()))
+
+        if data.column_names() != ["diaObjectId", "apdb_part"]:
+            raise RuntimeError(f"Unexpected column names in query result: {data.column_names()}")
+
+        return {row[0]: row[1] for row in data.rows()}
+
+    def _deleteMovingObjects(self, objs: pandas.DataFrame) -> None:
+        """Objects in DiaObjectsLast can move from one spatial partition to
+        another. For those objects inserting new version does not replace old
+        one, so we need to explicitly remove old versions before inserting new
+        ones.
+        """
+        # Extract all object IDs.
+        new_partitions = {oid: part for oid, part in zip(objs["diaObjectId"], objs["apdb_part"])}
+        old_partitions = self._queryDiaObjectLastPartitions(objs["diaObjectId"])
+
+        moved_oids: dict[int, tuple[int, int]] = {}
+        for oid, old_part in old_partitions.items():
+            new_part = new_partitions.get(oid, old_part)
+            if new_part != old_part:
+                moved_oids[oid] = (old_part, new_part)
+        _LOG.debug("DiaObject IDs that moved to new partition: %s", moved_oids)
+
+        if moved_oids:
+            # Delete old records from DiaObjectLast.
+            table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
+            query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE apdb_part = ? AND "diaObjectId" = ?'
+            statement = self._preparer.prepare(query)
+            batch = cassandra.query.BatchStatement()
+            for oid, (old_part, _) in moved_oids.items():
+                batch.add(statement, (old_part, oid))
+            with self._timer("delete_object_last") as timer:
+                self._session.execute(batch, timeout=self.config.write_timeout, execution_profile="write")
+                timer.add_values(row_count=len(moved_oids))
+
+        # Add all new records to the map.
+        table_name = self._schema.tableName(ExtraTables.DiaObjectLastToPartition)
+        query = f'INSERT INTO "{self._keyspace}"."{table_name}" ("diaObjectId", apdb_part) VALUES (?,?)'
+        statement = self._preparer.prepare(query)
+        batch = cassandra.query.BatchStatement()
+        for oid, new_part in new_partitions.items():
+            batch.add(statement, (oid, new_part))
+
+        with self._timer("update_object_last_partition") as timer:
+            self._session.execute(batch, timeout=self.config.write_timeout, execution_profile="write")
+            timer.add_values(row_count=len(batch))
+
     def _storeDiaObjects(
         self, objs: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
     ) -> None:
@@ -1168,6 +1273,9 @@ class ApdbCassandra(Apdb):
         if len(objs) == 0:
             _LOG.debug("No objects to write to database.")
             return
+
+        if self._has_dia_object_last_to_partition:
+            self._deleteMovingObjects(objs)
 
         visit_time_dt = visit_time.datetime
         extra_columns = dict(lastNonForcedSource=visit_time_dt)
