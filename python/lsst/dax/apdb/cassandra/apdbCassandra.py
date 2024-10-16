@@ -334,6 +334,9 @@ class ApdbCassandra(Apdb):
         if config.timer:
             timer_args.append(_LOG)
         with Timer("cluster_connect", *timer_args):
+            # TODO: control_connection_timeout is hardcoded for now as I do not
+            # want to extend config class with too many options. I'll move it
+            # to config when we switch from pex_config to other format.
             cluster = Cluster(
                 execution_profiles=cls._makeProfiles(config),
                 contact_points=config.contact_points,
@@ -341,6 +344,7 @@ class ApdbCassandra(Apdb):
                 address_translator=addressTranslator,
                 protocol_version=config.protocol_version,
                 auth_provider=cls._make_auth_provider(config),
+                control_connection_timeout=100,
                 idle_heartbeat_interval=config.idle_heartbeat_interval,
                 idle_heartbeat_timeout=config.idle_heartbeat_timeout,
             )
