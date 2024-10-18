@@ -37,6 +37,7 @@ from collections.abc import Mapping, MutableMapping
 import felis.datamodel
 import numpy
 import yaml
+from felis.datamodel import Schema as FelisSchema
 
 from .schema_model import ExtraDataTypes, Schema, Table
 from .versionTuple import VersionTuple
@@ -191,7 +192,7 @@ class ApdbSchema:
                 raise ValueError(f"Schema file {schema_file!r} does not define schema {schema_name!r}")
             elif len(schemas_list) > 1:
                 raise ValueError(f"Schema file {schema_file!r} defines multiple schemas {schema_name!r}")
-            felis_schema = felis.datamodel.Schema.model_validate(schemas_list[0])
+            felis_schema: FelisSchema = felis.datamodel.Schema.model_validate(schemas_list[0])
             schema = Schema.from_felis(felis_schema)
 
         # convert all dicts into classes
