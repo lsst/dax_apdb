@@ -1462,7 +1462,7 @@ class ApdbCassandra(Apdb):
         with self._timer("insert_time", tags={"table": table_name.name}) as timer:
             for batch in queries:
                 self._session.execute(batch, timeout=self.config.write_timeout, execution_profile="write")
-            timer.add_values(row_count=sum(len(batch) for batch in records))
+            timer.add_values(row_count=len(records))
 
     def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spatial partition for each record and add it to a
