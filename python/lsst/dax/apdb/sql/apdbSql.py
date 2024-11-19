@@ -298,7 +298,7 @@ class ApdbSql(Apdb):
             if config.db_url.startswith("sqlite"):
                 conn_args.update(timeout=config.connection_timeout)
             elif config.db_url.startswith(("postgresql", "mysql")):
-                conn_args.update(connect_timeout=config.connection_timeout)
+                conn_args.update(connect_timeout=int(config.connection_timeout))
         kw.update(connect_args=conn_args)
         engine = sqlalchemy.create_engine(cls._connection_url(config.db_url, create=create), **kw)
 
