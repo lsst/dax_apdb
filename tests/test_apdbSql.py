@@ -67,6 +67,13 @@ class ApdbSQLTest(ApdbTest):
         assert isinstance(config, ApdbSqlConfig), "Only expect ApdbSqlConfig here"
         return Pixelization("htm", config.htm_level, config.htm_max_ranges)
 
+    def test_connection_timeout(self) -> None:
+        """Test that setting connection timeout does not break things."""
+        config = self.make_instance()
+        assert isinstance(config, ApdbSqlConfig), "Only expect ApdbSqlConfig here"
+        config.connection_timeout = 60.0
+        Apdb.from_config(config)
+
 
 class ApdbSQLiteTestCase(ApdbSQLTest, unittest.TestCase):
     """A test case for ApdbSql class using SQLite backend."""
