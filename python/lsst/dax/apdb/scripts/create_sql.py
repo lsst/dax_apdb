@@ -41,10 +41,13 @@ def create_sql(output_config: str, ra_dec_columns: str | None, **kwargs: Any) ->
     **kwargs
         Keyword arguments passed to `ApdbSql.init_database` method.
     """
-    ra_dec_list: list[str] | None = None
+    ra_dec_tuple: tuple[str, str] | None = None
     if ra_dec_columns:
         ra_dec_list = ra_dec_columns.split(",")
-    config = ApdbSql.init_database(ra_dec_columns=ra_dec_list, **kwargs)
+        if len(ra_dec_list) != 2:
+            raise ValueError(f"--ra-dec-columns must specify exactly two columns: {ra_dec_columns}")
+        ra_dec_tuple = (ra_dec_list[0], ra_dec_list[1])
+    config = ApdbSql.init_database(ra_dec_columns=ra_dec_tuple, **kwargs)
     config.save(output_config)
     if output_config.endswith(".py"):
         warnings.warn(

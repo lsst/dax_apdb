@@ -50,11 +50,14 @@ def create_cassandra(
         Keyword arguments passed to `ApdbCassandra.init_database` method.
     """
     options = _read_table_options(table_options)
-    ra_dec_list: list[str] | None = None
+    ra_dec_tuple: tuple[str, str] | None = None
     if ra_dec_columns:
         ra_dec_list = ra_dec_columns.split(",")
+        if len(ra_dec_list) != 2:
+            raise ValueError(f"--ra-dec-columns must specify exactly two columns: {ra_dec_columns}")
+        ra_dec_tuple = (ra_dec_list[0], ra_dec_list[1])
     kwargs["hosts"] = kwargs.pop("host")
-    config = ApdbCassandra.init_database(ra_dec_columns=ra_dec_list, table_options=options, **kwargs)
+    config = ApdbCassandra.init_database(ra_dec_columns=ra_dec_tuple, table_options=options, **kwargs)
     config.save(output_config)
     if output_config.endswith(".py"):
         warnings.warn(

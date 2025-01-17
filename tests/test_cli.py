@@ -38,7 +38,7 @@ class CreateSqlTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
         self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
-        self.config_path = f"{self.tempdir}/apdb-sql.py"
+        self.config_path = f"{self.tempdir}/apdb-sql.yaml"
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tempdir, ignore_errors=True)

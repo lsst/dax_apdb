@@ -23,6 +23,7 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraConfig", "ApdbCassandraConnectionConfig", "ApdbCassandraPartitioningConfig"]
 
+from collections.abc import Iterable
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, field_validator
@@ -48,8 +49,8 @@ class ApdbCassandraConnectionConfig(BaseModel):
         description="Port number to connect to.",
     )
 
-    private_ips: list[str] = Field(
-        default=[],
+    private_ips: tuple[str, ...] = Field(
+        default=(),
         description="List of internal IP addresses for contact_points.",
     )
 
@@ -174,8 +175,8 @@ class ApdbCassandraConfig(ApdbConfig):
 
     _implementation_type: ClassVar[str] = "cassandra"
 
-    contact_points: list[str] = Field(
-        default=["127.0.0.1"],
+    contact_points: tuple[str, ...] = Field(
+        default=("127.0.0.1",),
         description="The list of contact points to try connecting for cluster discovery.",
     )
 
@@ -204,8 +205,8 @@ class ApdbCassandraConfig(ApdbConfig):
         description="Prefix to add to table names.",
     )
 
-    ra_dec_columns: list[str] = Field(
-        default=["ra", "dec"],
+    ra_dec_columns: tuple[str, str] = Field(
+        default=("ra", "dec"),
         description="Names of ra/dec columns in DiaObject table",
     )
 
@@ -216,3 +217,13 @@ class ApdbCassandraConfig(ApdbConfig):
             "(DiaObjectsChunks has the same data)."
         ),
     )
+
+    @field_validator("ra_dec_columns")
+    @classmethod
+    def check_ra_dec(cls, v: Iterable[str]) -> tuple[str, str]:
+        # This validation method is needed in case we initialize model from
+        # JSON in strict mode, in that mode JSON list is rejected by default.
+        vtup = tuple(v)
+        if len(vtup) != 2:
+            raise ValueError("ra_dec_columns must have exactly two column names")
+        return vtup

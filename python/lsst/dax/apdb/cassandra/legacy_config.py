@@ -137,7 +137,7 @@ class ApdbCassandraConfig(legacy_config.ApdbConfig):
         # a default in init_database, so we use the same value here.
         connection_config = config.ApdbCassandraConnectionConfig(
             port=self.port,
-            private_ips=list(self.private_ips),
+            private_ips=tuple(self.private_ips),
             username=self.username,
             read_consistency=self.read_consistency,
             write_consistency=self.write_consistency,
@@ -170,13 +170,13 @@ class ApdbCassandraConfig(legacy_config.ApdbConfig):
             read_forced_sources_months=self.read_forced_sources_months,
             enable_replica=self.use_insert_id,
             replica_chunk_seconds=self.replica_chunk_seconds,
-            contact_points=list(self.contact_points),
+            contact_points=tuple(self.contact_points),
             keyspace=self.keyspace,
             connection_config=connection_config,
             partitioning=partitioning_config,
             dia_object_columns=list(self.dia_object_columns),
             prefix=self.prefix,
-            ra_dec_columns=list(self.ra_dec_columns),
+            ra_dec_columns=(self.ra_dec_columns[0], self.ra_dec_columns[1]),
             replica_skips_diaobjects=self.use_insert_id_skips_diaobjects,
         )
         return new_config

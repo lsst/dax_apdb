@@ -119,7 +119,7 @@ class ApdbConfigFreezer(Generic[_Config]):
             obj[attr] = value
 
         try:
-            new_config = type(config).model_validate(model_data, strict=True)
+            new_config = type(config).model_validate(model_data)
             return new_config
         except pydantic.ValidationError as exc:
             raise ValueError("Validation error for frozen config") from exc

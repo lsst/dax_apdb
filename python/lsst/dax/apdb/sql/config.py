@@ -23,6 +23,7 @@ from __future__ import annotations
 
 __all__ = ["ApdbSqlConfig", "ApdbSqlConnectionConfig", "ApdbSqlPixelizationConfig"]
 
+from collections.abc import Iterable
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, field_validator
@@ -123,8 +124,8 @@ class ApdbSqlConfig(ApdbConfig):
         ),
     )
 
-    ra_dec_columns: list[str] = Field(
-        default=["ra", "dec"],
+    ra_dec_columns: tuple[str, str] = Field(
+        default=("ra", "dec"),
         description="Names of ra/dec columns in DiaObject table.",
     )
 
@@ -140,10 +141,13 @@ class ApdbSqlConfig(ApdbConfig):
 
     @field_validator("ra_dec_columns")
     @classmethod
-    def check_ra_dec(cls, v: list[str]) -> list[str]:
-        if len(v) != 2:
+    def check_ra_dec(cls, v: Iterable[str]) -> tuple[str, str]:
+        # This validation method is needed in case we initialize model from
+        # JSON in strict mode, in that mode JSON list is rejected by default.
+        vtup = tuple(v)
+        if len(vtup) != 2:
             raise ValueError("ra_dec_columns must have exactly two column names")
-        return v
+        return vtup
 
     @field_validator("dia_object_index")
     @classmethod

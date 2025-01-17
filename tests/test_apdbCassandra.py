@@ -127,7 +127,7 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw: dict[str, Any] = {
-            "hosts": [self.cluster_host],
+            "hosts": (self.cluster_host,),
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
             "time_partition_tables": self.time_partition_tables,
@@ -165,7 +165,7 @@ class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
         kw = {
-            "hosts": [self.cluster_host],
+            "hosts": (self.cluster_host,),
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
             "time_partition_tables": False,

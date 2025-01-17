@@ -378,7 +378,7 @@ class ApdbSql(Apdb):
         dia_object_index: str | None = None,
         htm_level: int | None = None,
         htm_index_column: str | None = None,
-        ra_dec_columns: list[str] | None = None,
+        ra_dec_columns: tuple[str, str] | None = None,
         prefix: str | None = None,
         namespace: str | None = None,
         drop: bool = False,
@@ -409,7 +409,7 @@ class ApdbSql(Apdb):
             HTM indexing level.
         htm_index_column : `str`, optional
             Name of a HTM index column for DiaObject and DiaSource tables.
-        ra_dec_columns : `list` [`str`], optional
+        ra_dec_columns : `tuple` [`str`, `str`], optional
             Names of ra/dec columns in DiaObject table.
         prefix : `str`, optional
             Optional prefix for all table names.

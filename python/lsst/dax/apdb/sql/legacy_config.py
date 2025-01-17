@@ -121,7 +121,7 @@ class ApdbSqlConfig(legacy_config.ApdbConfig):
             connection_config=connection_config,
             pixelization=pixelization_config,
             dia_object_index=self.dia_object_index,
-            ra_dec_columns=list(self.ra_dec_columns),
+            ra_dec_columns=(self.ra_dec_columns[0], self.ra_dec_columns[1]),
             dia_object_columns=list(self.dia_object_columns),
             prefix=self.prefix,
         )

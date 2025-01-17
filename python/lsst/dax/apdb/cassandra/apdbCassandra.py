@@ -139,7 +139,7 @@ if CASSANDRA_IMPORTED:
         Only used for docker-based setup, not viable long-term solution.
         """
 
-        def __init__(self, public_ips: list[str], private_ips: list[str]):
+        def __init__(self, public_ips: tuple[str, ...], private_ips: tuple[str, ...]):
             self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
 
         def translate(self, private_ip: str) -> str:
@@ -383,7 +383,7 @@ class ApdbCassandra(Apdb):
     @classmethod
     def init_database(
         cls,
-        hosts: list[str],
+        hosts: tuple[str, ...],
         keyspace: str,
         *,
         schema_file: str | None = None,
@@ -404,7 +404,7 @@ class ApdbCassandra(Apdb):
         write_consistency: str | None = None,
         read_timeout: int | None = None,
         write_timeout: int | None = None,
-        ra_dec_columns: list[str] | None = None,
+        ra_dec_columns: tuple[str, str] | None = None,
         replication_factor: int | None = None,
         drop: bool = False,
         table_options: CreateTableOptions | None = None,
@@ -413,7 +413,7 @@ class ApdbCassandra(Apdb):
 
         Parameters
         ----------
-        hosts : `list` [`str`]
+        hosts : `tuple` [`str`, ...]
             List of host names or IP addresses for Cassandra cluster.
         keyspace : `str`
             Name of the keyspace for APDB tables.
@@ -458,7 +458,7 @@ class ApdbCassandra(Apdb):
             Read timeout in seconds.
         write_timeout : `int`, optional
             Write timeout in seconds.
-        ra_dec_columns : `list` [`str`], optional
+        ra_dec_columns : `tuple` [`str`, `str`], optional
             Names of ra/dec columns in DiaObject table.
         replication_factor : `int`, optional
             Replication factor used when creating new keyspace, if keyspace
@@ -546,7 +546,7 @@ class ApdbCassandra(Apdb):
         """
         # For DbAuth we need to use database name "*" to try to match any
         # database.
-        config = ApdbCassandraConfig(contact_points=[host], keyspace="*")
+        config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
         cluster, session = cls._make_session(config)
 
         with cluster, session:
@@ -605,7 +605,7 @@ class ApdbCassandra(Apdb):
         """
         # For DbAuth we need to use database name "*" to try to match any
         # database.
-        config = ApdbCassandraConfig(contact_points=[host], keyspace="*")
+        config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
         cluster, session = cls._make_session(config)
         with cluster, session:
             query = f"DROP KEYSPACE {quote_id(keyspace)}"
