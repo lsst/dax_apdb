@@ -183,13 +183,8 @@ class ApdbSql(Apdb):
 
         self.pixelator = HtmPixelization(self.config.pixelization.htm_level)
 
-        _LOG.debug("APDB Configuration:")
-        _LOG.debug("    dia_object_index: %s", self.config.dia_object_index)
-        _LOG.debug("    read_sources_months: %s", self.config.read_sources_months)
-        _LOG.debug("    read_forced_sources_months: %s", self.config.read_forced_sources_months)
-        _LOG.debug("    dia_object_columns: %s", self.config.dia_object_columns)
-        _LOG.debug("    schema_file: %s", self.config.schema_file)
-        _LOG.debug("    schema prefix: %s", self.config.prefix)
+        if _LOG.isEnabledFor(logging.DEBUG):
+            _LOG.debug("ApdbSql Configuration: %s", self.config.model_dump())
 
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""

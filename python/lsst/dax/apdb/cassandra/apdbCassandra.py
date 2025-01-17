@@ -240,9 +240,8 @@ class ApdbCassandra(Apdb):
         # Cache for prepared statements
         self._preparer = PreparedStatementCache(self._session)
 
-        _LOG.debug("ApdbCassandra Configuration:")
-        for key, value in self.config.model_dump().items():
-            _LOG.debug("    %s: %s", key, value)
+        if _LOG.isEnabledFor(logging.DEBUG):
+            _LOG.debug("ApdbCassandra Configuration: %s", self.config.model_dump())
 
     def __del__(self) -> None:
         if hasattr(self, "_cluster"):
