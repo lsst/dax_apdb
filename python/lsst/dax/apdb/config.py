@@ -119,7 +119,7 @@ class ApdbConfig(BaseModel):
             )
             return new_config
 
-        config_object = yaml.safe_load(config_bytes)
+        config_object = yaml.full_load(config_bytes)
         if not isinstance(config_object, Mapping):
             raise TypeError("YAML configuration file does not represent valid object")
         config_dict: dict[str, Any] = dict(config_object)
