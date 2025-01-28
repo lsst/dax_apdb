@@ -44,6 +44,7 @@ def main(args: Sequence[str] | None = None) -> None:
     _list_index_subcommand(subparsers)
     _metadata_subcommand(subparsers)
     _convert_legacy_config_subcommand(subparsers)
+    _metrics_subcommand(subparsers)
 
     parsed_args = parser.parse_args(args)
     log_cli.process_args(parsed_args)
@@ -173,3 +174,65 @@ def _convert_legacy_config_subcommand(subparsers: argparse._SubParsersAction) ->
     parser.add_argument("legacy_config", help="Path or URI of APDB legacy configuration file.")
     parser.add_argument("new_config", help="Path or URI to write new YAML configuration file.")
     parser.set_defaults(method=scripts.convert_legacy_config)
+
+
+def _metrics_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("metrics", help="Operations with metrics produced by APDB.")
+    subparsers = parser.add_subparsers(title="available subcommands", required=True)
+    _metrics_log_to_influx(subparsers)
+
+
+def _metrics_log_to_influx(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser(
+        "log-to-infux", help="Extract metrics from log files and dump as InfluxDB data."
+    )
+    parser.add_argument(
+        "file", help="Name(s) of the log file to parse, '-' to read from standard input.", nargs="+"
+    )
+    parser.add_argument(
+        "-c",
+        "--context-keys",
+        help=("Names of keys to extract from message context, comma-separated. " "Default: %(default)s "),
+        default="instrument,visit,detector,day_obs",
+        metavar="KEY[,KEY,...]",
+    )
+    parser.add_argument(
+        "-t",
+        "--extra-tags",
+        help="Extra tags and their values, comma-separated.",
+        default="",
+        metavar="TAG=VALUE[,TAG=VALUE...]",
+    )
+    parser.add_argument(
+        "-r",
+        "--replication",
+        help="Log is produced by replication service.",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-p",
+        "--prefix",
+        help="Additional prefix for metrics names.",
+        default="",
+    )
+    parser.add_argument(
+        "-H",
+        "--no-header",
+        help="Do not add DML header.",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-d",
+        "--header-database",
+        help="Database name to use for header, default: %(default)s.",
+        default="telegraf",
+    )
+    parser.add_argument(
+        "--fix-row-count",
+        help="Fix incorrect inserted row counts by parsing additional data from logs.",
+        action="store_true",
+        default=False,
+    )
+    parser.set_defaults(method=scripts.metrics_log_to_influx)

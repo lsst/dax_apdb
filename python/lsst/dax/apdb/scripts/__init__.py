@@ -26,3 +26,4 @@ from .delete_cassandra import delete_cassandra
 from .list_cassandra import list_cassandra
 from .list_index import list_index
 from .metadata import metadata_delete, metadata_get, metadata_set, metadata_show
+from .metrics import metrics_log_to_influx
