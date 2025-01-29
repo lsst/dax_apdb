@@ -32,7 +32,6 @@ import pandas
 from lsst.resources import ResourcePathExpression
 from lsst.sphgeom import Region
 
-from .apdbIndex import ApdbIndex
 from .apdbSchema import ApdbTables
 from .config import ApdbConfig
 from .factory import make_apdb
@@ -82,22 +81,6 @@ class Apdb(ABC):
             Instance of `Apdb` class, the type of the returned instance is
             determined by configuration.
         """
-        if isinstance(uri, str) and uri.startswith("label:"):
-            tag, _, label = uri.partition(":")
-            index = ApdbIndex()
-            # Try to find YAML format first, and pex_config if YAML is not
-            # found. During transitional period we support conversion of
-            # pex_config format to a new pydantic format.
-            try:
-                uri = index.get_apdb_uri(label, "yaml")
-            except ValueError as yaml_exc:
-                try:
-                    uri = index.get_apdb_uri(label, "pex_config")
-                except ValueError:
-                    # If none is found then re-raise exception from yaml
-                    # attempt, but add a note that pex_config is missing too.
-                    yaml_exc.add_note(f"Legacy label {label}/pex_config is also missing.")
-                    raise yaml_exc from None
         config = ApdbConfig.from_uri(uri)
         return make_apdb(config)
 

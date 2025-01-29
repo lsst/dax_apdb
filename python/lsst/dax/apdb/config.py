@@ -32,6 +32,7 @@ import yaml
 from lsst.resources import ResourcePath, ResourcePathExpression
 from pydantic import BaseModel, Field
 
+from .apdbIndex import ApdbIndex
 from .factory import config_type_for_name
 
 
@@ -97,6 +98,23 @@ class ApdbConfig(BaseModel):
         config : `ApdbConfig`
             Apdb configuration object.
         """
+        if isinstance(uri, str) and uri.startswith("label:"):
+            tag, _, label = uri.partition(":")
+            index = ApdbIndex()
+            # Try to find YAML format first, and pex_config if YAML is not
+            # found. During transitional period we support conversion of
+            # pex_config format to a new pydantic format.
+            try:
+                uri = index.get_apdb_uri(label, "yaml")
+            except ValueError as yaml_exc:
+                try:
+                    uri = index.get_apdb_uri(label, "pex_config")
+                except ValueError:
+                    # If none is found then re-raise exception from yaml
+                    # attempt, but add a note that pex_config is missing too.
+                    yaml_exc.add_note(f"Legacy label {label}/pex_config is also missing.")
+                    raise yaml_exc from None
+
         path = ResourcePath(uri)
         config_bytes = path.read()
 
