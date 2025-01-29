@@ -27,14 +27,12 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import astropy.time
-from lsst.pex.config import Config
-from lsst.resources import ResourcePath, ResourcePathExpression
+from lsst.resources import ResourcePathExpression
 
 from .apdb import ApdbConfig
-from .apdbIndex import ApdbIndex
 from .factory import make_apdb_replica
 
 if TYPE_CHECKING:
@@ -146,16 +144,7 @@ class ApdbReplica(ABC):
             Instance of `ApdbReplica` class, the type of the returned instance
             is determined by configuration.
         """
-        if isinstance(uri, str) and uri.startswith("label:"):
-            tag, _, label = uri.partition(":")
-            index = ApdbIndex()
-            # Current format for config files is "pex_config"
-            format = "pex_config"
-            uri = index.get_apdb_uri(label, format)
-        path = ResourcePath(uri)
-        config_str = path.read().decode()
-        # Assume that this is ApdbConfig, make_apdb will raise if not.
-        config = cast(ApdbConfig, Config._fromPython(config_str))
+        config = ApdbConfig.from_uri(uri)
         return make_apdb_replica(config)
 
     @classmethod

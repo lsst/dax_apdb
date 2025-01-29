@@ -19,8 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-"""Unit test for Apdb class.
-"""
+"""Unit test for Apdb class."""
 
 import gc
 import os
@@ -32,7 +31,7 @@ from unittest.mock import patch
 
 import lsst.utils.tests
 import sqlalchemy
-from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbReplica, ApdbTables
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.sql import ApdbSql, ApdbSqlConfig
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
@@ -263,6 +262,12 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
         os.unlink(f"{self.tempdir}/apdb.sqlite3")
         with self.assertRaisesRegex(sqlalchemy.exc.OperationalError, "unable to open database file"):
             Apdb.from_uri(self.config_path)
+
+    def test_make_apdb_replica(self) -> None:
+        """Check that we can make ApdbReplica instance from config URI."""
+        ApdbReplica.from_uri(self.config_path)
+        with self.assertRaises(FileNotFoundError):
+            Apdb.from_uri(self.bad_config_path)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
