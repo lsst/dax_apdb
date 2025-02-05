@@ -813,6 +813,7 @@ class ApdbCassandra(Apdb):
         objects: pandas.DataFrame,
         sources: pandas.DataFrame | None = None,
         forced_sources: pandas.DataFrame | None = None,
+        maximum_table_length: int = 0,
     ) -> None:
         # docstring is inherited from a base class
         objects = self._fix_input_timestamps(objects)
@@ -828,17 +829,18 @@ class ApdbCassandra(Apdb):
 
         # fill region partition column for DiaObjects
         objects = self._add_apdb_part(objects)
-        self._storeDiaObjects(objects, visit_time, replica_chunk)
+        self._storeDiaObjects(objects, visit_time, replica_chunk, maximum_table_length)
 
         if sources is not None:
             # copy apdb_part column from DiaObjects to DiaSources
             sources = self._add_apdb_part(sources)
-            self._storeDiaSources(ApdbTables.DiaSource, sources, replica_chunk)
+            self._storeDiaSources(ApdbTables.DiaSource, sources, replica_chunk, maximum_table_length)
             self._storeDiaSourcesPartitions(sources, visit_time, replica_chunk)
 
         if forced_sources is not None:
             forced_sources = self._add_apdb_part(forced_sources)
-            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk)
+            self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk,
+                                  maximum_table_length)
 
     def storeSSObjects(self, objects: pandas.DataFrame) -> None:
         # docstring is inherited from a base class
@@ -1229,6 +1231,7 @@ class ApdbCassandra(Apdb):
         table_name: ApdbTables,
         sources: pandas.DataFrame,
         replica_chunk: ReplicaChunk | None,
+        maximum_table_length: int,
     ) -> None:
         """Store catalog of DIASources or DIAForcedSources from current visit.
 
@@ -1249,19 +1252,21 @@ class ApdbCassandra(Apdb):
         tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(self._time_partition)
         extra_columns: dict[str, Any] = {}
         if not self.config.partitioning.time_partition_tables:
-            self._storeObjectsPandas(tp_sources, table_name)
+            self._storeObjectsPandas(tp_sources, table_name, maximum_table_length)
         else:
             # Group by time partition
             partitions = set(tp_sources["apdb_time_part"])
             if len(partitions) == 1:
                 # Single partition - just save the whole thing.
                 time_part = partitions.pop()
-                self._storeObjectsPandas(sources, table_name, time_part=time_part)
+                self._storeObjectsPandas(sources, table_name, time_part=time_part,
+                                         maximum_table_length=maximum_table_length)
             else:
                 # group by time partition.
                 for time_part, sub_frame in tp_sources.groupby(by="apdb_time_part"):
                     sub_frame.drop(columns="apdb_time_part", inplace=True)
-                    self._storeObjectsPandas(sub_frame, table_name, time_part=time_part)
+                    self._storeObjectsPandas(sub_frame, table_name, time_part=time_part,
+                                             maximum_table_length=maximum_table_length)
 
         if replica_chunk is not None:
             extra_columns = dict(apdb_replica_chunk=replica_chunk.id)
@@ -1269,7 +1274,8 @@ class ApdbCassandra(Apdb):
                 extra_table = ExtraTables.DiaSourceChunks
             else:
                 extra_table = ExtraTables.DiaForcedSourceChunks
-            self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns)
+            self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns,
+                                     maximum_table_length=maximum_table_length)
 
     def _storeDiaSourcesPartitions(
         self, sources: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
@@ -1299,6 +1305,7 @@ class ApdbCassandra(Apdb):
         table_name: ApdbTables | ExtraTables,
         extra_columns: Mapping | None = None,
         time_part: int | None = None,
+        maximum_table_length: int = 0,
     ) -> None:
         """Store generic objects.
 
@@ -1328,6 +1335,9 @@ class ApdbCassandra(Apdb):
         if extra_columns is None:
             extra_columns = {}
         extra_fields = list(extra_columns.keys())
+
+        if maximum_table_length == 0:
+            maximum_table_length = 50_000_000
 
         # Fields that will come from dataframe.
         df_fields = [column for column in records.columns if column not in extra_fields]
@@ -1359,7 +1369,7 @@ class ApdbCassandra(Apdb):
             # Cassandra has 64k limit on batch size, normally that should be
             # enough but some tests generate too many forced sources.
             queries = []
-            for rec_chunk in chunk_iterable(records.itertuples(index=False), 50_000_000):
+            for rec_chunk in chunk_iterable(records.itertuples(index=False), maximum_table_length):
                 batch = cassandra.query.BatchStatement()
                 for rec in rec_chunk:
                     values = []
