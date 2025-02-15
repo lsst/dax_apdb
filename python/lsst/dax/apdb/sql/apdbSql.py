@@ -640,6 +640,7 @@ class ApdbSql(Apdb):
         objects: pandas.DataFrame,
         sources: pandas.DataFrame | None = None,
         forced_sources: pandas.DataFrame | None = None,
+        maximum_table_length: int = 0,
     ) -> None:
         # docstring is inherited from a base class
         objects = self._fix_input_timestamps(objects)
