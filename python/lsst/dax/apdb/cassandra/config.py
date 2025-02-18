@@ -218,6 +218,23 @@ class ApdbCassandraConfig(ApdbConfig):
         ),
     )
 
+    batch_statement_limit: int = Field(
+        default=65_535,
+        description=(
+            "Limit on a number of rows in a BatchStatement. "
+            "Default is the same as Cassandra limit of 65535."
+        ),
+    )
+
+    batch_size_limit: int = Field(
+        default=1_000_000,
+        description=(
+            "Limit on a size of BatchStatement in bytes. Batch size is estimated approximately. "
+            "Set to 0 or negative to disable this limit. "
+            "Server-side batch size warning threshold needs to be set to at least this value."
+        ),
+    )
+
     @field_validator("ra_dec_columns")
     @classmethod
     def check_ra_dec(cls, v: Iterable[str]) -> tuple[str, str]:

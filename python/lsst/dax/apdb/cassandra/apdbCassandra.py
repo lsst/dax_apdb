@@ -1172,15 +1172,21 @@ class ApdbCassandra(Apdb):
         table_name = self._schema.tableName(ExtraTables.DiaObjectLastToPartition)
         query = f'INSERT INTO "{self._keyspace}"."{table_name}" ("diaObjectId", apdb_part) VALUES (?,?)'
         statement = self._preparer.prepare(query)
-        batch = cassandra.query.BatchStatement()
-        for oid, new_part in new_partitions.items():
-            batch.add(statement, (oid, new_part))
+
+        batch_size = self._batch_size(ExtraTables.DiaObjectLastToPartition)
+        batches = []
+        for chunk in chunk_iterable(new_partitions.items(), batch_size):
+            batch = cassandra.query.BatchStatement()
+            for oid, new_part in chunk:
+                batch.add(statement, (oid, new_part))
+            batches.append(batch)
 
         with self._timer("update_object_last_partition") as timer:
-            self._session.execute(
-                batch, timeout=self.config.connection_config.write_timeout, execution_profile="write"
-            )
-            timer.add_values(row_count=len(batch))
+            for batch in batches:
+                self._session.execute(
+                    batch, timeout=self.config.connection_config.write_timeout, execution_profile="write"
+                )
+                timer.add_values(row_count=len(batch))
 
     def _storeDiaObjects(
         self, objs: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
@@ -1348,6 +1354,8 @@ class ApdbCassandra(Apdb):
         qfields = [quote_id(field) for field in fields]
         qfields_str = ",".join(qfields)
 
+        batch_size = self._batch_size(table_name)
+
         with self._timer("insert_build_time", tags={"table": table_name.name}):
             table = self._schema.tableName(table_name)
             if time_part is not None:
@@ -1359,7 +1367,7 @@ class ApdbCassandra(Apdb):
             # Cassandra has 64k limit on batch size, normally that should be
             # enough but some tests generate too many forced sources.
             queries = []
-            for rec_chunk in chunk_iterable(records.itertuples(index=False), 50_000_000):
+            for rec_chunk in chunk_iterable(records.itertuples(index=False), batch_size):
                 batch = cassandra.query.BatchStatement()
                 for rec in rec_chunk:
                     values = []
@@ -1641,3 +1649,22 @@ class ApdbCassandra(Apdb):
             # tz_convert(None) will convert to UTC and drop timezone.
             df[column] = df[column].dt.tz_convert(None)
         return df
+
+    def _batch_size(self, table: ApdbTables | ExtraTables) -> int:
+        """Calculate batch size based on config parameters."""
+        # Cassandra limit on number of statements in a batch is 64k.
+        batch_size = 65_535
+        if 0 < self.config.batch_statement_limit < batch_size:
+            batch_size = self.config.batch_statement_limit
+        if self.config.batch_size_limit > 0:
+            # The purpose of this limit is to try not to exceed batch size
+            # threshold which is set on server side. Cassandra wire protocol
+            # for prepared queries (and batches) only sends column values with
+            # with an additional 4 bytes per value specifying size. Value is
+            # not included for NULL or NOT_SET values, but the size is always
+            # there. There is additional small per-query overhead, which we
+            # ignore.
+            row_size = self._schema.table_row_size(table)
+            row_size += 4 * len(self._schema.getColumnMap(table))
+            batch_size = min(batch_size, (self.config.batch_size_limit // row_size) + 1)
+        return batch_size

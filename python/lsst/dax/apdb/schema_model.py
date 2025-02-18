@@ -66,6 +66,24 @@ def _make_iterable(obj: str | Iterable[str]) -> Iterable[str]:
         yield from obj
 
 
+_data_type_size: Mapping[DataTypes, int] = {
+    felis.datamodel.DataType.boolean: 1,
+    felis.datamodel.DataType.byte: 1,
+    felis.datamodel.DataType.short: 2,
+    felis.datamodel.DataType.int: 4,
+    felis.datamodel.DataType.long: 8,
+    felis.datamodel.DataType.float: 4,
+    felis.datamodel.DataType.double: 8,
+    felis.datamodel.DataType.char: 1,
+    felis.datamodel.DataType.string: 2,  # approximation, depends on character set
+    felis.datamodel.DataType.unicode: 2,  # approximation, depends on character set
+    felis.datamodel.DataType.text: 2,  # approximation, depends on character set
+    felis.datamodel.DataType.binary: 1,
+    felis.datamodel.DataType.timestamp: 8,  # May be different depending on backend
+    ExtraDataTypes.UUID: 16,
+}
+
+
 @dataclasses.dataclass
 class Column:
     """Column representation in schema."""
@@ -133,6 +151,21 @@ class Column:
     def clone(self) -> Column:
         """Make a clone of self."""
         return dataclasses.replace(self, table=None)
+
+    def size(self) -> int:
+        """Return size in bytes of this column.
+
+        Returns
+        -------
+        size : `int`
+            Size in bytes for this column, typically represents in-memory size
+            of the corresponding data type. May or may not be the same as
+            storage size or wire-level protocol size.
+        """
+        size = _data_type_size[self.datatype]
+        if self.length is not None:
+            size *= self.length
+        return size
 
 
 @dataclasses.dataclass
