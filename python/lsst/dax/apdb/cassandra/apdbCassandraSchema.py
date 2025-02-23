@@ -668,3 +668,25 @@ class ApdbCassandraSchema(ApdbSchema):
         else:
             table_schema = self._extra_tables[table]
         return table_schema
+
+    def table_row_size(self, table: ApdbTables | ExtraTables) -> int:
+        """Return an estimate of the row size of a given table.
+
+        Parameters
+        ----------
+        table : `ApdbTables` or `ExtraTables`
+
+        Returns
+        -------
+        size : `int`
+            An estimate of a table row size.
+
+        Notes
+        -----
+        Returned size is not exact. When table has variable-size columns (e.g.
+        strings) may be incorrect. Stored data size or wire-level protocol size
+        can be smaller if some columns are not set or set to NULL.
+        """
+        table_schema = self._table_schema(table)
+        size = sum(column.size() for column in table_schema.columns)
+        return size
