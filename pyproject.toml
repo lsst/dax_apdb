@@ -66,7 +66,7 @@ apdb-cli = "lsst.dax.apdb.cli.apdb_cli:main"
 
 [tool.black]
 line-length = 110
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.isort]
 profile = "black"
@@ -77,7 +77,7 @@ write_to = "python/lsst/dax/apdb/version.py"
 
 [tool.ruff]
 line-length = 110
-target-version = "py311"
+target-version = "py312"
 exclude = [
     "__init__.py",
     "config/apdb-cassandra.py",
