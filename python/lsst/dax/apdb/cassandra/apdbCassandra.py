@@ -741,7 +741,7 @@ class ApdbCassandra(Apdb):
         months = self.config.read_sources_months
         if months == 0:
             return None
-        mjd_end = visit_time.mjd
+        mjd_end = float(visit_time.mjd)
         mjd_start = mjd_end - months * 30
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaSource)
@@ -753,7 +753,7 @@ class ApdbCassandra(Apdb):
         months = self.config.read_forced_sources_months
         if months == 0:
             return None
-        mjd_end = visit_time.mjd
+        mjd_end = float(visit_time.mjd)
         mjd_start = mjd_end - months * 30
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)

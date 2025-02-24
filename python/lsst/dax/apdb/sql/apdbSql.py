@@ -101,7 +101,7 @@ def _make_midpointMjdTai_start(visit_time: astropy.time.Time, months: int) -> fl
     """
     # TODO: Use of MJD must be consistent with the code in ap_association
     # (see DM-31996)
-    return visit_time.mjd - months * 30
+    return float(visit_time.mjd - months * 30)
 
 
 def _onSqlite3Connect(
