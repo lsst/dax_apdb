@@ -603,7 +603,13 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
-    def containsVisitDetector(self, visit: int, detector: int) -> bool:
+    def containsVisitDetector(
+        self,
+        visit: int,
+        detector: int,
+        region: Region,
+        visit_time: astropy.time.Time,
+    ) -> bool:
         # docstring is inherited from a base class
         src_table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaSource)
         frcsrc_table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaForcedSource)

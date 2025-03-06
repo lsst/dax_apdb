@@ -758,40 +758,51 @@ class ApdbCassandra(Apdb):
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
-    def containsVisitDetector(self, visit: int, detector: int) -> bool:
+    def containsVisitDetector(
+        self,
+        visit: int,
+        detector: int,
+        region: sphgeom.Region,
+        visit_time: astropy.time.Time,
+    ) -> bool:
         # docstring is inherited from a base class
         # The order of checks corresponds to order in store(), on potential
         # store failure earlier tables have higher probability containing
         # stored records. With per-partition tables there will be many tables
         # in the list, but it is unlikely that we'll use that setup in
         # production.
-        existing_tables = self._schema.existing_tables(ApdbTables.DiaSource, ApdbTables.DiaForcedSource)
-        tables_to_check = existing_tables[ApdbTables.DiaSource][:]
-        if self.config.enable_replica:
-            tables_to_check.append(self._schema.tableName(ExtraTables.DiaSourceChunks))
-        tables_to_check.extend(existing_tables[ApdbTables.DiaForcedSource])
-        if self.config.enable_replica:
-            tables_to_check.append(self._schema.tableName(ExtraTables.DiaForcedSourceChunks))
+        sp_where = self._spatial_where(region, use_ranges=True)
+        visit_detector_where = ("visit = ? AND detector = ?", (visit, detector))
 
-        # I do not want to run concurrent queries as they are all full-scan
-        # queries, so we do one by one.
-        for table_name in tables_to_check:
-            # Try to find a single record with given visit/detector. This is a
-            # full scan query so ALLOW FILTERING is needed. It will probably
-            # guess PER PARTITION LIMIT itself, but let's help it.
-            query = (
-                f'SELECT * from "{self._keyspace}"."{table_name}" '
-                "WHERE visit = ? AND detector = ? "
-                "PER PARTITION LIMIT 1 LIMIT 1 ALLOW FILTERING"
+        # Sources are partitioned on their midPointMjdTai. To avoid precision
+        # issues add some fuzzines to visit time.
+        mjd_start = float(visit_time.mjd) - 1.0 / 24
+        mjd_end = float(visit_time.mjd) + 1.0 / 24
+
+        statements: list[tuple] = []
+        for table_type in ApdbTables.DiaSource, ApdbTables.DiaForcedSource:
+            tables, temporal_where = self._temporal_where(
+                table_type, mjd_start, mjd_end, query_per_time_part=True
             )
-            with self._timer("contains_visit_detector_time", tags={"table": table_name}) as timer:
-                result = self._session.execute(self._preparer.prepare(query), (visit, detector))
-                found = result.one() is not None
-                timer.add_values(found=int(found))
-                if found:
-                    # There is a result.
-                    return True
-        return False
+            for table in tables:
+                prefix = f'SELECT apdb_part FROM "{self._keyspace}"."{table}"'
+                # Needs ALLOW FILTERING as there is no PK constraint.
+                suffix = "PER PARTITION LIMIT 1 LIMIT 1 ALLOW FILTERING"
+                statements += list(
+                    self._combine_where(prefix, sp_where, temporal_where, visit_detector_where, suffix)
+                )
+
+        with self._timer("contains_visit_detector_time"):
+            result = cast(
+                list[tuple[int] | None],
+                select_concurrent(
+                    self._session,
+                    statements,
+                    "read_tuples",
+                    self.config.connection_config.read_concurrency,
+                ),
+            )
+        return bool(result)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -1508,6 +1519,7 @@ class ApdbCassandra(Apdb):
         prefix: str,
         where1: list[tuple[str, tuple]],
         where2: list[tuple[str, tuple]],
+        where3: tuple[str, tuple] | None = None,
         suffix: str | None = None,
     ) -> Iterator[tuple[cassandra.query.Statement, tuple]]:
         """Make cartesian product of two parts of WHERE clause into a series
@@ -1529,15 +1541,18 @@ class ApdbCassandra(Apdb):
             for expr2, params2 in where2:
                 full_query = prefix
                 wheres = []
+                params = params1 + params2
                 if expr1:
                     wheres.append(expr1)
                 if expr2:
                     wheres.append(expr2)
+                if where3:
+                    wheres.append(where3[0])
+                    params += where3[1]
                 if wheres:
                     full_query += " WHERE " + " AND ".join(wheres)
                 if suffix:
                     full_query += " " + suffix
-                params = params1 + params2
                 if params:
                     statement = self._preparer.prepare(full_query)
                 else:

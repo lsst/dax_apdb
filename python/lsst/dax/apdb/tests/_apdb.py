@@ -65,7 +65,7 @@ else:
 def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
     """Make a region to use in tests"""
     pointing_v = UnitVector3d(*xyz)
-    fov = 0.05  # radians
+    fov = 0.0013  # radians
     region = Circle(pointing_v, Angle(fov / 2))
     return region
 
@@ -257,7 +257,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
         # data_factory's ccdVisitId generation corresponds to (1, 1)
-        res = apdb.containsVisitDetector(visit=1, detector=1)
+        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
         self.assertFalse(res)
 
         # get sources by region
@@ -299,7 +299,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertIs(res, None)
 
         # Database is empty, no images exist.
-        res = apdb.containsVisitDetector(visit=1, detector=1)
+        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
         self.assertFalse(res)
 
     def test_storeObjects(self) -> None:
@@ -400,10 +400,10 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # test if a visit is present
         # data_factory's ccdVisitId generation corresponds to (1, 1)
-        res = apdb.containsVisitDetector(visit=1, detector=1)
+        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
         self.assertTrue(res)
         # non-existent image
-        res = apdb.containsVisitDetector(visit=2, detector=42)
+        res = apdb.containsVisitDetector(visit=2, detector=42, region=region, visit_time=visit_time)
         self.assertFalse(res)
 
     def test_storeForcedSources(self) -> None:
@@ -430,10 +430,10 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
         # data_factory's ccdVisitId generation corresponds to (1, 1)
-        res = apdb.containsVisitDetector(visit=1, detector=1)
+        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
         self.assertTrue(res)
         # non-existent image
-        res = apdb.containsVisitDetector(visit=2, detector=42)
+        res = apdb.containsVisitDetector(visit=2, detector=42, region=region, visit_time=visit_time)
         self.assertFalse(res)
 
     def test_timestamps(self) -> None:
