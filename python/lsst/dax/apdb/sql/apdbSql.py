@@ -69,7 +69,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 1)
+VERSION = VersionTuple(0, 1, 2)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
