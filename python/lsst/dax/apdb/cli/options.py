@@ -103,7 +103,9 @@ def cassandra_config_options(parser: argparse.ArgumentParser) -> None:
     _option_from_pydantic_field(group, ApdbCassandraConnectionConfig, "port", metavar="PORT")
     _option_from_pydantic_field(group, ApdbCassandraConnectionConfig, "username", metavar="USER")
     _option_from_pydantic_field(group, ApdbCassandraConfig, "prefix")
-    group.add_argument("--replication-factor", help="Replication factor used when creating new keyspace.")
+    group.add_argument(
+        "--replication-factor", help="Replication factor used when creating new keyspace.", type=int
+    )
     group.add_argument(
         "--table-options", help="Path or URI of YAML file containing table options.", metavar="URI"
     )

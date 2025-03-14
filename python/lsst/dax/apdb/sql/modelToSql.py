@@ -109,7 +109,7 @@ class ModelToSql:
         # Map model column types to SQLAlchemy.
         self._type_map: dict[felis.datamodel.DataType | schema_model.ExtraDataTypes, type] = {
             felis.datamodel.DataType.double: sqlalchemy.types.Double,
-            felis.datamodel.DataType.float: sqlalchemy.types.Float,
+            felis.datamodel.DataType.float: sqlalchemy.types.REAL,
             felis.datamodel.DataType.timestamp: sqlalchemy.types.TIMESTAMP,
             felis.datamodel.DataType.long: sqlalchemy.types.BigInteger,
             felis.datamodel.DataType.int: sqlalchemy.types.Integer,
