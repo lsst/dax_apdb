@@ -47,19 +47,10 @@ class ApdbMetadataCassandra(ApdbMetadata):
         self._write_profile = write_profile
         self._part = 0  # Partition for all rows
         self._preparer = PreparedStatementCache(session)
-        # _table_clause will be None when metadata table is not configured
-        self._table_clause: str | None = None
-
-        query = "SELECT count(*) FROM system_schema.tables WHERE keyspace_name = %s and table_name = %s"
-        result = self._session.execute(query, (keyspace, table_name), execution_profile=read_profile)
-        exists = bool(result.one()[0])
-        if exists:
-            self._table_clause = f"{quote_id(keyspace)}.{quote_id(table_name)}"
+        self._table_clause = f"{quote_id(keyspace)}.{quote_id(table_name)}"
 
     def get(self, key: str, default: str | None = None) -> str | None:
         # Docstring is inherited.
-        if self._table_clause is None:
-            return default
         query = f"SELECT value FROM {self._table_clause} WHERE meta_part = ? AND name = ?"
         result = self._session.execute(
             self._preparer.prepare(query), (self._part, key), execution_profile=self._read_profile
@@ -71,8 +62,6 @@ class ApdbMetadataCassandra(ApdbMetadata):
 
     def set(self, key: str, value: str, *, force: bool = False) -> None:
         # Docstring is inherited.
-        if self._table_clause is None:
-            raise RuntimeError("Metadata table does not exist")
         if not key or not value:
             raise ValueError("name and value cannot be empty")
         query = f"INSERT INTO {self._table_clause} (meta_part, name, value) VALUES (?, ?, ?)"
@@ -85,9 +74,6 @@ class ApdbMetadataCassandra(ApdbMetadata):
 
     def delete(self, key: str) -> bool:
         # Docstring is inherited.
-        if self._table_clause is None:
-            # Missing table means nothing to delete.
-            return False
         if not key:
             raise ValueError("name cannot be empty")
         query = f"DELETE FROM {self._table_clause} WHERE meta_part = ? AND name = ?"
@@ -102,9 +88,6 @@ class ApdbMetadataCassandra(ApdbMetadata):
 
     def items(self) -> Generator[tuple[str, str], None, None]:
         # Docstring is inherited.
-        if self._table_clause is None:
-            # Missing table means nothing to return.
-            return
         query = f"SELECT name, value FROM {self._table_clause} WHERE meta_part = ?"
         result = self._session.execute(
             self._preparer.prepare(query), (self._part,), execution_profile=self._read_profile
@@ -114,16 +97,9 @@ class ApdbMetadataCassandra(ApdbMetadata):
 
     def empty(self) -> bool:
         # Docstring is inherited.
-        if self._table_clause is None:
-            # Missing table means empty.
-            return True
         query = f"SELECT count(*) FROM {self._table_clause} WHERE meta_part = ?"
         result = self._session.execute(
             self._preparer.prepare(query), (self._part,), execution_profile=self._read_profile
         )
         row = result.one()
         return row[0] == 0
-
-    def table_exists(self) -> bool:
-        """Return `True` if metadata table exists."""
-        return self._table_clause is not None
