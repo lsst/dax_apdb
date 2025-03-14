@@ -703,31 +703,6 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertEqual(metadata.get("data"), "meta")
         self.assertEqual(metadata.get("meta", "meta"), "meta")
 
-    def test_nometadata(self) -> None:
-        """Test case for when metadata table is missing"""
-        # We expect that schema includes metadata table, drop it.
-        with update_schema_yaml(self.schema_path, drop_metadata=True) as schema_file:
-            config = self.make_instance(schema_file=schema_file)
-            apdb = Apdb.from_config(config)
-            metadata = apdb.metadata
-
-            self.assertTrue(metadata.empty())
-            self.assertEqual(list(metadata.items()), [])
-            with self.assertRaisesRegex(RuntimeError, "Metadata table does not exist"):
-                metadata.set("meta", "data")
-
-            self.assertTrue(metadata.empty())
-            self.assertIsNone(metadata.get("meta"))
-
-        # Also check what happens when configured schema has metadata, but
-        # database is missing it. Database was initialized inside above context
-        # without metadata table, here we use schema config which includes
-        # metadata table.
-        config.schema_file = self.schema_path
-        apdb = Apdb.from_config(config)
-        metadata = apdb.metadata
-        self.assertTrue(metadata.empty())
-
     def test_schemaVersionFromYaml(self) -> None:
         """Check version number handling for reading schema from YAML."""
         config = self.make_instance()

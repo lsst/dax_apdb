@@ -20,6 +20,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import os
+import shutil
+import tempfile
 import unittest.mock
 from collections.abc import Mapping
 from typing import Any
@@ -28,7 +30,7 @@ import astropy.time
 import lsst.utils.tests
 import numpy
 import pandas
-from lsst.dax.apdb.sql import ApdbSql, ApdbSqlConfig
+from lsst.dax.apdb.sql import ApdbSql
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
@@ -69,16 +71,15 @@ class TestApVerifyQueries(unittest.TestCase):
 
     def setUp(self) -> None:
         # Create DB in memory.
-        self.apdbCfg = ApdbSqlConfig(
-            db_url="sqlite://",
+        self.tempdir = tempfile.mkdtemp()
+        apdb_cfg = ApdbSql.init_database(
+            db_url=f"sqlite:///{self.tempdir}/apdb.sqlite3",
             schema_file=TEST_SCHEMA,
-            dia_object_index="baseline",
-            dia_object_columns=[],
         )
-        self.apdb = ApdbSql(config=self.apdbCfg)
-        self.apdb._schema.makeSchema()
+        self.apdb = ApdbSql(config=apdb_cfg)
 
     def tearDown(self) -> None:
+        shutil.rmtree(self.tempdir, ignore_errors=True)
         del self.apdb
 
     def test_count_zero_objects(self) -> None:

@@ -37,19 +37,16 @@ class ApdbMetadataSql(ApdbMetadata):
     ----------
     engine : `sqlalchemy.engine.Engine`
         Database access engine.
-    table : `sqlalchemy.schema.Table` or `None`
-        Database table holding metadata. If table does not exists then `None`
-        should be specified.
+    table : `sqlalchemy.schema.Table`
+        Database table holding metadata.
     """
 
-    def __init__(self, engine: sqlalchemy.engine.Engine, table: sqlalchemy.schema.Table | None):
+    def __init__(self, engine: sqlalchemy.engine.Engine, table: sqlalchemy.schema.Table):
         self._engine = engine
         self._table = table
 
     def get(self, key: str, default: str | None = None) -> str | None:
         # Docstring is inherited.
-        if self._table is None:
-            return default
         sql = sqlalchemy.sql.select(self._table.columns.value).where(self._table.columns.name == key)
         with self._engine.begin() as conn:
             result = conn.execute(sql)
@@ -60,8 +57,6 @@ class ApdbMetadataSql(ApdbMetadata):
 
     def set(self, key: str, value: str, *, force: bool = False) -> None:
         # Docstring is inherited.
-        if self._table is None:
-            raise RuntimeError("Metadata table does not exist")
         if not key or not value:
             raise ValueError("name and value cannot be empty")
         try:
@@ -82,9 +77,6 @@ class ApdbMetadataSql(ApdbMetadata):
 
     def delete(self, key: str) -> bool:
         # Docstring is inherited.
-        if self._table is None:
-            # Missing table means nothing to delete.
-            return False
         stmt = sqlalchemy.sql.delete(self._table).where(self._table.columns.name == key)
         with self._engine.begin() as conn:
             result = conn.execute(stmt)
@@ -92,9 +84,6 @@ class ApdbMetadataSql(ApdbMetadata):
 
     def items(self) -> Generator[tuple[str, str], None, None]:
         # Docstring is inherited.
-        if self._table is None:
-            # Missing table means nothing to return.
-            return
         stmt = sqlalchemy.sql.select(self._table.columns.name, self._table.columns.value)
         with self._engine.begin() as conn:
             result = conn.execute(stmt)
@@ -103,15 +92,8 @@ class ApdbMetadataSql(ApdbMetadata):
 
     def empty(self) -> bool:
         # Docstring is inherited.
-        if self._table is None:
-            # Missing table means empty.
-            return True
         stmt = sqlalchemy.sql.select(sqlalchemy.sql.func.count()).select_from(self._table)
         with self._engine.begin() as conn:
             result = conn.execute(stmt)
             count = result.scalar()
         return count == 0
-
-    def table_exists(self) -> bool:
-        """Return `True` if metadata table exists."""
-        return self._table is not None

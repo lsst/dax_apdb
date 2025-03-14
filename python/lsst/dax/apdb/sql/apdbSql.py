@@ -30,7 +30,7 @@ import logging
 import urllib.parse
 import warnings
 from collections.abc import Iterable, Mapping, MutableMapping
-from contextlib import closing, suppress
+from contextlib import closing
 from typing import TYPE_CHECKING, Any, cast
 
 import astropy.time
@@ -151,10 +151,7 @@ class ApdbSql(Apdb):
 
         sa_metadata = sqlalchemy.MetaData(schema=config.namespace)
         meta_table_name = ApdbTables.metadata.table_name(prefix=config.prefix)
-        meta_table: sqlalchemy.schema.Table | None = None
-        with suppress(sqlalchemy.exc.NoSuchTableError):
-            meta_table = sqlalchemy.schema.Table(meta_table_name, sa_metadata, autoload_with=self._engine)
-
+        meta_table = sqlalchemy.schema.Table(meta_table_name, sa_metadata, autoload_with=self._engine)
         self._metadata = ApdbMetadataSql(self._engine, meta_table)
 
         # Read frozen config from metadata.
@@ -177,8 +174,7 @@ class ApdbSql(Apdb):
             enable_replica=self.config.enable_replica,
         )
 
-        if self._metadata.table_exists():
-            self._versionCheck(self._metadata)
+        self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.pixelization.htm_level)
 
@@ -313,21 +309,16 @@ class ApdbSql(Apdb):
     def _versionCheck(self, metadata: ApdbMetadataSql) -> None:
         """Check schema version compatibility."""
 
-        def _get_version(key: str, default: VersionTuple) -> VersionTuple:
+        def _get_version(key: str) -> VersionTuple:
             """Retrieve version number from given metadata key."""
-            if metadata.table_exists():
-                version_str = metadata.get(key)
-                if version_str is None:
-                    # Should not happen with existing metadata table.
-                    raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
-                return VersionTuple.fromString(version_str)
-            return default
+            version_str = metadata.get(key)
+            if version_str is None:
+                # Should not happen with existing metadata table.
+                raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
+            return VersionTuple.fromString(version_str)
 
-        # For old databases where metadata table does not exist we assume that
-        # version of both code and schema is 0.1.0.
-        initial_version = VersionTuple(0, 1, 0)
-        db_schema_version = _get_version(self.metadataSchemaVersionKey, initial_version)
-        db_code_version = _get_version(self.metadataCodeVersionKey, initial_version)
+        db_schema_version = _get_version(self.metadataSchemaVersionKey)
+        db_code_version = _get_version(self.metadataCodeVersionKey)
 
         # For now there is no way to make read-only APDB instances, assume that
         # any access can do updates.
@@ -344,7 +335,7 @@ class ApdbSql(Apdb):
 
         # Check replica code version only if replica is enabled.
         if self._schema.has_replica_chunks:
-            db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
+            db_replica_version = _get_version(self.metadataReplicaVersionKey)
             code_replica_version = ApdbSqlReplica.apdbReplicaImplementationVersion()
             if not code_replica_version.checkCompatibility(db_replica_version):
                 raise IncompatibleVersionError(
@@ -509,27 +500,24 @@ class ApdbSql(Apdb):
         )
         schema.makeSchema(drop=drop)
 
-        # Need metadata table to store few items in it, if table exists.
-        meta_table: sqlalchemy.schema.Table | None = None
-        with suppress(ValueError):
-            meta_table = schema.get_table(ApdbTables.metadata)
-
+        # Need metadata table to store few items in it.
+        meta_table = schema.get_table(ApdbTables.metadata)
         apdb_meta = ApdbMetadataSql(engine, meta_table)
-        if apdb_meta.table_exists():
-            # Fill version numbers, overwrite if they are already there.
-            apdb_meta.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
-            apdb_meta.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
-            if config.enable_replica:
-                # Only store replica code version if replica is enabled.
-                apdb_meta.set(
-                    cls.metadataReplicaVersionKey,
-                    str(ApdbSqlReplica.apdbReplicaImplementationVersion()),
-                    force=True,
-                )
 
-            # Store frozen part of a configuration in metadata.
-            freezer = ApdbConfigFreezer[ApdbSqlConfig](cls._frozen_parameters)
-            apdb_meta.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
+        # Fill version numbers, overwrite if they are already there.
+        apdb_meta.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+        apdb_meta.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+        if config.enable_replica:
+            # Only store replica code version if replica is enabled.
+            apdb_meta.set(
+                cls.metadataReplicaVersionKey,
+                str(ApdbSqlReplica.apdbReplicaImplementationVersion()),
+                force=True,
+            )
+
+        # Store frozen part of a configuration in metadata.
+        freezer = ApdbConfigFreezer[ApdbSqlConfig](cls._frozen_parameters)
+        apdb_meta.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -749,8 +737,6 @@ class ApdbSql(Apdb):
     @property
     def metadata(self) -> ApdbMetadata:
         # docstring is inherited from a base class
-        if self._metadata is None:
-            raise RuntimeError("Database schema was not initialized.")
         return self._metadata
 
     def _getDiaSourcesInRegion(self, region: Region, visit_time: astropy.time.Time) -> pandas.DataFrame:
