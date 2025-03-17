@@ -226,9 +226,8 @@ class ApdbCassandra(Apdb):
         self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
         self._db_versions: _DbVersions | None = None
-        if self._metadata.table_exists():
-            with self._timer("version_check"):
-                self._db_versions = self._versionCheck(self._metadata)
+        with self._timer("version_check"):
+            self._db_versions = self._versionCheck(self._metadata)
 
         # Support for DiaObjectLastToPartition was added at code version 0.1.1
         # in a backward-compatible way (we only use the table if it is there).
@@ -323,13 +322,11 @@ class ApdbCassandra(Apdb):
 
         def _get_version(key: str, default: VersionTuple) -> VersionTuple:
             """Retrieve version number from given metadata key."""
-            if metadata.table_exists():
-                version_str = metadata.get(key)
-                if version_str is None:
-                    # Should not happen with existing metadata table.
-                    raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
-                return VersionTuple.fromString(version_str)
-            return default
+            version_str = metadata.get(key)
+            if version_str is None:
+                # Should not happen with existing metadata table.
+                raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
+            return VersionTuple.fromString(version_str)
 
         # For old databases where metadata table does not exist we assume that
         # version of both code and schema is 0.1.0.
@@ -674,21 +671,20 @@ class ApdbCassandra(Apdb):
             )
 
             # Fill version numbers, overrides if they existed before.
-            if metadata.table_exists():
-                metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
-                metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+            metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+            metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
 
-                if config.enable_replica:
-                    # Only store replica code version if replica is enabled.
-                    metadata.set(
-                        cls.metadataReplicaVersionKey,
-                        str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
-                        force=True,
-                    )
+            if config.enable_replica:
+                # Only store replica code version if replica is enabled.
+                metadata.set(
+                    cls.metadataReplicaVersionKey,
+                    str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
+                    force=True,
+                )
 
-                # Store frozen part of a configuration in metadata.
-                freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
-                metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
+            # Store frozen part of a configuration in metadata.
+            freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
+            metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -960,8 +956,6 @@ class ApdbCassandra(Apdb):
     @property
     def metadata(self) -> ApdbMetadata:
         # docstring is inherited from a base class
-        if self._metadata is None:
-            raise RuntimeError("Database schema was not initialized.")
         return self._metadata
 
     @classmethod
