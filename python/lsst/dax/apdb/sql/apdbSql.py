@@ -45,7 +45,6 @@ from lsst.utils.iteration import chunk_iterable
 from sqlalchemy import func, sql
 from sqlalchemy.pool import NullPool
 
-from .._auth import DB_AUTH_ENVVAR, DB_AUTH_PATH
 from ..apdb import Apdb
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
@@ -245,7 +244,7 @@ class ApdbSql(Apdb):
         components = urllib.parse.urlparse(config_url)
         if all((components.scheme is not None, components.hostname is not None, components.path is not None)):
             try:
-                db_auth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
+                db_auth = DbAuth()
                 config_url = db_auth.getUrl(config_url)
             except DbAuthNotFoundError:
                 # Credentials file doesn't exist or no matching credentials,

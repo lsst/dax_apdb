@@ -52,7 +52,6 @@ from lsst import sphgeom
 from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
 
-from .._auth import DB_AUTH_ENVVAR, DB_AUTH_PATH
 from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ApdbTableData, ReplicaChunk
@@ -284,7 +283,7 @@ class ApdbCassandra(Apdb):
     def _make_auth_provider(cls, config: ApdbCassandraConfig) -> AuthProvider | None:
         """Make Cassandra authentication provider instance."""
         try:
-            dbauth = DbAuth(DB_AUTH_PATH, DB_AUTH_ENVVAR)
+            dbauth = DbAuth()
         except DbAuthNotFoundError:
             # Credentials file doesn't exist, use anonymous login.
             return None
@@ -311,8 +310,8 @@ class ApdbCassandra(Apdb):
 
         if empty_username:
             _LOG.warning(
-                f"Credentials file ({DB_AUTH_PATH} or ${DB_AUTH_ENVVAR}) provided password but not "
-                f"user name, anonymous Cassandra logon will be attempted."
+                f"Credentials file ({dbauth.db_auth_path}) provided password but not "
+                "user name, anonymous Cassandra logon will be attempted."
             )
 
         return None
