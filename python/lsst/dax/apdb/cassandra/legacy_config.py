@@ -32,7 +32,6 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 from .. import legacy_config
-from .._auth import DB_AUTH_PATH
 from . import config
 
 
@@ -46,7 +45,7 @@ class ApdbCassandraConfig(legacy_config.ApdbConfig):
     port = Field[int](doc="Port number to connect to.", default=9042)
     keyspace = Field[str](doc="Default keyspace for operations.", default="apdb")
     username = Field[str](
-        doc=f"Cassandra user name, if empty then {DB_AUTH_PATH} has to provide it with password.",
+        doc="Cassandra user name, if empty then db-auth.yaml has to provide it with password.",
         default="",
     )
     read_consistency = Field[str](

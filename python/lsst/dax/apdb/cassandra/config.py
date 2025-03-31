@@ -37,7 +37,6 @@ except ImportError:
     CASSANDRA_IMPORTED = False
 
 
-from .._auth import DB_AUTH_PATH
 from ..config import ApdbConfig
 
 
@@ -57,7 +56,7 @@ class ApdbCassandraConnectionConfig(BaseModel):
     username: str = Field(
         default="",
         description=(
-            f"Cassandra user name, if empty then {DB_AUTH_PATH} has to provide it together with a password."
+            "Cassandra user name, if empty then db-auth.yaml has to provide it together with a password."
         ),
     )
 
