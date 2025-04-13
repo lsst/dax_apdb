@@ -86,7 +86,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def getReplicaChunks(self) -> list[ReplicaChunk] | None:
         # docstring is inherited from a base class
-        if not self._schema.has_replica_chunks:
+        if not self._schema.replication_enabled:
             return None
 
         # everything goes into a single partition
@@ -120,7 +120,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def deleteReplicaChunks(self, chunks: Iterable[int]) -> None:
         # docstring is inherited from a base class
-        if not self._schema.has_replica_chunks:
+        if not self._schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
 
         # There is 64k limit on number of markers in Cassandra CQL
@@ -178,7 +178,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def _get_chunks(self, table: ExtraTables, chunks: Iterable[int]) -> ApdbTableData:
         """Return records from a particular table given set of insert IDs."""
-        if not self._schema.has_replica_chunks:
+        if not self._schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
 
         # We do not expect too may chunks in this query.

@@ -360,19 +360,9 @@ class ApdbCassandraSchema(ApdbSchema):
         return extra_tables
 
     @property
-    def has_replica_chunks(self) -> bool:
-        """Whether insert ID tables are to be used (`bool`)."""
-        if self._has_replica_chunks is None:
-            self._has_replica_chunks = self._enable_replica and self._check_replica_chunks()
-        return self._has_replica_chunks
-
-    def _check_replica_chunks(self) -> bool:
-        """Check whether database has tables for tracking insert IDs."""
-        table_name = ExtraTables.ApdbReplicaChunks.table_name(self._prefix)
-        query = "SELECT count(*) FROM system_schema.tables WHERE keyspace_name = %s and table_name = %s"
-        result = self._session.execute(query, (self._keyspace, table_name))
-        row = result.one()
-        return bool(row[0])
+    def replication_enabled(self) -> bool:
+        """True when replication is enabled (`bool`)."""
+        return self._enable_replica
 
     def empty(self) -> bool:
         """Return True if database schema is empty.

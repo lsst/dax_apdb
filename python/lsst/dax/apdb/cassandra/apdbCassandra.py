@@ -348,7 +348,7 @@ class ApdbCassandra(Apdb):
 
         # Check replica code version only if replica is enabled.
         db_replica_version: VersionTuple | None = None
-        if self._schema.has_replica_chunks:
+        if self._schema.replication_enabled:
             db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
             code_replica_version = ApdbCassandraReplica.apdbReplicaImplementationVersion()
             if not code_replica_version.checkCompatibility(db_replica_version):
@@ -828,7 +828,7 @@ class ApdbCassandra(Apdb):
             forced_sources = self._fix_input_timestamps(forced_sources)
 
         replica_chunk: ReplicaChunk | None = None
-        if self._schema.has_replica_chunks:
+        if self._schema.replication_enabled:
             replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, self.config.replica_chunk_seconds)
             self._storeReplicaChunk(replica_chunk, visit_time)
 
