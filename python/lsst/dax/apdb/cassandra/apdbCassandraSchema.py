@@ -77,7 +77,11 @@ class CreateTableOptions(pydantic.BaseModel):
 
 @enum.unique
 class ExtraTables(enum.Enum):
-    """Names of the extra tables used by Cassandra implementation."""
+    """Names of the extra tables used by Cassandra implementation.
+
+    Chunk tables exist in two versions now to support both old and new schema.
+    Eventually we will drop support for old tables.
+    """
 
     ApdbReplicaChunks = "ApdbReplicaChunks"
     """Name of the table for replica chunk records."""
@@ -91,6 +95,15 @@ class ExtraTables(enum.Enum):
     DiaForcedSourceChunks = "DiaForcedSourceChunks"
     """Name of the table for DIAForcedSource chunk data."""
 
+    DiaObjectChunks2 = "DiaObjectChunks2"
+    """Name of the table for DIAObject chunk data."""
+
+    DiaSourceChunks2 = "DiaSourceChunks2"
+    """Name of the table for DIASource chunk data."""
+
+    DiaForcedSourceChunks2 = "DiaForcedSourceChunks2"
+    """Name of the table for DIAForcedSource chunk data."""
+
     DiaSourceToPartition = "DiaSourceToPartition"
     "Maps diaSourceId to its partition values (pixel and time)."
 
@@ -102,15 +115,22 @@ class ExtraTables(enum.Enum):
         return prefix + self.value
 
     @classmethod
-    def replica_chunk_tables(cls) -> Mapping[ExtraTables, ApdbTables]:
-        """Return mapping of tables used for replica chunks storage to their
-        corresponding regular tables.
+    def replica_chunk_tables(cls, has_subchunks: bool) -> Mapping[ApdbTables, ExtraTables]:
+        """Return mapping of APDB tables to corresponding replica chunks
+        tables.
         """
-        return {
-            cls.DiaObjectChunks: ApdbTables.DiaObject,
-            cls.DiaSourceChunks: ApdbTables.DiaSource,
-            cls.DiaForcedSourceChunks: ApdbTables.DiaForcedSource,
-        }
+        if has_subchunks:
+            return {
+                ApdbTables.DiaObject: cls.DiaObjectChunks2,
+                ApdbTables.DiaSource: cls.DiaSourceChunks2,
+                ApdbTables.DiaForcedSource: cls.DiaForcedSourceChunks2,
+            }
+        else:
+            return {
+                ApdbTables.DiaObject: cls.DiaObjectChunks,
+                ApdbTables.DiaSource: cls.DiaSourceChunks,
+                ApdbTables.DiaForcedSource: cls.DiaForcedSourceChunks,
+            }
 
 
 class ApdbCassandraSchema(ApdbSchema):
@@ -133,6 +153,9 @@ class ApdbCassandraSchema(ApdbSchema):
         partition.
     enable_replica : `bool`, optional
         If `True` then use additional tables for replica chunks.
+    has_chunk_sub_partitions : `bool`, optional
+        If `True` then replica chunk tables have sub-partition columns. Only
+        used if ``enable_replica`` is `True`.
     """
 
     _type_map = {
@@ -169,6 +192,7 @@ class ApdbCassandraSchema(ApdbSchema):
         prefix: str = "",
         time_partition_tables: bool = False,
         enable_replica: bool = False,
+        has_chunk_sub_partitions: bool = True,
     ):
         super().__init__(schema_file, schema_name)
 
@@ -177,7 +201,7 @@ class ApdbCassandraSchema(ApdbSchema):
         self._prefix = prefix
         self._time_partition_tables = time_partition_tables
         self._enable_replica = enable_replica
-        self._has_replica_chunks: bool | None = None
+        self._has_chunk_sub_partitions = has_chunk_sub_partitions
 
         self._apdb_tables = self._apdb_tables_schema(time_partition_tables)
         self._extra_tables = self._extra_tables_schema()
@@ -274,6 +298,12 @@ class ApdbCassandraSchema(ApdbSchema):
                     datatype=felis.datamodel.DataType.long,
                     nullable=True,
                 ),
+                schema_model.Column(
+                    id="#apdb_replica_subchunk",
+                    name="apdb_replica_subchunk",
+                    datatype=felis.datamodel.DataType.int,
+                    nullable=True,
+                ),
             ],
             primary_key=[],
             indexes=[],
@@ -302,6 +332,9 @@ class ApdbCassandraSchema(ApdbSchema):
             annotations={"cassandra:partitioning_columns": ["diaObjectId"]},
         )
 
+        if not self._enable_replica:
+            return extra_tables
+
         replica_chunk_column = schema_model.Column(
             id="#apdb_replica_chunk",
             name="apdb_replica_chunk",
@@ -309,10 +342,18 @@ class ApdbCassandraSchema(ApdbSchema):
             nullable=False,
         )
 
-        if not self._enable_replica:
-            return extra_tables
+        replica_chunk_columns = [replica_chunk_column]
+        if self._has_chunk_sub_partitions:
+            replica_chunk_columns.append(
+                schema_model.Column(
+                    id="#apdb_replica_subchunk",
+                    name="apdb_replica_subchunk",
+                    datatype=felis.datamodel.DataType.int,
+                    nullable=False,
+                )
+            )
 
-        # Table containing insert IDs, this one is not partitioned, but
+        # Table containing replica chunks, this one is not partitioned, but
         # partition key must be defined.
         extra_tables[ExtraTables.ApdbReplicaChunks] = schema_model.Table(
             id="#" + ExtraTables.ApdbReplicaChunks.value,
@@ -334,6 +375,12 @@ class ApdbCassandraSchema(ApdbSchema):
                     datatype=schema_model.ExtraDataTypes.UUID,
                     nullable=False,
                 ),
+                schema_model.Column(
+                    id="#has_subchunks",
+                    name="has_subchunks",
+                    datatype=felis.datamodel.DataType.boolean,
+                    nullable=True,
+                ),
             ],
             primary_key=[replica_chunk_column],
             indexes=[],
@@ -341,18 +388,19 @@ class ApdbCassandraSchema(ApdbSchema):
             annotations={"cassandra:partitioning_columns": ["partition"]},
         )
 
-        for chunk_table_enum, apdb_table_enum in ExtraTables.replica_chunk_tables().items():
+        replica_chunk_tables = ExtraTables.replica_chunk_tables(self._has_chunk_sub_partitions)
+        for apdb_table_enum, chunk_table_enum in replica_chunk_tables.items():
             apdb_table_def = self.tableSchemas[apdb_table_enum]
 
             extra_tables[chunk_table_enum] = schema_model.Table(
                 id="#" + chunk_table_enum.value,
                 name=chunk_table_enum.table_name(self._prefix),
-                columns=[replica_chunk_column] + apdb_table_def.columns,
+                columns=replica_chunk_columns + apdb_table_def.columns,
                 primary_key=apdb_table_def.primary_key[:],
                 indexes=[],
                 constraints=[],
                 annotations={
-                    "cassandra:partitioning_columns": ["apdb_replica_chunk"],
+                    "cassandra:partitioning_columns": [column.name for column in replica_chunk_columns],
                     "cassandra:apdb_column_names": [column.name for column in apdb_table_def.columns],
                 },
             )
@@ -363,6 +411,11 @@ class ApdbCassandraSchema(ApdbSchema):
     def replication_enabled(self) -> bool:
         """True when replication is enabled (`bool`)."""
         return self._enable_replica
+
+    @property
+    def has_chunk_sub_partitions(self) -> bool:
+        """True when chunk tables have sub-partitions (`bool`)."""
+        return self._has_chunk_sub_partitions
 
     def empty(self) -> bool:
         """Return True if database schema is empty.
@@ -566,8 +619,6 @@ class ApdbCassandraSchema(ApdbSchema):
             self._makeTableSchema(table, drop, part_range, table_options)
         for extra_table in self._extra_tables:
             self._makeTableSchema(extra_table, drop, part_range, table_options)
-        # Reset cached information.
-        self._has_replica_chunks = None
 
     def _makeTableSchema(
         self,
