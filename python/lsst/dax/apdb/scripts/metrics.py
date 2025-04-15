@@ -102,6 +102,8 @@ def metrics_log_to_influx(
     prefix: str,
     no_header: bool,
     header_database: str,
+    since: str | None,
+    until: str | None,
 ) -> None:
     """Extract metrics from log file and dump as InfluxDB data.
 
@@ -125,7 +127,18 @@ def metrics_log_to_influx(
         If False then do not print DML header.
     header_database : `str`
         Name of the database for DML header.
+    since : `str`, optional
+        Filter out metrics before given timestamp.
+    until : `str`, optional
+        Filter out metrics after given timestamp.
     """
+    since_timestamp: float = 0
+    if since is not None:
+        since_timestamp = datetime.fromisoformat(since).timestamp()
+    until_timestamp: float = sys.float_info.max
+    if until is not None:
+        until_timestamp = datetime.fromisoformat(until).timestamp()
+
     context_names = [name for name in context_keys.split(",") if name]
     tags: dict[str, Any] = {}
     for tag_val in extra_tags.split(","):
@@ -146,10 +159,28 @@ def metrics_log_to_influx(
         file = ["-"]
     for file_name in file:
         if file_name == "-":
-            _metrics_log_to_influx(sys.stdin, context_names, tags, fix_row_count, replication, prefix)
+            _metrics_log_to_influx(
+                sys.stdin,
+                context_names,
+                tags,
+                fix_row_count,
+                replication,
+                prefix,
+                since_timestamp,
+                until_timestamp,
+            )
         else:
             with open(file_name) as file_obj:
-                _metrics_log_to_influx(file_obj, context_names, tags, fix_row_count, replication, prefix)
+                _metrics_log_to_influx(
+                    file_obj,
+                    context_names,
+                    tags,
+                    fix_row_count,
+                    replication,
+                    prefix,
+                    since_timestamp,
+                    until_timestamp,
+                )
 
 
 def _metrics_log_to_influx(
@@ -159,6 +190,8 @@ def _metrics_log_to_influx(
     fix_row_count: bool,
     replication: bool,
     prefix: str,
+    since: float,
+    until: float,
 ) -> None:
     """Parse metrics from a single file."""
     objects_count = -1
@@ -187,6 +220,8 @@ def _metrics_log_to_influx(
                 continue
 
             timestamp: float = metric["timestamp"]
+            if not (since <= timestamp <= until):
+                continue
             for tag, tag_val in metric["tags"].items():
                 tags[tag] = tag_val
             values: dict[str, Any] = metric["values"]
@@ -209,6 +244,8 @@ def _metrics_log_to_influx(
             tags["level"] = match.group("level").lower()
             dt = datetime.fromisoformat(match.group("datetime"))
             timestamp = dt.timestamp()
+            if not (since <= timestamp <= until):
+                continue
             tags.update(_extract_mdc(match, context_keys))
             values = {"count": 1}
 

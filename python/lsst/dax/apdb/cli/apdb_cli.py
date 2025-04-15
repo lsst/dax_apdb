@@ -235,4 +235,16 @@ def _metrics_log_to_influx(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         default=False,
     )
+    parser.add_argument(
+        "-s",
+        "--since",
+        help="Filter out metrics before given timestamp. Timestamp is specified in ISO format.",
+        default=None,
+    )
+    parser.add_argument(
+        "-u",
+        "--until",
+        help="Filter out metrics after given timestamp. Timestamp is specified in ISO format.",
+        default=None,
+    )
     parser.set_defaults(method=scripts.metrics_log_to_influx)
