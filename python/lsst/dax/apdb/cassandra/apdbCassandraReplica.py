@@ -35,7 +35,12 @@ from ..monitor import MonAgent
 from ..timer import Timer
 from ..versionTuple import VersionTuple
 from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
-from .cassandra_utils import PreparedStatementCache, execute_concurrent, select_concurrent
+from .cassandra_utils import (
+    ApdbCassandraTableData,
+    PreparedStatementCache,
+    execute_concurrent,
+    select_concurrent,
+)
 
 if TYPE_CHECKING:
     from .apdbCassandra import ApdbCassandra
@@ -174,25 +179,54 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        table = ExtraTables.replica_chunk_tables(self._schema.has_chunk_sub_partitions)[ApdbTables.DiaObject]
-        return self._get_chunks(table, chunks)
+        return self._get_chunks(ApdbTables.DiaObject, chunks)
 
     def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        table = ExtraTables.replica_chunk_tables(self._schema.has_chunk_sub_partitions)[ApdbTables.DiaSource]
-        return self._get_chunks(table, chunks)
+        return self._get_chunks(ApdbTables.DiaSource, chunks)
 
     def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        table = ExtraTables.replica_chunk_tables(self._schema.has_chunk_sub_partitions)[
-            ApdbTables.DiaForcedSource
-        ]
-        return self._get_chunks(table, chunks)
+        return self._get_chunks(ApdbTables.DiaForcedSource, chunks)
 
-    def _get_chunks(self, table: ExtraTables, chunks: Iterable[int]) -> ApdbTableData:
+    def _get_chunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
         """Return records from a particular table given set of insert IDs."""
         if not self._schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
+
+        # We need to iterate few times.
+        chunks = list(chunks)
+
+        # If schema was migrated then a chunk can appear in either old or new
+        # chunk table (e.g. DiaObjectChunks or DiaObjectChunks2). Chunk table
+        # has a column which will be set to true for new table.
+        has_chunk_sub_partitions: dict[int, bool] = {}
+        if self._schema.has_chunk_sub_partitions:
+            table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
+            chunks_str = ",".join(str(chunk_id) for chunk_id in chunks)
+            query = (
+                f'SELECT apdb_replica_chunk, has_subchunks FROM "{self._config.keyspace}"."{table_name}" '
+                f"WHERE partition = %s and apdb_replica_chunk IN ({chunks_str})"
+            )
+            partition = 0
+            result = self._session.execute(
+                query,
+                (partition,),
+                timeout=self._config.connection_config.read_timeout,
+                execution_profile="read_tuples",
+            )
+            has_chunk_sub_partitions = {chunk_id: has_subchunk for chunk_id, has_subchunk in result}
+        else:
+            has_chunk_sub_partitions = {chunk_id: False for chunk_id in chunks}
+
+        # Check what kind of tables we want to query, if chunk list is empty
+        # then use tbales which should exist in the schema.
+        if has_chunk_sub_partitions:
+            have_subchunks = any(has_chunk_sub_partitions.values())
+            have_non_subchunks = not all(has_chunk_sub_partitions.values())
+        else:
+            have_subchunks = self._schema.has_chunk_sub_partitions
+            have_non_subchunks = not have_subchunks
 
         # NOTE: if an existing database is migrated and has both types of chunk
         # tables (e.g. DiaObjectChunks and DiaObjectChunks2) it is possible
@@ -200,37 +234,73 @@ class ApdbCassandraReplica(ApdbReplica):
         # migration should only happen during the downtime, so there will be
         # suffient gap and a different chunk ID will be used for new chunks.
 
-        table_name = self._schema.tableName(table)
-        # I know that chunk table schema has only regular APDB columns plus
-        # apdb_replica_chunk column, and this is exactly what we need to return
-        # from this method, so selecting a star is fine here.
-        query = f'SELECT * FROM "{self._config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
-        if self._schema.has_chunk_sub_partitions:
-            query += " AND apdb_replica_subchunk = ?"
-        statement = self._preparer.prepare(query)
-
-        queries: list[tuple] = []
-        if self._schema.has_chunk_sub_partitions:
-            for chunk in chunks:
-                for subchunk in range(self._config.replica_sub_chunk_count):
-                    queries.append((statement, (chunk, subchunk)))
-            if not queries:
-                # Add a dummy query to return correct set of columns.
-                queries.append((statement, (-1, -1)))
-        else:
-            for chunk in chunks:
-                queries.append((statement, (chunk,)))
-            if not queries:
-                # Add a dummy query to return correct set of columns.
-                queries.append((statement, (-1,)))
+        table_data: ApdbCassandraTableData | None = None
+        table_data_subchunk: ApdbCassandraTableData | None = None
 
         with self._timer("table_chunk_select_time", tags={"table": table_name}) as timer:
-            table_data = cast(
-                ApdbTableData,
-                select_concurrent(
-                    self._session, queries, "read_raw_multi", self._config.connection_config.read_concurrency
-                ),
-            )
+            if have_subchunks:
+                replica_table = ExtraTables.replica_chunk_tables(True)[table]
+                table_name = self._schema.tableName(replica_table)
+                query = (
+                    f'SELECT * FROM "{self._config.keyspace}"."{table_name}" '
+                    "WHERE apdb_replica_chunk = ? AND apdb_replica_subchunk = ?"
+                )
+                statement = self._preparer.prepare(query)
+
+                queries: list[tuple] = []
+                for chunk in chunks:
+                    if has_chunk_sub_partitions.get(chunk, False):
+                        for subchunk in range(self._config.replica_sub_chunk_count):
+                            queries.append((statement, (chunk, subchunk)))
+                if not queries and not have_non_subchunks:
+                    # Add a dummy query to return correct set of columns.
+                    queries.append((statement, (-1, -1)))
+
+                if queries:
+                    table_data_subchunk = cast(
+                        ApdbCassandraTableData,
+                        select_concurrent(
+                            self._session,
+                            queries,
+                            "read_raw_multi",
+                            self._config.connection_config.read_concurrency,
+                        ),
+                    )
+
+            if have_non_subchunks:
+                replica_table = ExtraTables.replica_chunk_tables(False)[table]
+                table_name = self._schema.tableName(replica_table)
+                query = f'SELECT * FROM "{self._config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
+                statement = self._preparer.prepare(query)
+
+                queries = []
+                for chunk in chunks:
+                    if not has_chunk_sub_partitions.get(chunk, True):
+                        queries.append((statement, (chunk)))
+                if not queries and not table_data_subchunk:
+                    # Add a dummy query to return correct set of columns.
+                    queries.append((statement, (-1,)))
+
+                if queries:
+                    table_data = cast(
+                        ApdbCassandraTableData,
+                        select_concurrent(
+                            self._session,
+                            queries,
+                            "read_raw_multi",
+                            self._config.connection_config.read_concurrency,
+                        ),
+                    )
+
+            # Merge if both are non-empty.
+            if table_data and table_data_subchunk:
+                table_data_subchunk.project(drop=["apdb_replica_subchunk"])
+                table_data.append(table_data_subchunk)
+            elif table_data_subchunk:
+                table_data = table_data_subchunk
+            elif not table_data:
+                raise AssertionError("above logic is incorrect")
+
             timer.add_values(row_count=len(table_data.rows()))
 
         return table_data
