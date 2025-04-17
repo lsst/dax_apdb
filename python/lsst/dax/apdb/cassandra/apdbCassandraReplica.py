@@ -276,7 +276,7 @@ class ApdbCassandraReplica(ApdbReplica):
                 queries = []
                 for chunk in chunks:
                     if not has_chunk_sub_partitions.get(chunk, True):
-                        queries.append((statement, (chunk)))
+                        queries.append((statement, (chunk,)))
                 if not queries and not table_data_subchunk:
                     # Add a dummy query to return correct set of columns.
                     queries.append((statement, (-1,)))
