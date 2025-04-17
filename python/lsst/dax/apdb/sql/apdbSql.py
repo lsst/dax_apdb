@@ -333,7 +333,7 @@ class ApdbSql(Apdb):
             )
 
         # Check replica code version only if replica is enabled.
-        if self._schema.has_replica_chunks:
+        if self._schema.replication_enabled:
             db_replica_version = _get_version(self.metadataReplicaVersionKey)
             code_replica_version = ApdbSqlReplica.apdbReplicaImplementationVersion()
             if not code_replica_version.checkCompatibility(db_replica_version):
@@ -644,7 +644,7 @@ class ApdbSql(Apdb):
         # We want to run all inserts in one transaction.
         with self._engine.begin() as connection:
             replica_chunk: ReplicaChunk | None = None
-            if self._schema.has_replica_chunks:
+            if self._schema.replication_enabled:
                 replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, self.config.replica_chunk_seconds)
                 self._storeReplicaChunk(replica_chunk, visit_time, connection)
 

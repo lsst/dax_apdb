@@ -25,6 +25,7 @@ __all__ = ["ApdbCassandra"]
 
 import dataclasses
 import logging
+import random
 import warnings
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
@@ -174,6 +175,7 @@ class ApdbCassandra(Apdb):
         "enable_replica",
         "ra_dec_columns",
         "replica_skips_diaobjects",
+        "replica_sub_chunk_count",
         "partitioning.part_pixelization",
         "partitioning.part_pix_level",
         "partitioning.time_partition_tables",
@@ -207,6 +209,19 @@ class ApdbCassandra(Apdb):
             else:
                 self.config = config
 
+        # Read versions stored in database.
+        self._db_versions = self._readVersions(self._metadata)
+        _LOG.debug("Database versions: %s", self._db_versions)
+
+        # Since replica version 1.1.0 we use finer partitioning for replica
+        # chunk tables.
+        self._has_chunk_sub_partitions = False
+        if self.config.enable_replica:
+            assert self._db_versions.replica_version is not None, "Replica version must be defined"
+            self._has_chunk_sub_partitions = ApdbCassandraReplica.hasChunkSubPartitions(
+                self._db_versions.replica_version
+            )
+
         self._pixelization = Pixelization(
             self.config.partitioning.part_pixelization,
             self.config.partitioning.part_pix_level,
@@ -221,19 +236,34 @@ class ApdbCassandra(Apdb):
             prefix=self.config.prefix,
             time_partition_tables=self.config.partitioning.time_partition_tables,
             enable_replica=self.config.enable_replica,
+            has_chunk_sub_partitions=self._has_chunk_sub_partitions,
         )
         self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
-        self._db_versions: _DbVersions | None = None
-        with self._timer("version_check"):
-            self._db_versions = self._versionCheck(self._metadata)
+        current_versions = _DbVersions(
+            schema_version=self._schema.schemaVersion(),
+            code_version=self.apdbImplementationVersion(),
+            replica_version=(
+                ApdbCassandraReplica.apdbReplicaImplementationVersion()
+                if self.config.enable_replica
+                else None
+            ),
+        )
+        _LOG.debug("Current versions: %s", current_versions)
+        self._versionCheck(current_versions, self._db_versions)
+
+        # Since replica version 1.1.0 we use finer partitioning for replica
+        # chunk tables.
+        self._has_chunk_sub_partitions = False
+        if self.config.enable_replica:
+            assert self._db_versions.replica_version is not None, "Replica version must be defined"
+            self._has_chunk_sub_partitions = ApdbCassandraReplica.hasChunkSubPartitions(
+                self._db_versions.replica_version
+            )
 
         # Support for DiaObjectLastToPartition was added at code version 0.1.1
         # in a backward-compatible way (we only use the table if it is there).
-        if self._db_versions:
-            self._has_dia_object_last_to_partition = self._db_versions.code_version >= VersionTuple(0, 1, 1)
-        else:
-            self._has_dia_object_last_to_partition = False
+        self._has_dia_object_last_to_partition = self._db_versions.code_version >= VersionTuple(0, 1, 1)
 
         # Cache for prepared statements
         self._preparer = PreparedStatementCache(self._session)
@@ -316,10 +346,10 @@ class ApdbCassandra(Apdb):
 
         return None
 
-    def _versionCheck(self, metadata: ApdbMetadataCassandra) -> _DbVersions:
+    def _readVersions(self, metadata: ApdbMetadataCassandra) -> _DbVersions:
         """Check schema version compatibility."""
 
-        def _get_version(key: str, default: VersionTuple) -> VersionTuple:
+        def _get_version(key: str) -> VersionTuple:
             """Retrieve version number from given metadata key."""
             version_str = metadata.get(key)
             if version_str is None:
@@ -327,39 +357,46 @@ class ApdbCassandra(Apdb):
                 raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
             return VersionTuple.fromString(version_str)
 
-        # For old databases where metadata table does not exist we assume that
-        # version of both code and schema is 0.1.0.
-        initial_version = VersionTuple(0, 1, 0)
-        db_schema_version = _get_version(self.metadataSchemaVersionKey, initial_version)
-        db_code_version = _get_version(self.metadataCodeVersionKey, initial_version)
-
-        # For now there is no way to make read-only APDB instances, assume that
-        # any access can do updates.
-        if not self._schema.schemaVersion().checkCompatibility(db_schema_version):
-            raise IncompatibleVersionError(
-                f"Configured schema version {self._schema.schemaVersion()} "
-                f"is not compatible with database version {db_schema_version}"
-            )
-        if not self.apdbImplementationVersion().checkCompatibility(db_code_version):
-            raise IncompatibleVersionError(
-                f"Current code version {self.apdbImplementationVersion()} "
-                f"is not compatible with database version {db_code_version}"
-            )
+        db_schema_version = _get_version(self.metadataSchemaVersionKey)
+        db_code_version = _get_version(self.metadataCodeVersionKey)
 
         # Check replica code version only if replica is enabled.
         db_replica_version: VersionTuple | None = None
-        if self._schema.has_replica_chunks:
-            db_replica_version = _get_version(self.metadataReplicaVersionKey, initial_version)
-            code_replica_version = ApdbCassandraReplica.apdbReplicaImplementationVersion()
-            if not code_replica_version.checkCompatibility(db_replica_version):
-                raise IncompatibleVersionError(
-                    f"Current replication code version {code_replica_version} "
-                    f"is not compatible with database version {db_replica_version}"
-                )
+        if self.config.enable_replica:
+            db_replica_version = _get_version(self.metadataReplicaVersionKey)
 
         return _DbVersions(
             schema_version=db_schema_version, code_version=db_code_version, replica_version=db_replica_version
         )
+
+    def _versionCheck(self, current_versions: _DbVersions, db_versions: _DbVersions) -> None:
+        """Check schema version compatibility."""
+        if not current_versions.schema_version.checkCompatibility(db_versions.schema_version):
+            raise IncompatibleVersionError(
+                f"Configured schema version {current_versions.schema_version} "
+                f"is not compatible with database version {db_versions.schema_version}"
+            )
+        if not current_versions.code_version.checkCompatibility(db_versions.code_version):
+            raise IncompatibleVersionError(
+                f"Current code version {current_versions.code_version} "
+                f"is not compatible with database version {db_versions.code_version}"
+            )
+
+        # Check replica code version only if replica is enabled.
+        match current_versions.replica_version, db_versions.replica_version:
+            case None, None:
+                pass
+            case VersionTuple() as current, VersionTuple() as stored:
+                if not current.checkCompatibility(stored):
+                    raise IncompatibleVersionError(
+                        f"Current replication code version {current} "
+                        f"is not compatible with database version {stored}"
+                    )
+            case _:
+                raise IncompatibleVersionError(
+                    f"Current replication code version {current_versions.replica_version} "
+                    f"is not compatible with database version {db_versions.replica_version}"
+                )
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
@@ -828,7 +865,7 @@ class ApdbCassandra(Apdb):
             forced_sources = self._fix_input_timestamps(forced_sources)
 
         replica_chunk: ReplicaChunk | None = None
-        if self._schema.has_replica_chunks:
+        if self._schema.replication_enabled:
             replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, self.config.replica_chunk_seconds)
             self._storeReplicaChunk(replica_chunk, visit_time)
 
@@ -836,13 +873,13 @@ class ApdbCassandra(Apdb):
         objects = self._add_apdb_part(objects)
         self._storeDiaObjects(objects, visit_time, replica_chunk)
 
-        if sources is not None:
+        if sources is not None and len(sources) > 0:
             # copy apdb_part column from DiaObjects to DiaSources
             sources = self._add_apdb_part(sources)
-            self._storeDiaSources(ApdbTables.DiaSource, sources, replica_chunk)
-            self._storeDiaSourcesPartitions(sources, visit_time, replica_chunk)
+            subchunk = self._storeDiaSources(ApdbTables.DiaSource, sources, replica_chunk)
+            self._storeDiaSourcesPartitions(sources, visit_time, replica_chunk, subchunk)
 
-        if forced_sources is not None:
+        if forced_sources is not None and len(forced_sources) > 0:
             forced_sources = self._add_apdb_part(forced_sources)
             self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk)
 
@@ -916,26 +953,9 @@ class ApdbCassandra(Apdb):
                 values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
             queries.add(self._preparer.prepare(query), values)
 
-        # Reassign in replica tables, only if replication is enabled
+        # TODO: (DM-50190) Replication for updated records is not implemented.
         if id2chunk_id:
-            # Filter out chunks that have been deleted already. There is a
-            # potential race with concurrent removal of chunks, but it
-            # should be handled by WHERE in UPDATE.
-            known_ids = set()
-            if replica_chunks := self.get_replica().getReplicaChunks():
-                known_ids = set(replica_chunk.id for replica_chunk in replica_chunks)
-            id2chunk_id = {key: value for key, value in id2chunk_id.items() if value in known_ids}
-            if id2chunk_id:
-                table_name = self._schema.tableName(ExtraTables.DiaSourceChunks)
-                for diaSourceId, ssObjectId in idMap.items():
-                    if replica_chunk := id2chunk_id.get(diaSourceId):
-                        query = (
-                            f'UPDATE "{self._keyspace}"."{table_name}" '
-                            ' SET "ssObjectId" = ?, "diaObjectId" = NULL '
-                            'WHERE "apdb_replica_chunk" = ? AND "diaSourceId" = ?'
-                        )
-                        values = (ssObjectId, replica_chunk, diaSourceId)
-                        queries.add(self._preparer.prepare(query), values)
+            warnings.warn("Replication of reassigned DisSource records is not implemented.", stacklevel=2)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
         with self._timer("source_reassign_time") as timer:
@@ -1100,15 +1120,20 @@ class ApdbCassandra(Apdb):
         partition = 0
 
         table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
-        query = (
-            f'INSERT INTO "{self._keyspace}"."{table_name}" '
-            "(partition, apdb_replica_chunk, last_update_time, unique_id) "
-            "VALUES (?, ?, ?, ?)"
-        )
+
+        columns = ["partition", "apdb_replica_chunk", "last_update_time", "unique_id"]
+        values = [partition, replica_chunk.id, timestamp, replica_chunk.unique_id]
+        if self._has_chunk_sub_partitions:
+            columns.append("has_subchunks")
+            values.append(True)
+
+        column_list = ", ".join(columns)
+        placeholders = ",".join(["%s"] * len(columns))
+        query = f'INSERT INTO "{self._keyspace}"."{table_name}" ({column_list}) VALUES ({placeholders})'
 
         self._session.execute(
-            self._preparer.prepare(query),
-            (partition, replica_chunk.id, timestamp, replica_chunk.unique_id),
+            query,
+            values,
             timeout=self.config.connection_config.write_timeout,
             execution_profile="write",
         )
@@ -1232,14 +1257,21 @@ class ApdbCassandra(Apdb):
 
         if replica_chunk is not None:
             extra_columns = dict(apdb_replica_chunk=replica_chunk.id, validityStart=visit_time_dt)
-            self._storeObjectsPandas(objs, ExtraTables.DiaObjectChunks, extra_columns=extra_columns)
+            table = ExtraTables.DiaObjectChunks
+            if self._has_chunk_sub_partitions:
+                table = ExtraTables.DiaObjectChunks2
+                # Use a random number for a second part of partitioning key so
+                # that different clients could wrtite to different partitions.
+                # This makes it not exactly reproducible.
+                extra_columns["apdb_replica_subchunk"] = random.randrange(self.config.replica_sub_chunk_count)
+            self._storeObjectsPandas(objs, table, extra_columns=extra_columns)
 
     def _storeDiaSources(
         self,
         table_name: ApdbTables,
         sources: pandas.DataFrame,
         replica_chunk: ReplicaChunk | None,
-    ) -> None:
+    ) -> int | None:
         """Store catalog of DIASources or DIAForcedSources from current visit.
 
         Parameters
@@ -1252,6 +1284,12 @@ class ApdbCassandra(Apdb):
             Time of the current visit.
         replica_chunk : `ReplicaChunk` or `None`
             Replica chunk identifier if replication is configured.
+
+        Returns
+        -------
+        subchunk : `int` or `None`
+            Subchunk number for resulting replica data, `None` if relication is
+            not enabled ot subchunking is not enabled.
         """
         # Time partitioning has to be based on midpointMjdTai, not visit_time
         # as visit_time is not really a visit time.
@@ -1273,16 +1311,31 @@ class ApdbCassandra(Apdb):
                     sub_frame.drop(columns="apdb_time_part", inplace=True)
                     self._storeObjectsPandas(sub_frame, table_name, time_part=time_part)
 
+        subchunk: int | None = None
         if replica_chunk is not None:
             extra_columns = dict(apdb_replica_chunk=replica_chunk.id)
-            if table_name is ApdbTables.DiaSource:
-                extra_table = ExtraTables.DiaSourceChunks
+            if self._has_chunk_sub_partitions:
+                subchunk = random.randrange(self.config.replica_sub_chunk_count)
+                extra_columns["apdb_replica_subchunk"] = subchunk
+                if table_name is ApdbTables.DiaSource:
+                    extra_table = ExtraTables.DiaSourceChunks2
+                else:
+                    extra_table = ExtraTables.DiaForcedSourceChunks2
             else:
-                extra_table = ExtraTables.DiaForcedSourceChunks
+                if table_name is ApdbTables.DiaSource:
+                    extra_table = ExtraTables.DiaSourceChunks
+                else:
+                    extra_table = ExtraTables.DiaForcedSourceChunks
             self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns)
 
+        return subchunk
+
     def _storeDiaSourcesPartitions(
-        self, sources: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
+        self,
+        sources: pandas.DataFrame,
+        visit_time: astropy.time.Time,
+        replica_chunk: ReplicaChunk | None,
+        subchunk: int | None,
     ) -> None:
         """Store mapping of diaSourceId to its partitioning values.
 
@@ -1292,12 +1345,19 @@ class ApdbCassandra(Apdb):
             Catalog containing DiaSource records
         visit_time : `astropy.time.Time`
             Time of the current visit.
+        replica_chunk : `ReplicaChunk` or `None`
+            Replication chunk, or `None` when replication is disabled.
+        subchunk : `int` or `None`
+            Replication sub-chunk, or `None` when replication is disabled or
+            sub-chunking is not used.
         """
         id_map = cast(pandas.DataFrame, sources[["diaSourceId", "apdb_part"]])
         extra_columns = {
             "apdb_time_part": self._time_partition(visit_time),
             "apdb_replica_chunk": replica_chunk.id if replica_chunk is not None else None,
         }
+        if self._has_chunk_sub_partitions:
+            extra_columns["apdb_replica_subchunk"] = subchunk
 
         self._storeObjectsPandas(
             id_map, ExtraTables.DiaSourceToPartition, extra_columns=extra_columns, time_part=None

@@ -136,6 +136,9 @@ class ApdbTest(TestCaseMixin, ABC):
     timestamp_type_name: str
     """Type name of timestamp columns in DataFrames returned from queries."""
 
+    extra_chunk_columns = 1
+    """Number of additional columns in chunk tables."""
+
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
         ApdbTables.DiaObject: 8,
@@ -194,7 +197,9 @@ class ApdbTest(TestCaseMixin, ABC):
         n_rows = sum(1 for row in catalog.rows())
         self.assertEqual(n_rows, rows)
         # One extra column for replica chunk id
-        self.assertEqual(len(catalog.column_names()), self.table_column_count[table] + 1)
+        self.assertEqual(
+            len(catalog.column_names()), self.table_column_count[table] + self.extra_chunk_columns
+        )
 
     def test_makeSchema(self) -> None:
         """Test for making APDB schema."""
