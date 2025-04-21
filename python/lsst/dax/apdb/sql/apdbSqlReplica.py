@@ -101,11 +101,11 @@ class ApdbSqlReplica(ApdbReplica):
 
     def getReplicaChunks(self) -> list[ReplicaChunk] | None:
         # docstring is inherited from a base class
-        if not self._schema.has_replica_chunks:
+        if not self._schema.replication_enabled:
             return None
 
         table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
-        assert table is not None, "has_replica_chunks=True means it must be defined"
+        assert table is not None, "replication_enabled=True means it must be defined"
         query = sql.select(
             table.columns["apdb_replica_chunk"], table.columns["last_update_time"], table.columns["unique_id"]
         ).order_by(table.columns["last_update_time"])
@@ -121,7 +121,7 @@ class ApdbSqlReplica(ApdbReplica):
 
     def deleteReplicaChunks(self, chunks: Iterable[int]) -> None:
         # docstring is inherited from a base class
-        if not self._schema.has_replica_chunks:
+        if not self._schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
 
         table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
@@ -154,7 +154,7 @@ class ApdbSqlReplica(ApdbReplica):
         """Return catalog of records for given insert identifiers, common
         implementation for all DIA tables.
         """
-        if not self._schema.has_replica_chunks:
+        if not self._schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
 
         table = self._schema.get_table(table_enum)

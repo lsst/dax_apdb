@@ -32,7 +32,7 @@ __all__ = [
 ]
 
 import logging
-from collections.abc import Collection, Iterator, Sequence
+from collections.abc import Collection, Iterable, Iterator, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -43,13 +43,14 @@ import pandas
 # If cassandra-driver is not there the module can still be imported
 # but things will not work.
 try:
-    from cassandra.cluster import Session
-    from cassandra.concurrent import execute_concurrent
+    import cassandra.concurrent
+    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Session
     from cassandra.query import PreparedStatement
 
     CASSANDRA_IMPORTED = True
 except ImportError:
     CASSANDRA_IMPORTED = False
+    EXEC_PROFILE_DEFAULT = object()
 
 from ..apdbReplica import ApdbTableData
 
@@ -76,6 +77,28 @@ class ApdbCassandraTableData(ApdbTableData):
         if self._columns != other._columns:
             raise ValueError(f"Different columns returned by queries: {self._columns} and {other._columns}")
         self._rows.extend(other._rows)
+
+    def project(self, *, drop: Iterable[str] = set()) -> None:
+        """Modify data in place by droppiing some columns."""
+        drop_set = set(drop)
+        if not drop_set:
+            return
+
+        drop_idx = []
+        for idx, col_name in enumerate(self._columns):
+            if col_name in drop_set:
+                drop_idx.append(idx)
+        # Have to reverse it so deletion does not change index.
+        drop_idx.reverse()
+
+        for row_idx in range(len(self._rows)):
+            row = list(self._rows[row_idx])
+            for idx in drop_idx:
+                del row[idx]
+            self._rows[row_idx] = tuple(row)
+
+        for idx in drop_idx:
+            del self._columns[idx]
 
     def __iter__(self) -> Iterator[tuple]:
         """Make it look like a row iterator, needed for some odd logic."""
@@ -147,6 +170,24 @@ def raw_data_factory(colnames: list[str], rows: list[tuple]) -> ApdbCassandraTab
     return ApdbCassandraTableData(colnames, rows)
 
 
+def execute_concurrent(
+    session: Session,
+    statements: list[tuple],
+    *,
+    execution_profile: object = EXEC_PROFILE_DEFAULT,
+    concurrency: int = 100,
+) -> None:
+    """Wrapp call to `cassandra.concurrent.execute_concurrent` to avoid
+    importing cassandra in other modules.
+    """
+    cassandra.concurrent.execute_concurrent(
+        session,
+        statements,
+        concurrency=concurrency,
+        execution_profile=execution_profile,
+    )
+
+
 def select_concurrent(
     session: Session, statements: list[tuple], execution_profile: str, concurrency: int
 ) -> pandas.DataFrame | ApdbCassandraTableData | list:
@@ -176,7 +217,7 @@ def select_concurrent(
     This method can raise any exception that is raised by one of the provided
     statements.
     """
-    results = execute_concurrent(
+    results = cassandra.concurrent.execute_concurrent(
         session,
         statements,
         results_generator=True,

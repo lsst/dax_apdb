@@ -217,6 +217,11 @@ class ApdbCassandraConfig(ApdbConfig):
         ),
     )
 
+    replica_sub_chunk_count: int = Field(
+        default=64,
+        description="Number of sub-partitions in replica chunk tables.",
+    )
+
     batch_statement_limit: int = Field(
         default=65_535,
         description=(

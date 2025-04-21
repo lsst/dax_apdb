@@ -89,7 +89,7 @@ class ApdbSqlSchema(ApdbSchema):
         DiaSource table instance
     forcedSources : `sqlalchemy.Table`
         DiaForcedSource table instance
-    has_replica_chunks : `bool`
+    replication_enabled : `bool`
         If true then schema has tables for replication chunks.
 
     Parameters
@@ -313,17 +313,9 @@ class ApdbSqlSchema(ApdbSchema):
         return [column for column in table.columns if column.name not in exclude_columns]
 
     @property
-    def has_replica_chunks(self) -> bool:
-        """Whether insert ID tables are to be used (`bool`)."""
-        if self._has_replica_chunks is None:
-            self._has_replica_chunks = self._enable_replica and self._check_replica_chunks()
-        return self._has_replica_chunks
-
-    def _check_replica_chunks(self) -> bool:
-        """Check whether database has tables for tracking insert IDs."""
-        inspector = sqlalchemy.inspect(self._engine)
-        db_tables = set(inspector.get_table_names(schema=self._metadata.schema))
-        return ExtraTables.ApdbReplicaChunks.table_name(self._prefix) in db_tables
+    def replication_enabled(self) -> bool:
+        """True if replication is enabled (`bool`)."""
+        return self._enable_replica
 
     def _make_apdb_tables(self, mysql_engine: str = "InnoDB") -> Mapping[ApdbTables, schema_model.Table]:
         """Generate schema for regular tables.
