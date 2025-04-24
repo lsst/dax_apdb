@@ -199,16 +199,19 @@ def _metrics_log_to_influx(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "-t",
         "--extra-tags",
-        help="Extra tags and their values, comma-separated.",
+        help=(
+            "Extra tags and their values, comma-separated. "
+            "If tag name is prefixed with minus it will be removed."
+        ),
         default="",
-        metavar="TAG=VALUE[,TAG=VALUE...]",
+        metavar="TAG=VALUE[,-TAG][,TAG=VALUE...]",
     )
     parser.add_argument(
-        "-r",
-        "--replication",
-        help="Log is produced by replication service.",
-        action="store_true",
-        default=False,
+        "-m",
+        "--mode",
+        help="Source of log file.",
+        choices=["ap_proto", "pipeline", "replication"],
+        default="ap_proto",
     )
     parser.add_argument(
         "-p",

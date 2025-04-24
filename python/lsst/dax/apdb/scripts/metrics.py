@@ -54,6 +54,16 @@ _LOG_LINE_RE_REPLICATION = re.compile(
     re.VERBOSE,
 )
 
+_LOG_LINE_RE_AP_PROTO = re.compile(
+    r"""
+    ^
+    .*[ ]\[INFO\][ ]\[.*?\][ ]apdb_metrics:
+    [ ](?P<metric>.*)
+    $
+    """,
+    re.VERBOSE,
+)
+
 # Error or warning message from cassandra logger.
 _LOG_LINE_CASSANDRA_RE = re.compile(
     r"""
@@ -92,13 +102,19 @@ _SKIP_METRICS_REPLICATION = {
     "version_check",
 }
 
+_SKIP_METRICS_AP_PROTO = {
+    "read_metadata_config",
+    "version_check",
+    "insert_build_time",
+}
+
 
 def metrics_log_to_influx(
     file: Iterable[str],
     context_keys: str,
     extra_tags: str,
     fix_row_count: bool,
-    replication: bool,
+    mode: str,
     prefix: str,
     no_header: bool,
     header_database: str,
@@ -116,9 +132,8 @@ def metrics_log_to_influx(
     fix_row_count : `bool`
         If True then extract records counts from pipeline messages instead of
         metrics. A workaround for broken metrics.
-    replication : `bool`
-        If True then the log is from replication service, otherwise it is a log
-        from AP pipeline.
+    mode : `str`
+        Source of the log, one of "ap_proto", "pipeline", "replication".
     prefix : `str`
         Prefix to add to each tag name.
     no_header : `bool`
@@ -128,10 +143,14 @@ def metrics_log_to_influx(
     """
     context_names = [name for name in context_keys.split(",") if name]
     tags: dict[str, Any] = {}
+    drop_tags: set[str] = set()
     for tag_val in extra_tags.split(","):
         if tag_val:
             tag, _, val = tag_val.partition("=")
-            tags[tag] = val
+            if tag.startswith("-"):
+                drop_tags.add(tag.strip("-"))
+            else:
+                tags[tag] = val
 
     if not no_header:
         print(
@@ -146,18 +165,19 @@ def metrics_log_to_influx(
         file = ["-"]
     for file_name in file:
         if file_name == "-":
-            _metrics_log_to_influx(sys.stdin, context_names, tags, fix_row_count, replication, prefix)
+            _metrics_log_to_influx(sys.stdin, context_names, tags, drop_tags, fix_row_count, mode, prefix)
         else:
             with open(file_name) as file_obj:
-                _metrics_log_to_influx(file_obj, context_names, tags, fix_row_count, replication, prefix)
+                _metrics_log_to_influx(file_obj, context_names, tags, drop_tags, fix_row_count, mode, prefix)
 
 
 def _metrics_log_to_influx(
     file: TextIO,
     context_keys: Iterable[str],
     extra_tags: dict[str, Any],
+    drop_tags: set[str],
     fix_row_count: bool,
-    replication: bool,
+    mode: str,
     prefix: str,
 ) -> None:
     """Parse metrics from a single file."""
@@ -165,11 +185,20 @@ def _metrics_log_to_influx(
     sources_count = -1
     forced_sources_count = -1
 
-    line_re = _LOG_LINE_RE_REPLICATION if replication else _LOG_LINE_RE_PIPELINE
+    match mode:
+        case "pipeline":
+            line_re = _LOG_LINE_RE_PIPELINE
+        case "replication":
+            line_re = _LOG_LINE_RE_REPLICATION
+        case "ap_proto":
+            line_re = _LOG_LINE_RE_AP_PROTO
+        case _:
+            raise ValueError(f"Unexpected mode: {mode}")
 
     for line in file:
         line = line.strip()
-        if fix_row_count and not replication:
+        if fix_row_count and mode == "pipeline":
+            # Counts come from separate AP messages.
             if match := _AP_PIPE_DIAOBJECTS_RE.search(line):
                 objects_count = int(match.group("count"))
             elif match := _AP_PIPE_DIASOURCES_RE.search(line):
@@ -179,12 +208,21 @@ def _metrics_log_to_influx(
 
         if match := line_re.match(line):
             metric_str = match.group("metric")
-            metric: dict[str, Any] = json.loads(metric_str)
+            try:
+                metric: dict[str, Any] = json.loads(metric_str)
+            except json.JSONDecodeError:
+                # Ignore parsing erors, sometimes it happens that lines are
+                # scrambled.
+                continue
             tags = dict(extra_tags)
 
             name: str = metric["name"]
-            if replication and name in _SKIP_METRICS_REPLICATION:
-                continue
+            if mode == "replication":
+                if name in _SKIP_METRICS_REPLICATION:
+                    continue
+            elif mode == "ap_proto":
+                if name in _SKIP_METRICS_AP_PROTO:
+                    continue
 
             timestamp: float = metric["timestamp"]
             for tag, tag_val in metric["tags"].items():
@@ -199,8 +237,11 @@ def _metrics_log_to_influx(
                 elif tags["table"].startswith("DiaForcedSource"):
                     values["row_count"] = forced_sources_count
 
-            if not replication and context_keys:
+            if mode == "pipeline" and context_keys:
                 tags.update(_extract_mdc(match, context_keys))
+
+            for tag in drop_tags:
+                tags.pop(tag, None)
 
             _print_metrics(prefix + name, tags, values, timestamp)
 
