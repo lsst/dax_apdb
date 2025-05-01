@@ -237,6 +237,7 @@ class ApdbCassandraReplica(ApdbReplica):
         table_data: ApdbCassandraTableData | None = None
         table_data_subchunk: ApdbCassandraTableData | None = None
 
+        table_name = self._schema.tableName(ExtraTables.replica_chunk_tables(False)[table])
         with self._timer("table_chunk_select_time", tags={"table": table_name}) as timer:
             if have_subchunks:
                 replica_table = ExtraTables.replica_chunk_tables(True)[table]
