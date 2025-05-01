@@ -94,6 +94,10 @@ class ApdbSqlReplica(ApdbReplica):
         """Create `Timer` instance given its name."""
         return Timer(name, *self._timer_args, tags=tags)
 
+    def schemaVersion(self) -> VersionTuple:
+        # Docstring inherited from base class.
+        return self._schema.schemaVersion()
+
     @classmethod
     def apdbReplicaImplementationVersion(cls) -> VersionTuple:
         # Docstring inherited from base class.
