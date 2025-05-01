@@ -955,7 +955,7 @@ class ApdbCassandra(Apdb):
 
         # TODO: (DM-50190) Replication for updated records is not implemented.
         if id2chunk_id:
-            warnings.warn("Replication of reassigned DisSource records is not implemented.", stacklevel=2)
+            warnings.warn("Replication of reassigned DiaSource records is not implemented.", stacklevel=2)
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
         with self._timer("source_reassign_time") as timer:
