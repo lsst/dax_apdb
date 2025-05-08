@@ -934,7 +934,7 @@ class ApdbCassandra(Apdb):
             raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
 
         # Reassign in standard tables
-        queries = cassandra.query.BatchStatement()
+        queries: list[tuple[cassandra.query.PreparedStatement, tuple]] = []
         table_name = self._schema.tableName(ApdbTables.DiaSource)
         for diaSourceId, ssObjectId in idMap.items():
             apdb_part, apdb_time_part = id2partitions[diaSourceId]
@@ -953,7 +953,7 @@ class ApdbCassandra(Apdb):
                     ' WHERE "apdb_part" = ? AND "apdb_time_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
-            queries.add(self._preparer.prepare(query), values)
+            queries.append((self._preparer.prepare(query), values))
 
         # TODO: (DM-50190) Replication for updated records is not implemented.
         if id2chunk_id:
@@ -961,7 +961,7 @@ class ApdbCassandra(Apdb):
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
         with self._timer("source_reassign_time") as timer:
-            self._session.execute(queries, execution_profile="write")
+            execute_concurrent(self._session, queries, execution_profile="write")
             timer.add_values(source_count=len(idMap))
 
     def dailyJob(self) -> None:
