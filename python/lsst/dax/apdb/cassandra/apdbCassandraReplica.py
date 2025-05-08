@@ -86,7 +86,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def schemaVersion(self) -> VersionTuple:
         # Docstring inherited from base class.
-        return self._schema.schemaVersion()
+        return self._apdb._db_versions.schema_version
 
     @classmethod
     def apdbReplicaImplementationVersion(cls) -> VersionTuple:
