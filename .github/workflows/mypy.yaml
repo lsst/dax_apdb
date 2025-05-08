@@ -9,3 +9,5 @@ on:
 jobs:
   call-workflow:
     uses: lsst/rubin_workflows/.github/workflows/mypy.yaml@main
+    with:
+      folders: "python tests"
