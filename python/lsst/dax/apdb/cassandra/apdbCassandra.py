@@ -1190,13 +1190,11 @@ class ApdbCassandra(Apdb):
             table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
             query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE apdb_part = ? AND "diaObjectId" = ?'
             statement = self._preparer.prepare(query)
-            batch = cassandra.query.BatchStatement()
+            queries = []
             for oid, (old_part, _) in moved_oids.items():
-                batch.add(statement, (old_part, oid))
+                queries.append((statement, (old_part, oid)))
             with self._timer("delete_object_last") as timer:
-                self._session.execute(
-                    batch, timeout=self.config.connection_config.write_timeout, execution_profile="write"
-                )
+                execute_concurrent(self._session, queries, execution_profile="write")
                 timer.add_values(row_count=len(moved_oids))
 
         # Add all new records to the map.
@@ -1204,20 +1202,13 @@ class ApdbCassandra(Apdb):
         query = f'INSERT INTO "{self._keyspace}"."{table_name}" ("diaObjectId", apdb_part) VALUES (?,?)'
         statement = self._preparer.prepare(query)
 
-        batch_size = self._batch_size(ExtraTables.DiaObjectLastToPartition)
-        batches = []
-        for chunk in chunk_iterable(new_partitions.items(), batch_size):
-            batch = cassandra.query.BatchStatement()
-            for oid, new_part in chunk:
-                batch.add(statement, (oid, new_part))
-            batches.append(batch)
+        queries = []
+        for oid, new_part in new_partitions.items():
+            queries.append((statement, (oid, new_part)))
 
         with self._timer("update_object_last_partition") as timer:
-            for batch in batches:
-                self._session.execute(
-                    batch, timeout=self.config.connection_config.write_timeout, execution_profile="write"
-                )
-                timer.add_values(row_count=len(batch))
+            execute_concurrent(self._session, queries, execution_profile="write")
+            timer.add_values(row_count=len(queries))
 
     def _storeDiaObjects(
         self, objs: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
