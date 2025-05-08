@@ -161,12 +161,12 @@ class ApdbReplica(ABC):
 
     @abstractmethod
     def schemaVersion(self) -> VersionTuple:
-        """Return version number for current APDB schema.
+        """Return version number of the database schema.
 
         Returns
         -------
         version : `VersionTuple`
-            Version of the schema defined in APDB database.
+            Version of the database schema.
         """
         raise NotImplementedError()
 
