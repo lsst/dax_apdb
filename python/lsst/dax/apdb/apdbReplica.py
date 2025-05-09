@@ -160,6 +160,17 @@ class ApdbReplica(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def schemaVersion(self) -> VersionTuple:
+        """Return version number of the database schema.
+
+        Returns
+        -------
+        version : `VersionTuple`
+            Version of the database schema.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def getReplicaChunks(self) -> list[ReplicaChunk] | None:
         """Return collection of replication chunks known to the database.
 

@@ -78,13 +78,22 @@ class ApdbSqlReplica(ApdbReplica):
         Instance of `ApdbSqlSchema` class for APDB database.
     engine : `sqlalchemy.engine.Engine`
         Engine for database access.
+    db_schema_version : `VersionTuple`
+        Version of the database schema.
     timer : `bool`, optional
         If `True` then log timing information.
     """
 
-    def __init__(self, schema: ApdbSqlSchema, engine: sqlalchemy.engine.Engine, timer: bool = False):
+    def __init__(
+        self,
+        schema: ApdbSqlSchema,
+        engine: sqlalchemy.engine.Engine,
+        db_schema_version: VersionTuple,
+        timer: bool = False,
+    ):
         self._schema = schema
         self._engine = engine
+        self._db_schema_version = db_schema_version
 
         self._timer_args: list[MonAgent | logging.Logger] = [_MON]
         if timer:
@@ -93,6 +102,10 @@ class ApdbSqlReplica(ApdbReplica):
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
         return Timer(name, *self._timer_args, tags=tags)
+
+    def schemaVersion(self) -> VersionTuple:
+        # Docstring inherited from base class.
+        return self._db_schema_version
 
     @classmethod
     def apdbReplicaImplementationVersion(cls) -> VersionTuple:

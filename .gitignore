@@ -1,4 +1,5 @@
 _build.*
+build/
 *.egg-info
 .sconsign.dblite
 config.log

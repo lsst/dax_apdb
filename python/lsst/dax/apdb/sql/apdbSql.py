@@ -173,7 +173,7 @@ class ApdbSql(Apdb):
             enable_replica=self.config.enable_replica,
         )
 
-        self._versionCheck(self._metadata)
+        self._db_schema_version = self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.pixelization.htm_level)
 
@@ -305,8 +305,10 @@ class ApdbSql(Apdb):
 
         return url_string
 
-    def _versionCheck(self, metadata: ApdbMetadataSql) -> None:
-        """Check schema version compatibility."""
+    def _versionCheck(self, metadata: ApdbMetadataSql) -> VersionTuple:
+        """Check schema version compatibility and return the database schema
+        version.
+        """
 
         def _get_version(key: str) -> VersionTuple:
             """Retrieve version number from given metadata key."""
@@ -341,6 +343,8 @@ class ApdbSql(Apdb):
                     f"Current replication code version {code_replica_version} "
                     f"is not compatible with database version {db_replica_version}"
                 )
+
+        return db_schema_version
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
@@ -447,7 +451,7 @@ class ApdbSql(Apdb):
 
     def get_replica(self) -> ApdbSqlReplica:
         """Return `ApdbReplica` instance for this database."""
-        return ApdbSqlReplica(self._schema, self._engine)
+        return ApdbSqlReplica(self._schema, self._engine, self._db_schema_version)
 
     def tableRowCount(self) -> dict[str, int]:
         """Return dictionary with the table names and row counts.
