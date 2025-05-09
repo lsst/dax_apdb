@@ -163,7 +163,7 @@ class ApdbCassandraPartitioningConfig(BaseModel):
     @field_validator("part_pixelization")
     @classmethod
     def check_pixelization(cls, v: str) -> str:
-        allowed = {"htm", "q3c", "mq3c"}
+        allowed = {"htm", "q3c", "mq3c", "healpix"}
         if v not in allowed:
             raise ValueError(f"Unexpected value for part_pixelization: {v}, allowed values: {allowed}")
         return v
