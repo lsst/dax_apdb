@@ -37,7 +37,8 @@ class Pixelization:
     Parameters
     ----------
     pixelization : `str`
-        Name of a pixelization type, one of ""htm", "q3c", or "mq3c"
+        Name of a pixelization type, one of ""htm", "q3c", "mq3c", or
+        "healpix".
     pix_level : `int`
         Pixelization level.
     pix_max_ranges : `int`
@@ -45,15 +46,22 @@ class Pixelization:
     """
 
     def __init__(self, pixelization: str, pix_level: int, pix_max_ranges: int):
+        self._pix_max_ranges = pix_max_ranges
+        self._is_healpix = False
+
         if pixelization == "htm":
             self.pixelator = sphgeom.HtmPixelization(pix_level)
         elif pixelization == "q3c":
             self.pixelator = sphgeom.Q3cPixelization(pix_level)
         elif pixelization == "mq3c":
             self.pixelator = sphgeom.Mq3cPixelization(pix_level)
+        elif pixelization == "healpix":
+            # Healpix does not support maxRanges.
+            self._pix_max_ranges = 0
+            self._is_healpix = True
+            self.pixelator = sphgeom.HealpixPixelization(pix_level)
         else:
             raise ValueError(f"unknown pixelization: {pixelization}")
-        self._pix_max_ranges = pix_max_ranges
 
     def pixels(self, region: sphgeom.Region) -> list[int]:
         """Compute set of the pixel indices for given region.
@@ -62,8 +70,9 @@ class Pixelization:
         ----------
         region : `lsst.sphgeom.Region`
         """
-        # we want finest set of pixels, so ask as many pixel as possible
-        ranges = self.pixelator.envelope(region, 1_000_000)
+        # We want finest set of pixels, so ask as many pixel as reasonable, but
+        # healpix does not support non-zero maxRanges.
+        ranges = self.pixelator.envelope(region, 0 if self._is_healpix else 1_000_000)
         indices = []
         for lower, upper in ranges:
             indices += list(range(lower, upper))
