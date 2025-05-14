@@ -27,6 +27,7 @@ import dataclasses
 import logging
 import random
 import warnings
+from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
 
@@ -67,6 +68,7 @@ from .apdbCassandraSchema import ApdbCassandraSchema, CreateTableOptions, ExtraT
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .cassandra_utils import (
     PreparedStatementCache,
+    execute_concurrent,
     literal,
     pandas_dataframe_factory,
     quote_id,
@@ -932,7 +934,7 @@ class ApdbCassandra(Apdb):
             raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
 
         # Reassign in standard tables
-        queries = cassandra.query.BatchStatement()
+        queries: list[tuple[cassandra.query.PreparedStatement, tuple]] = []
         table_name = self._schema.tableName(ApdbTables.DiaSource)
         for diaSourceId, ssObjectId in idMap.items():
             apdb_part, apdb_time_part = id2partitions[diaSourceId]
@@ -951,7 +953,7 @@ class ApdbCassandra(Apdb):
                     ' WHERE "apdb_part" = ? AND "apdb_time_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
-            queries.add(self._preparer.prepare(query), values)
+            queries.append((self._preparer.prepare(query), values))
 
         # TODO: (DM-50190) Replication for updated records is not implemented.
         if id2chunk_id:
@@ -959,7 +961,7 @@ class ApdbCassandra(Apdb):
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
         with self._timer("source_reassign_time") as timer:
-            self._session.execute(queries, execution_profile="write")
+            execute_concurrent(self._session, queries, execution_profile="write")
             timer.add_values(source_count=len(idMap))
 
     def dailyJob(self) -> None:
@@ -1188,13 +1190,11 @@ class ApdbCassandra(Apdb):
             table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
             query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE apdb_part = ? AND "diaObjectId" = ?'
             statement = self._preparer.prepare(query)
-            batch = cassandra.query.BatchStatement()
+            queries = []
             for oid, (old_part, _) in moved_oids.items():
-                batch.add(statement, (old_part, oid))
+                queries.append((statement, (old_part, oid)))
             with self._timer("delete_object_last") as timer:
-                self._session.execute(
-                    batch, timeout=self.config.connection_config.write_timeout, execution_profile="write"
-                )
+                execute_concurrent(self._session, queries, execution_profile="write")
                 timer.add_values(row_count=len(moved_oids))
 
         # Add all new records to the map.
@@ -1202,20 +1202,13 @@ class ApdbCassandra(Apdb):
         query = f'INSERT INTO "{self._keyspace}"."{table_name}" ("diaObjectId", apdb_part) VALUES (?,?)'
         statement = self._preparer.prepare(query)
 
-        batch_size = self._batch_size(ExtraTables.DiaObjectLastToPartition)
-        batches = []
-        for chunk in chunk_iterable(new_partitions.items(), batch_size):
-            batch = cassandra.query.BatchStatement()
-            for oid, new_part in chunk:
-                batch.add(statement, (oid, new_part))
-            batches.append(batch)
+        queries = []
+        for oid, new_part in new_partitions.items():
+            queries.append((statement, (oid, new_part)))
 
         with self._timer("update_object_last_partition") as timer:
-            for batch in batches:
-                self._session.execute(
-                    batch, timeout=self.config.connection_config.write_timeout, execution_profile="write"
-                )
-                timer.add_values(row_count=len(batch))
+            execute_concurrent(self._session, queries, execution_profile="write")
+            timer.add_values(row_count=len(queries))
 
     def _storeDiaObjects(
         self, objs: pandas.DataFrame, visit_time: astropy.time.Time, replica_chunk: ReplicaChunk | None
@@ -1408,9 +1401,8 @@ class ApdbCassandra(Apdb):
         fields += extra_fields
 
         # check that all partitioning and clustering columns are defined
-        required_columns = self._schema.partitionColumns(table_name) + self._schema.clusteringColumns(
-            table_name
-        )
+        partition_columns = self._schema.partitionColumns(table_name)
+        required_columns = partition_columns + self._schema.clusteringColumns(table_name)
         missing_columns = [column for column in required_columns if column not in fields]
         if missing_columns:
             raise ValueError(f"Primary key columns are missing from catalog: {missing_columns}")
@@ -1421,6 +1413,39 @@ class ApdbCassandra(Apdb):
         batch_size = self._batch_size(table_name)
 
         with self._timer("insert_build_time", tags={"table": table_name.name}):
+
+            # Multi-partition batches are problematic in general, so we want to
+            # group records in a batch by their partition key.
+            values_by_key: dict[tuple, list[list]] = defaultdict(list)
+            for rec in records.itertuples(index=False):
+                values = []
+                partitioning_values: dict[str, Any] = {}
+                for field in df_fields:
+                    if field not in column_map:
+                        continue
+                    value = getattr(rec, field)
+                    if column_map[field].datatype is felis.datamodel.DataType.timestamp:
+                        if isinstance(value, pandas.Timestamp):
+                            value = value.to_pydatetime()
+                        elif value is pandas.NaT:
+                            value = None
+                        else:
+                            # Assume it's seconds since epoch, Cassandra
+                            # datetime is in milliseconds
+                            value = int(value * 1000)
+                    value = literal(value)
+                    values.append(UNSET_VALUE if value is None else value)
+                    if field in partition_columns:
+                        partitioning_values[field] = value
+                for field in extra_fields:
+                    value = literal(extra_columns[field])
+                    values.append(UNSET_VALUE if value is None else value)
+                    if field in partition_columns:
+                        partitioning_values[field] = value
+
+                key = tuple(partitioning_values[field] for field in partition_columns)
+                values_by_key[key].append(values)
+
             table = self._schema.tableName(table_name)
             if time_part is not None:
                 table = f"{table}_{time_part}"
@@ -1431,38 +1456,18 @@ class ApdbCassandra(Apdb):
             # Cassandra has 64k limit on batch size, normally that should be
             # enough but some tests generate too many forced sources.
             queries = []
-            for rec_chunk in chunk_iterable(records.itertuples(index=False), batch_size):
-                batch = cassandra.query.BatchStatement()
-                for rec in rec_chunk:
-                    values = []
-                    for field in df_fields:
-                        if field not in column_map:
-                            continue
-                        value = getattr(rec, field)
-                        if column_map[field].datatype is felis.datamodel.DataType.timestamp:
-                            if isinstance(value, pandas.Timestamp):
-                                value = value.to_pydatetime()
-                            elif value is pandas.NaT:
-                                value = None
-                            else:
-                                # Assume it's seconds since epoch, Cassandra
-                                # datetime is in milliseconds
-                                value = int(value * 1000)
-                        value = literal(value)
-                        values.append(UNSET_VALUE if value is None else value)
-                    for field in extra_fields:
-                        value = literal(extra_columns[field])
-                        values.append(UNSET_VALUE if value is None else value)
-                    batch.add(statement, values)
-                queries.append(batch)
+            for key_values in values_by_key.values():
+                for values_chunk in chunk_iterable(key_values, batch_size):
+                    batch = cassandra.query.BatchStatement()
+                    for row_values in values_chunk:
+                        batch.add(statement, row_values)
+                    queries.append((batch, None))
+                    assert batch.routing_key is not None and batch.keyspace is not None
 
         _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
         with self._timer("insert_time", tags={"table": table_name.name}) as timer:
-            for batch in queries:
-                self._session.execute(
-                    batch, timeout=self.config.connection_config.write_timeout, execution_profile="write"
-                )
-            timer.add_values(row_count=len(records))
+            execute_concurrent(self._session, queries, execution_profile="write")
+            timer.add_values(row_count=len(records), num_batches=len(queries))
 
     def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spatial partition for each record and add it to a
