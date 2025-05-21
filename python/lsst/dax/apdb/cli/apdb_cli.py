@@ -192,8 +192,8 @@ def _metrics_log_to_influx(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "-c",
         "--context-keys",
-        help=("Names of keys to extract from message context, comma-separated. " "Default: %(default)s "),
-        default="instrument,visit,detector,day_obs",
+        help=("Names of keys to extract from message context, comma-separated."),
+        default="",
         metavar="KEY[,KEY,...]",
     )
     parser.add_argument(
