@@ -1102,14 +1102,16 @@ class ApdbCassandra(Apdb):
                         self.config.connection_config.read_concurrency,
                     ),
                 )
+                timer.add_values(row_count_from_db=len(catalog))
+
+                # filter by given object IDs
+                if len(object_id_set) > 0:
+                    catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
+
+                # precise filtering on midpointMjdTai
+                catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] > mjd_start])
+
                 timer.add_values(row_count=len(catalog))
-
-        # filter by given object IDs
-        if len(object_id_set) > 0:
-            catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
-
-        # precise filtering on midpointMjdTai
-        catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] > mjd_start])
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
