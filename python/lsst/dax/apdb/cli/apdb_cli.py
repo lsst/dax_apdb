@@ -31,7 +31,7 @@ from . import options
 from .logging_cli import LoggingCli
 
 
-def main(args: Sequence[str] | None = None) -> None:
+def main(args: Sequence[str] | None = None) -> int | None:
     """APDB command line tools."""
     parser = argparse.ArgumentParser(description="APDB command line tools")
     log_cli = LoggingCli(parser)
@@ -45,6 +45,7 @@ def main(args: Sequence[str] | None = None) -> None:
     _metadata_subcommand(subparsers)
     _convert_legacy_config_subcommand(subparsers)
     _metrics_subcommand(subparsers)
+    _replication_subcommand(subparsers)
 
     parsed_args = parser.parse_args(args)
     log_cli.process_args(parsed_args)
@@ -52,7 +53,7 @@ def main(args: Sequence[str] | None = None) -> None:
     kwargs = vars(parsed_args)
     # Strip keywords not understood by scripts.
     method = kwargs.pop("method")
-    method(**kwargs)
+    return method(**kwargs)
 
 
 def _create_sql_subcommand(subparsers: argparse._SubParsersAction) -> None:
@@ -239,3 +240,38 @@ def _metrics_log_to_influx(subparsers: argparse._SubParsersAction) -> None:
         default=False,
     )
     parser.set_defaults(method=scripts.metrics_log_to_influx)
+
+
+def _replication_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("replication", help="Operations with replication tables produced by APDB.")
+    subparsers = parser.add_subparsers(title="available subcommands", required=True)
+    _replication_list_chunks_subcommand(subparsers)
+    _replication_delete_chunks_subcommand(subparsers)
+
+
+def _replication_list_chunks_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("list-chunks", help="Print full list of replication chunks in APDB.")
+    parser.add_argument("apdb_config", help="Path to the APDB configuration.")
+    parser.set_defaults(method=scripts.replication_list_chunks)
+
+
+def _replication_delete_chunks_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("delete-chunks", help="Delete replication chunks from APDB.")
+    parser.add_argument("apdb_config", help="Path to the APDB configuration.")
+    parser.add_argument(
+        "chunk_id", type=int, help="Chunk ID to delete, all earlier chunks are deleted as well."
+    )
+    parser.add_argument(
+        "-p",
+        "--print-only",
+        help="Only print the list ochunks that will be deleted, but do not delete them.",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--force",
+        help="Do not ask for confirmation before deleting chunks.",
+        action="store_true",
+        default=False,
+    )
+    parser.set_defaults(method=scripts.replication_delete_chunks)
