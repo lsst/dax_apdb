@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbCassandra"]
 
 import dataclasses
+import datetime
 import logging
 import random
 import warnings
@@ -893,6 +894,9 @@ class ApdbCassandra(Apdb):
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
 
+        # Current time as milliseconds since epoch.
+        reassignTime = int(datetime.datetime.now(tz=datetime.UTC).timestamp() * 1000)
+
         # To update a record we need to know its exact primary key (including
         # partition key) so we start by querying for diaSourceId to find the
         # primary keys.
@@ -942,17 +946,17 @@ class ApdbCassandra(Apdb):
             if self.config.partitioning.time_partition_tables:
                 query = (
                     f'UPDATE "{self._keyspace}"."{table_name}_{apdb_time_part}"'
-                    ' SET "ssObjectId" = ?, "diaObjectId" = NULL'
+                    ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
                     ' WHERE "apdb_part" = ? AND "diaSourceId" = ?'
                 )
-                values = (ssObjectId, apdb_part, diaSourceId)
+                values = (ssObjectId, reassignTime, apdb_part, diaSourceId)
             else:
                 query = (
                     f'UPDATE "{self._keyspace}"."{table_name}"'
-                    ' SET "ssObjectId" = ?, "diaObjectId" = NULL'
+                    ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
                     ' WHERE "apdb_part" = ? AND "apdb_time_part" = ? AND "diaSourceId" = ?'
                 )
-                values = (ssObjectId, apdb_part, apdb_time_part, diaSourceId)
+                values = (ssObjectId, reassignTime, apdb_part, apdb_time_part, diaSourceId)
             queries.append((self._preparer.prepare(query), values))
 
         # TODO: (DM-50190) Replication for updated records is not implemented.

@@ -700,6 +700,8 @@ class ApdbSql(Apdb):
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
 
+        reassignTime = datetime.datetime.now(tz=datetime.UTC)
+
         table = self._schema.get_table(ApdbTables.DiaSource)
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
 
@@ -709,7 +711,7 @@ class ApdbSql(Apdb):
             # is missing.
             missing_ids: list[int] = []
             for key, value in idMap.items():
-                params = dict(srcId=key, diaObjectId=0, ssObjectId=value)
+                params = dict(srcId=key, diaObjectId=0, ssObjectId=value, ssObjectReassocTime=reassignTime)
                 result = conn.execute(query, params)
                 if result.rowcount == 0:
                     missing_ids.append(key)
