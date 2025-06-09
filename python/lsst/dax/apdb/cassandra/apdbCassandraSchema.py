@@ -105,10 +105,13 @@ class ExtraTables(enum.Enum):
     """Name of the table for DIAForcedSource chunk data."""
 
     DiaSourceToPartition = "DiaSourceToPartition"
-    "Maps diaSourceId to its partition values (pixel and time)."
+    """Maps diaSourceId to its partition values (pixel and time)."""
 
     DiaObjectLastToPartition = "DiaObjectLastToPartition"
-    "Maps last diaObjectId version to its partition (pixel)."
+    """Maps last diaObjectId version to its partition (pixel)."""
+
+    ApdbVisitDetector = "ApdbVisitDetector"
+    """Records attempted processing of visit/detector."""
 
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
@@ -193,6 +196,7 @@ class ApdbCassandraSchema(ApdbSchema):
         time_partition_tables: bool = False,
         enable_replica: bool = False,
         has_chunk_sub_partitions: bool = True,
+        has_visit_detector_table: bool = True,
     ):
         super().__init__(schema_file, schema_name)
 
@@ -202,6 +206,7 @@ class ApdbCassandraSchema(ApdbSchema):
         self._time_partition_tables = time_partition_tables
         self._enable_replica = enable_replica
         self._has_chunk_sub_partitions = has_chunk_sub_partitions
+        self._has_visit_detector_table = has_visit_detector_table
 
         self._apdb_tables = self._apdb_tables_schema(time_partition_tables)
         self._extra_tables = self._extra_tables_schema()
@@ -270,6 +275,31 @@ class ApdbCassandraSchema(ApdbSchema):
     def _extra_tables_schema(self) -> Mapping[ExtraTables, schema_model.Table]:
         """Generate schema for extra tables."""
         extra_tables: dict[ExtraTables, schema_model.Table] = {}
+
+        if self._has_visit_detector_table:
+            columns = [
+                schema_model.Column(
+                    id="#visit",
+                    name="visit",
+                    datatype=felis.datamodel.DataType.long,
+                    nullable=False,
+                ),
+                schema_model.Column(
+                    id="#detector",
+                    name="detector",
+                    datatype=felis.datamodel.DataType.short,
+                    nullable=False,
+                ),
+            ]
+            extra_tables[ExtraTables.ApdbVisitDetector] = schema_model.Table(
+                id="#" + ExtraTables.ApdbVisitDetector.value,
+                name=ExtraTables.ApdbVisitDetector.table_name(self._prefix),
+                columns=columns,
+                primary_key=[],
+                indexes=[],
+                constraints=[],
+                annotations={"cassandra:partitioning_columns": ["visit", "detector"]},
+            )
 
         # This table maps DiaSource ID to its partitions in DiaSource table and
         # DiaSourceChunks tables.
@@ -615,10 +645,30 @@ class ApdbCassandraSchema(ApdbSchema):
             )
             self._session.execute(query)
 
+        table_options = self._update_table_options(table_options)
         for table in self._apdb_tables:
             self._makeTableSchema(table, drop, part_range, table_options)
         for extra_table in self._extra_tables:
             self._makeTableSchema(extra_table, drop, part_range, table_options)
+
+    def _update_table_options(self, options: CreateTableOptions | None) -> CreateTableOptions | None:
+        """Extend table options with options for internal tables."""
+        # We want to add TTL option to ApdbVisitDetector table.
+        if not self._has_visit_detector_table:
+            return options
+
+        if not options:
+            options = CreateTableOptions()
+
+        # set both TTL and gc_grace_seconds to 24h.
+        options.table_options.append(
+            TableOptions(
+                tables=[ExtraTables.ApdbVisitDetector.table_name(self._prefix)],
+                options="default_time_to_live=86400 AND gc_grace_seconds=86400",
+            )
+        )
+
+        return options
 
     def _makeTableSchema(
         self,
