@@ -85,7 +85,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 1)
+VERSION = VersionTuple(0, 1, 2)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -225,6 +225,9 @@ class ApdbCassandra(Apdb):
                 self._db_versions.replica_version
             )
 
+        # Since version 0.1.2 we have an extra table for visit/detector.
+        self._has_visit_detector_table = self._db_versions.code_version >= VersionTuple(0, 1, 2)
+
         self._pixelization = Pixelization(
             self.config.partitioning.part_pixelization,
             self.config.partitioning.part_pix_level,
@@ -240,6 +243,7 @@ class ApdbCassandra(Apdb):
             time_partition_tables=self.config.partitioning.time_partition_tables,
             enable_replica=self.config.enable_replica,
             has_chunk_sub_partitions=self._has_chunk_sub_partitions,
+            has_visit_detector_table=self._has_visit_detector_table,
         )
         self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
@@ -801,6 +805,17 @@ class ApdbCassandra(Apdb):
         visit_time: astropy.time.Time,
     ) -> bool:
         # docstring is inherited from a base class
+        # If ApdbDetectorVisit table exists just check it.
+        if self._has_visit_detector_table:
+            table_name = self._schema.tableName(ExtraTables.ApdbVisitDetector)
+            query = (
+                f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" '
+                "WHERE visit = %s AND detector = %s"
+            )
+            with self._timer("contains_visit_detector_time"):
+                result = self._session.execute(query, (visit, detector))
+                return bool(result.one()[0])
+
         # The order of checks corresponds to order in store(), on potential
         # store failure earlier tables have higher probability containing
         # stored records. With per-partition tables there will be many tables
@@ -861,6 +876,25 @@ class ApdbCassandra(Apdb):
         forced_sources: pandas.DataFrame | None = None,
     ) -> None:
         # docstring is inherited from a base class
+        if self._has_visit_detector_table:
+            # Store visit/detector in a special table, this has to be done
+            # before all other writes so if there is a failure at any point
+            # later we still have a record for attempted write.
+            visit_detector: set[tuple[int, int]] = set()
+            for df in sources, forced_sources:
+                if df is not None and not df.empty:
+                    df = df[["visit", "detector"]]
+                    for visit, detector in df.itertuples(index=False):
+                        visit_detector.add((visit, detector))
+
+            if visit_detector:
+                # Typically there is only one entry, do not bother with
+                # concurrency.
+                table_name = self._schema.tableName(ExtraTables.ApdbVisitDetector)
+                query = f'INSERT INTO "{self._keyspace}"."{table_name}" (visit, detector) VALUES (%s, %s)'
+                for item in visit_detector:
+                    self._session.execute(query, item, execution_profile="write")
+
         objects = self._fix_input_timestamps(objects)
         if sources is not None:
             sources = self._fix_input_timestamps(sources)
