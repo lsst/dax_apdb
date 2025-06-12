@@ -681,6 +681,7 @@ class ApdbCassandra(Apdb):
                 prefix=config.prefix,
                 time_partition_tables=config.partitioning.time_partition_tables,
                 enable_replica=config.enable_replica,
+                replica_skips_diaobjects=config.replica_skips_diaobjects,
             )
 
             # Ask schema to create all tables.
@@ -1453,7 +1454,6 @@ class ApdbCassandra(Apdb):
         batch_size = self._batch_size(table_name)
 
         with self._timer("insert_build_time", tags={"table": table_name.name}):
-
             # Multi-partition batches are problematic in general, so we want to
             # group records in a batch by their partition key.
             values_by_key: dict[tuple, list[list]] = defaultdict(list)
