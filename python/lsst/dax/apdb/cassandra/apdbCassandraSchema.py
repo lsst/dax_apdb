@@ -192,6 +192,7 @@ class ApdbCassandraSchema(ApdbSchema):
         prefix: str = "",
         time_partition_tables: bool = False,
         enable_replica: bool = False,
+        replica_skips_diaobjects: bool = False,
         has_chunk_sub_partitions: bool = True,
     ):
         super().__init__(schema_file, schema_name)
@@ -201,6 +202,7 @@ class ApdbCassandraSchema(ApdbSchema):
         self._prefix = prefix
         self._time_partition_tables = time_partition_tables
         self._enable_replica = enable_replica
+        self._replica_skips_diaobjects = replica_skips_diaobjects
         self._has_chunk_sub_partitions = has_chunk_sub_partitions
 
         self._apdb_tables = self._apdb_tables_schema(time_partition_tables)
@@ -616,6 +618,8 @@ class ApdbCassandraSchema(ApdbSchema):
             self._session.execute(query)
 
         for table in self._apdb_tables:
+            if table is ApdbTables.DiaObject and self._enable_replica and self._replica_skips_diaobjects:
+                continue
             self._makeTableSchema(table, drop, part_range, table_options)
         for extra_table in self._extra_tables:
             self._makeTableSchema(extra_table, drop, part_range, table_options)
