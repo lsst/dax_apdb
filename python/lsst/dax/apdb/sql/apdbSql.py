@@ -55,6 +55,7 @@ from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
 from .apdbMetadataSql import ApdbMetadataSql
+from .apdbSqlAdmin import ApdbSqlAdmin
 from .apdbSqlReplica import ApdbSqlReplica
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from .config import ApdbSqlConfig
@@ -743,6 +744,11 @@ class ApdbSql(Apdb):
     def metadata(self) -> ApdbMetadata:
         # docstring is inherited from a base class
         return self._metadata
+
+    @property
+    def admin(self) -> ApdbSqlAdmin:
+        # docstring is inherited from a base class
+        return ApdbSqlAdmin(self.pixelator)
 
     def _getDiaSourcesInRegion(self, region: Region, visit_time: astropy.time.Time) -> pandas.DataFrame:
         """Return catalog of DiaSource instances from given region.

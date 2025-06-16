@@ -38,6 +38,7 @@ from .factory import make_apdb
 from .schema_model import Table
 
 if TYPE_CHECKING:
+    from .apdbAdmin import ApdbAdmin
     from .apdbMetadata import ApdbMetadata
 
 
@@ -350,4 +351,10 @@ class Apdb(ABC):
     @abstractmethod
     def metadata(self) -> ApdbMetadata:
         """Object controlling access to APDB metadata (`ApdbMetadata`)."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def admin(self) -> ApdbAdmin:
+        """Object providing adminitrative interface for APDB (`ApdbAdmin`)."""
         raise NotImplementedError()
