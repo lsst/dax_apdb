@@ -54,7 +54,10 @@ class LoggingCli:
         """Configure Python logging based on command line options."""
         global_level = logging.INFO
         # Suppress chatty cassandra.cluster logger by default.
-        logger_levels: dict[str, int] = {"cassandra.cluster": logging.WARNING}
+        logger_levels: dict[str, int] = {
+            "cassandra.cluster": logging.WARNING,
+            "botocore": logging.WARNING,
+        }
         for level_str in args.log_level:
             for spec in level_str.split(","):
                 logger_name, sep, level_name = spec.rpartition("=")

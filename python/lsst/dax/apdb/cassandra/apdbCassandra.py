@@ -64,6 +64,7 @@ from ..pixelization import Pixelization
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
+from .apdbCassandraAdmin import ApdbCassandraAdmin
 from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema, CreateTableOptions, ExtraTables
 from .apdbMetadataCassandra import ApdbMetadataCassandra
@@ -1017,6 +1018,11 @@ class ApdbCassandra(Apdb):
     def metadata(self) -> ApdbMetadata:
         # docstring is inherited from a base class
         return self._metadata
+
+    @property
+    def admin(self) -> ApdbCassandraAdmin:
+        # docstring is inherited from a base class
+        return ApdbCassandraAdmin(self)
 
     @classmethod
     def _makeProfiles(cls, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
