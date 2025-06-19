@@ -25,7 +25,7 @@ __all__ = ["ApdbCassandraReplica"]
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import astropy.time
 
@@ -34,10 +34,9 @@ from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
 from ..timer import Timer
 from ..versionTuple import VersionTuple
-from .apdbCassandraSchema import ApdbCassandraSchema, ExtraTables
+from .apdbCassandraSchema import ExtraTables
 from .cassandra_utils import (
     ApdbCassandraTableData,
-    PreparedStatementCache,
     execute_concurrent,
     select_concurrent,
 )
@@ -63,22 +62,12 @@ class ApdbCassandraReplica(ApdbReplica):
     ----------
     apdb : `ApdbCassandra`
         Instance of ApbdCassandra for database.
-    schema : `ApdbCassandraSchema`
-        Instance of ApdbCassandraSchema for database.
-    session
-        Instance of cassandra session type.
     """
 
-    def __init__(self, apdb: ApdbCassandra, schema: ApdbCassandraSchema, session: Any):
+    def __init__(self, apdb: ApdbCassandra):
         # Note that ApdbCassandra instance must stay alive while this object
         # exists, so we keep reference to it.
         self._apdb = apdb
-        self._schema = schema
-        self._session = session
-        self._config = apdb.config
-
-        # Cache for prepared statements
-        self._preparer = PreparedStatementCache(self._session)
 
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
@@ -86,7 +75,8 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def schemaVersion(self) -> VersionTuple:
         # Docstring inherited from base class.
-        return self._apdb._db_versions.schema_version
+        context = self._apdb._context
+        return context.db_versions.schema_version
 
     @classmethod
     def apdbReplicaImplementationVersion(cls) -> VersionTuple:
@@ -100,24 +90,27 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def getReplicaChunks(self) -> list[ReplicaChunk] | None:
         # docstring is inherited from a base class
-        if not self._schema.replication_enabled:
+        context = self._apdb._context
+        config = context.config
+
+        if not context.schema.replication_enabled:
             return None
 
         # everything goes into a single partition
         partition = 0
 
-        table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
+        table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
         # We want to avoid timezone mess so return timestamps as milliseconds.
         query = (
             "SELECT toUnixTimestamp(last_update_time), apdb_replica_chunk, unique_id "
-            f'FROM "{self._config.keyspace}"."{table_name}" WHERE partition = %s'
+            f'FROM "{config.keyspace}"."{table_name}" WHERE partition = %s'
         )
 
         with self._timer("chunks_select_time") as timer:
-            result = self._session.execute(
+            result = context.session.execute(
                 query,
                 (partition,),
-                timeout=self._config.connection_config.read_timeout,
+                timeout=config.connection_config.read_timeout,
                 execution_profile="read_tuples",
             )
             # order by last_update_time
@@ -134,7 +127,10 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def deleteReplicaChunks(self, chunks: Iterable[int]) -> None:
         # docstring is inherited from a base class
-        if not self._schema.replication_enabled:
+        context = self._apdb._context
+        config = context.config
+
+        if not context.schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
 
         # everything goes into a single partition
@@ -146,8 +142,8 @@ class ApdbCassandraReplica(ApdbReplica):
         chunk_table_params: list[tuple] = []
         for chunk in chunks:
             repl_table_params.append((partition, chunk))
-            if self._schema.has_chunk_sub_partitions:
-                for subchunk in range(self._config.replica_sub_chunk_count):
+            if context.schema.has_chunk_sub_partitions:
+                for subchunk in range(config.replica_sub_chunk_count):
                     chunk_table_params.append((chunk, subchunk))
             else:
                 chunk_table_params.append((chunk,))
@@ -155,30 +151,30 @@ class ApdbCassandraReplica(ApdbReplica):
         if not repl_table_params:
             return
 
-        table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
+        table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
         query = (
-            f'DELETE FROM "{self._config.keyspace}"."{table_name}" '
+            f'DELETE FROM "{config.keyspace}"."{table_name}" '
             f"WHERE partition = ? AND apdb_replica_chunk = ?"
         )
-        statement = self._preparer.prepare(query)
+        statement = context.preparer.prepare(query)
 
         queries = [(statement, param) for param in repl_table_params]
         with self._timer("chunks_delete_time") as timer:
-            execute_concurrent(self._session, queries)
+            execute_concurrent(context.session, queries)
             timer.add_values(row_count=len(queries))
 
         # Also remove those chunk_ids from Dia*Chunks tables.
-        tables = list(ExtraTables.replica_chunk_tables(self._schema.has_chunk_sub_partitions).values())
+        tables = list(ExtraTables.replica_chunk_tables(context.schema.has_chunk_sub_partitions).values())
         for table in tables:
-            table_name = self._schema.tableName(table)
-            query = f'DELETE FROM "{self._config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
-            if self._schema.has_chunk_sub_partitions:
+            table_name = context.schema.tableName(table)
+            query = f'DELETE FROM "{config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
+            if context.schema.has_chunk_sub_partitions:
                 query += " AND apdb_replica_subchunk = ?"
-            statement = self._preparer.prepare(query)
+            statement = context.preparer.prepare(query)
 
             queries = [(statement, param) for param in chunk_table_params]
             with self._timer("table_chunk_detele_time", tags={"table": table_name}) as timer:
-                execute_concurrent(self._session, queries)
+                execute_concurrent(context.session, queries)
                 timer.add_values(row_count=len(queries))
 
     def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
@@ -195,7 +191,10 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def _get_chunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
         """Return records from a particular table given set of insert IDs."""
-        if not self._schema.replication_enabled:
+        context = self._apdb._context
+        config = context.config
+
+        if not context.schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
 
         # We need to iterate few times.
@@ -205,18 +204,18 @@ class ApdbCassandraReplica(ApdbReplica):
         # chunk table (e.g. DiaObjectChunks or DiaObjectChunks2). Chunk table
         # has a column which will be set to true for new table.
         has_chunk_sub_partitions: dict[int, bool] = {}
-        if self._schema.has_chunk_sub_partitions:
-            table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
+        if context.schema.has_chunk_sub_partitions:
+            table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
             chunks_str = ",".join(str(chunk_id) for chunk_id in chunks)
             query = (
-                f'SELECT apdb_replica_chunk, has_subchunks FROM "{self._config.keyspace}"."{table_name}" '
+                f'SELECT apdb_replica_chunk, has_subchunks FROM "{config.keyspace}"."{table_name}" '
                 f"WHERE partition = %s and apdb_replica_chunk IN ({chunks_str})"
             )
             partition = 0
-            result = self._session.execute(
+            result = context.session.execute(
                 query,
                 (partition,),
-                timeout=self._config.connection_config.read_timeout,
+                timeout=config.connection_config.read_timeout,
                 execution_profile="read_tuples",
             )
             has_chunk_sub_partitions = {chunk_id: has_subchunk for chunk_id, has_subchunk in result}
@@ -229,7 +228,7 @@ class ApdbCassandraReplica(ApdbReplica):
             have_subchunks = any(has_chunk_sub_partitions.values())
             have_non_subchunks = not all(has_chunk_sub_partitions.values())
         else:
-            have_subchunks = self._schema.has_chunk_sub_partitions
+            have_subchunks = context.schema.has_chunk_sub_partitions
             have_non_subchunks = not have_subchunks
 
         # NOTE: if an existing database is migrated and has both types of chunk
@@ -241,21 +240,21 @@ class ApdbCassandraReplica(ApdbReplica):
         table_data: ApdbCassandraTableData | None = None
         table_data_subchunk: ApdbCassandraTableData | None = None
 
-        table_name = self._schema.tableName(ExtraTables.replica_chunk_tables(False)[table])
+        table_name = context.schema.tableName(ExtraTables.replica_chunk_tables(False)[table])
         with self._timer("table_chunk_select_time", tags={"table": table_name}) as timer:
             if have_subchunks:
                 replica_table = ExtraTables.replica_chunk_tables(True)[table]
-                table_name = self._schema.tableName(replica_table)
+                table_name = context.schema.tableName(replica_table)
                 query = (
-                    f'SELECT * FROM "{self._config.keyspace}"."{table_name}" '
+                    f'SELECT * FROM "{config.keyspace}"."{table_name}" '
                     "WHERE apdb_replica_chunk = ? AND apdb_replica_subchunk = ?"
                 )
-                statement = self._preparer.prepare(query)
+                statement = context.preparer.prepare(query)
 
                 queries: list[tuple] = []
                 for chunk in chunks:
                     if has_chunk_sub_partitions.get(chunk, False):
-                        for subchunk in range(self._config.replica_sub_chunk_count):
+                        for subchunk in range(config.replica_sub_chunk_count):
                             queries.append((statement, (chunk, subchunk)))
                 if not queries and not have_non_subchunks:
                     # Add a dummy query to return correct set of columns.
@@ -265,18 +264,18 @@ class ApdbCassandraReplica(ApdbReplica):
                     table_data_subchunk = cast(
                         ApdbCassandraTableData,
                         select_concurrent(
-                            self._session,
+                            context.session,
                             queries,
                             "read_raw_multi",
-                            self._config.connection_config.read_concurrency,
+                            config.connection_config.read_concurrency,
                         ),
                     )
 
             if have_non_subchunks:
                 replica_table = ExtraTables.replica_chunk_tables(False)[table]
-                table_name = self._schema.tableName(replica_table)
-                query = f'SELECT * FROM "{self._config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
-                statement = self._preparer.prepare(query)
+                table_name = context.schema.tableName(replica_table)
+                query = f'SELECT * FROM "{config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
+                statement = context.preparer.prepare(query)
 
                 queries = []
                 for chunk in chunks:
@@ -290,10 +289,10 @@ class ApdbCassandraReplica(ApdbReplica):
                     table_data = cast(
                         ApdbCassandraTableData,
                         select_concurrent(
-                            self._session,
+                            context.session,
                             queries,
                             "read_raw_multi",
-                            self._config.connection_config.read_concurrency,
+                            config.connection_config.read_concurrency,
                         ),
                     )
 

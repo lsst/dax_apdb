@@ -478,6 +478,10 @@ class ApdbSql(Apdb):
 
         return res
 
+    def getConfig(self) -> ApdbSqlConfig:
+        # docstring is inherited from a base class
+        return self.config
+
     def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)

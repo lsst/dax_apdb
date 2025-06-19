@@ -86,6 +86,18 @@ class Apdb(ABC):
         return make_apdb(config)
 
     @abstractmethod
+    def getConfig(self) -> ApdbConfig:
+        """Return APDB configuration for this instance, including any updates
+        that may be read from database.
+
+        Returns
+        -------
+        config : `ApdbConfig`
+            APDB configuration.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def tableDef(self, table: ApdbTables) -> Table | None:
         """Return table schema definition for a given table.
 

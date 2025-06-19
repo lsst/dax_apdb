@@ -737,7 +737,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # implementations.
         config.enable_replica = not self.enable_replica
         apdb = Apdb.from_config(config)
-        frozen_config = apdb.config  # type: ignore[attr-defined]
+        frozen_config = apdb.getConfig()
         self.assertEqual(frozen_config.enable_replica, self.enable_replica)
 
 
@@ -795,3 +795,5 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
             config.schema_file = schema_file
             with self.assertRaises(IncompatibleVersionError):
                 apdb = Apdb.from_config(config)
+                # Version is checked only when we try to do connect.
+                apdb.metadata.items()

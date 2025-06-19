@@ -32,10 +32,12 @@ import felis.datamodel
 import pydantic
 
 from .. import schema_model
-from ..apdbSchema import ApdbSchema, ApdbTables
+from ..apdbSchema import ApdbTables
 
 if TYPE_CHECKING:
     import cassandra.cluster
+
+    from ..schema_model import Table
 
 
 _LOG = logging.getLogger(__name__)
@@ -136,7 +138,7 @@ class ExtraTables(enum.Enum):
             }
 
 
-class ApdbCassandraSchema(ApdbSchema):
+class ApdbCassandraSchema:
     """Class for management of APDB schema.
 
     Parameters
@@ -190,8 +192,7 @@ class ApdbCassandraSchema(ApdbSchema):
         self,
         session: cassandra.cluster.Session,
         keyspace: str,
-        schema_file: str,
-        schema_name: str = "ApdbSchema",
+        table_schemas: Mapping[ApdbTables, Table],
         prefix: str = "",
         time_partition_tables: bool = False,
         enable_replica: bool = False,
@@ -199,10 +200,9 @@ class ApdbCassandraSchema(ApdbSchema):
         has_chunk_sub_partitions: bool = True,
         has_visit_detector_table: bool = True,
     ):
-        super().__init__(schema_file, schema_name)
-
         self._session = session
         self._keyspace = keyspace
+        self._table_schemas = table_schemas
         self._prefix = prefix
         self._time_partition_tables = time_partition_tables
         self._enable_replica = enable_replica
@@ -218,7 +218,7 @@ class ApdbCassandraSchema(ApdbSchema):
         apdb_tables: dict[ApdbTables, schema_model.Table] = {}
 
         # add columns and index for partitioning.
-        for table, apdb_table_def in self.tableSchemas.items():
+        for table, apdb_table_def in self._table_schemas.items():
             part_columns = []
             add_columns = []
             primary_key = apdb_table_def.primary_key[:]
@@ -422,7 +422,7 @@ class ApdbCassandraSchema(ApdbSchema):
 
         replica_chunk_tables = ExtraTables.replica_chunk_tables(self._has_chunk_sub_partitions)
         for apdb_table_enum, chunk_table_enum in replica_chunk_tables.items():
-            apdb_table_def = self.tableSchemas[apdb_table_enum]
+            apdb_table_def = self._table_schemas[apdb_table_enum]
 
             extra_tables[chunk_table_enum] = schema_model.Table(
                 id="#" + chunk_table_enum.value,

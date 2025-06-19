@@ -63,8 +63,10 @@ class ApdbCassandraAdmin(ApdbAdmin):
 
     def apdb_part(self, ra: float, dec: float) -> int:
         # docstring is inherited from a base class
+        context = self._apdb._context
+
         uv3d = UnitVector3d(LonLat.fromDegrees(ra, dec))
-        return self._apdb._pixelization.pixel(uv3d)
+        return context.pixelization.pixel(uv3d)
 
     def apdb_time_part(self, midpointMjdTai: float) -> int:
         # docstring is inherited from a base class
@@ -77,8 +79,8 @@ class ApdbCassandraAdmin(ApdbAdmin):
         forced_sources: Iterable[DiaForcedSourceLocator],
     ) -> None:
         # docstring is inherited from a base class
-
-        config = self._apdb.config
+        context = self._apdb._context
+        config = context.config
         keyspace = self._apdb._keyspace
         has_dia_object_table = not (config.enable_replica and config.replica_skips_diaobjects)
 
@@ -231,8 +233,8 @@ class ApdbCassandraAdmin(ApdbAdmin):
 
         # Now run all queries.
         with self._timer("delete_forced_sources"):
-            execute_concurrent(self._apdb._session, forced_source_deletes)
+            execute_concurrent(context.session, forced_source_deletes)
         with self._timer("delete_sources"):
-            execute_concurrent(self._apdb._session, source_deletes)
+            execute_concurrent(context.session, source_deletes)
         with self._timer("delete_objects"):
-            execute_concurrent(self._apdb._session, object_deletes)
+            execute_concurrent(context.session, object_deletes)
