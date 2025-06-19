@@ -40,9 +40,6 @@ import pandas
 try:
     import cassandra
     import cassandra.query
-    from cassandra.auth import AuthProvider, PlainTextAuthProvider
-    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile, Session
-    from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
     from cassandra.query import UNSET_VALUE
 
     CASSANDRA_IMPORTED = True
@@ -52,7 +49,6 @@ except ImportError:
 import astropy.time
 import felis.datamodel
 from lsst import sphgeom
-from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
 
 from ..apdb import Apdb, ApdbConfig
@@ -72,12 +68,12 @@ from .cassandra_utils import (
     PreparedStatementCache,
     execute_concurrent,
     literal,
-    pandas_dataframe_factory,
     quote_id,
-    raw_data_factory,
     select_concurrent,
 )
 from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig
+from .exceptions import CassandraMissingError
+from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
     from ..apdbMetadata import ApdbMetadata
@@ -91,16 +87,6 @@ VERSION = VersionTuple(0, 1, 2)
 updated following compatibility rules when schema produced by this code
 changes.
 """
-
-
-def _dump_query(rf: Any) -> None:
-    """Dump cassandra query to debug log."""
-    _LOG.debug("Cassandra query: %s", rf.query)
-
-
-class CassandraMissingError(Exception):
-    def __init__(self) -> None:
-        super().__init__("cassandra-driver module cannot be imported")
 
 
 @dataclasses.dataclass
@@ -135,27 +121,8 @@ class _DbVersions:
     """
 
 
-if CASSANDRA_IMPORTED:
-
-    class _AddressTranslator(AddressTranslator):
-        """Translate internal IP address to external.
-
-        Only used for docker-based setup, not viable long-term solution.
-        """
-
-        def __init__(self, public_ips: tuple[str, ...], private_ips: tuple[str, ...]):
-            self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
-
-        def translate(self, private_ip: str) -> str:
-            return self._map.get(private_ip, private_ip)
-
-
 class ApdbCassandra(Apdb):
-    """Implementation of APDB database on to of Apache Cassandra.
-
-    The implementation is configured via standard ``pex_config`` mechanism
-    using `ApdbCassandraConfig` configuration class. For an example of
-    different configurations check config/ folder.
+    """Implementation of APDB database with Apache Cassandra backend.
 
     Parameters
     ----------
@@ -194,9 +161,10 @@ class ApdbCassandra(Apdb):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
+        self._session_factory = SessionFactory(config)
         self._keyspace = config.keyspace
 
-        self._cluster, self._session = self._make_session(config)
+        self._session = self._session_factory.session()
 
         meta_table_name = ApdbTables.metadata.table_name(config.prefix)
         self._metadata = ApdbMetadataCassandra(
@@ -279,80 +247,9 @@ class ApdbCassandra(Apdb):
         if _LOG.isEnabledFor(logging.DEBUG):
             _LOG.debug("ApdbCassandra Configuration: %s", self.config.model_dump())
 
-    def __del__(self) -> None:
-        if hasattr(self, "_cluster"):
-            self._cluster.shutdown()
-
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
         return Timer(name, _MON, tags=tags)
-
-    @classmethod
-    def _make_session(cls, config: ApdbCassandraConfig) -> tuple[Cluster, Session]:
-        """Make Cassandra session."""
-        addressTranslator: AddressTranslator | None = None
-        if config.connection_config.private_ips:
-            addressTranslator = _AddressTranslator(
-                config.contact_points, config.connection_config.private_ips
-            )
-
-        with Timer("cluster_connect", _MON):
-            cluster = Cluster(
-                execution_profiles=cls._makeProfiles(config),
-                contact_points=config.contact_points,
-                port=config.connection_config.port,
-                address_translator=addressTranslator,
-                protocol_version=config.connection_config.protocol_version,
-                auth_provider=cls._make_auth_provider(config),
-                **config.connection_config.extra_parameters,
-            )
-            session = cluster.connect()
-
-        # Dump queries if debug level is enabled.
-        if _LOG.isEnabledFor(logging.DEBUG):
-            session.add_request_init_listener(_dump_query)
-
-        # Disable result paging
-        session.default_fetch_size = None
-
-        return cluster, session
-
-    @classmethod
-    def _make_auth_provider(cls, config: ApdbCassandraConfig) -> AuthProvider | None:
-        """Make Cassandra authentication provider instance."""
-        try:
-            dbauth = DbAuth()
-        except DbAuthNotFoundError:
-            # Credentials file doesn't exist, use anonymous login.
-            return None
-
-        empty_username = True
-        # Try every contact point in turn.
-        for hostname in config.contact_points:
-            try:
-                username, password = dbauth.getAuth(
-                    "cassandra",
-                    config.connection_config.username,
-                    hostname,
-                    config.connection_config.port,
-                    config.keyspace,
-                )
-                if not username:
-                    # Password without user name, try next hostname, but give
-                    # warning later if no better match is found.
-                    empty_username = True
-                else:
-                    return PlainTextAuthProvider(username=username, password=password)
-            except DbAuthNotFoundError:
-                pass
-
-        if empty_username:
-            _LOG.warning(
-                f"Credentials file ({dbauth.db_auth_path}) provided password but not "
-                "user name, anonymous Cassandra logon will be attempted."
-            )
-
-        return None
 
     def _readVersions(self, metadata: ApdbMetadataCassandra) -> _DbVersions:
         """Check schema version compatibility."""
@@ -588,9 +485,7 @@ class ApdbCassandra(Apdb):
         # For DbAuth we need to use database name "*" to try to match any
         # database.
         config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
-        cluster, session = cls._make_session(config)
-
-        with cluster, session:
+        with SessionContext(config) as session:
             # Get names of all keyspaces containing DiaSource table
             table_name = ApdbTables.DiaSource.table_name()
             query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
@@ -647,8 +542,7 @@ class ApdbCassandra(Apdb):
         # For DbAuth we need to use database name "*" to try to match any
         # database.
         config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
-        cluster, session = cls._make_session(config)
-        with cluster, session:
+        with SessionContext(config) as session:
             query = f"DROP KEYSPACE {quote_id(keyspace)}"
             session.execute(query, timeout=timeout)
 
@@ -672,8 +566,7 @@ class ApdbCassandra(Apdb):
         if not isinstance(config, ApdbCassandraConfig):
             raise TypeError(f"Unexpected type of configuration object: {type(config)}")
 
-        cluster, session = cls._make_session(config)
-        with cluster, session:
+        with SessionContext(config) as session:
             schema = ApdbCassandraSchema(
                 session=session,
                 keyspace=config.keyspace,
@@ -1023,66 +916,6 @@ class ApdbCassandra(Apdb):
     def admin(self) -> ApdbCassandraAdmin:
         # docstring is inherited from a base class
         return ApdbCassandraAdmin(self)
-
-    @classmethod
-    def _makeProfiles(cls, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
-        """Make all execution profiles used in the code."""
-        if config.connection_config.private_ips:
-            loadBalancePolicy = WhiteListRoundRobinPolicy(hosts=config.contact_points)
-        else:
-            loadBalancePolicy = RoundRobinPolicy()
-
-        read_tuples_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=cassandra.query.tuple_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        read_pandas_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=pandas_dataframe_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        read_raw_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=raw_data_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        # Profile to use with select_concurrent to return pandas data frame
-        read_pandas_multi_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=pandas_dataframe_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        # Profile to use with select_concurrent to return raw data (columns and
-        # rows)
-        read_raw_multi_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=raw_data_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        write_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.write_consistency),
-            request_timeout=config.connection_config.write_timeout,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        # To replace default DCAwareRoundRobinPolicy
-        default_profile = ExecutionProfile(
-            load_balancing_policy=loadBalancePolicy,
-        )
-        return {
-            "read_tuples": read_tuples_profile,
-            "read_pandas": read_pandas_profile,
-            "read_raw": read_raw_profile,
-            "read_pandas_multi": read_pandas_multi_profile,
-            "read_raw_multi": read_raw_multi_profile,
-            "write": write_profile,
-            EXEC_PROFILE_DEFAULT: default_profile,
-        }
 
     def _getSources(
         self,
