@@ -48,6 +48,7 @@ except ImportError:
 
 import astropy.time
 import felis.datamodel
+
 from lsst import sphgeom
 from lsst.utils.iteration import chunk_iterable
 
@@ -132,7 +133,6 @@ class ApdbCassandra(Apdb):
     def _context(self) -> ConnectionContext:
         """Establish connection if not established and return context."""
         if self._connection_context is None:
-
             session = self._session_factory.session()
             self._connection_context = ConnectionContext(session, self._config, self._schema.tableSchemas)
 
@@ -608,8 +608,7 @@ class ApdbCassandra(Apdb):
         if context.has_visit_detector_table:
             table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
             query = (
-                f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" '
-                "WHERE visit = %s AND detector = %s"
+                f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" WHERE visit = %s AND detector = %s'
             )
             with self._timer("contains_visit_detector_time"):
                 result = context.session.execute(query, (visit, detector))
@@ -981,7 +980,7 @@ class ApdbCassandra(Apdb):
         context = self._context
 
         # Extract all object IDs.
-        new_partitions = {oid: part for oid, part in zip(objs["diaObjectId"], objs["apdb_part"])}
+        new_partitions = dict(zip(objs["diaObjectId"], objs["apdb_part"]))
         old_partitions = self._queryDiaObjectLastPartitions(objs["diaObjectId"])
 
         moved_oids: dict[int, tuple[int, int]] = {}
@@ -1041,7 +1040,7 @@ class ApdbCassandra(Apdb):
             self._deleteMovingObjects(objs)
 
         visit_time_dt = visit_time.datetime
-        extra_columns = dict(lastNonForcedSource=visit_time_dt)
+        extra_columns = {"lastNonForcedSource": visit_time_dt}
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
         extra_columns["validityStart"] = visit_time_dt
@@ -1058,7 +1057,7 @@ class ApdbCassandra(Apdb):
             )
 
         if replica_chunk is not None:
-            extra_columns = dict(apdb_replica_chunk=replica_chunk.id, validityStart=visit_time_dt)
+            extra_columns = {"apdb_replica_chunk": replica_chunk.id, "validityStart": visit_time_dt}
             table = ExtraTables.DiaObjectChunks
             if context.has_chunk_sub_partitions:
                 table = ExtraTables.DiaObjectChunks2
@@ -1118,7 +1117,7 @@ class ApdbCassandra(Apdb):
 
         subchunk: int | None = None
         if replica_chunk is not None:
-            extra_columns = dict(apdb_replica_chunk=replica_chunk.id)
+            extra_columns = {"apdb_replica_chunk": replica_chunk.id}
             if context.has_chunk_sub_partitions:
                 subchunk = random.randrange(config.replica_sub_chunk_count)
                 extra_columns["apdb_replica_subchunk"] = subchunk

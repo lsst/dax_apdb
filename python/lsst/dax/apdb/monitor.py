@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["MonAgent", "MonService", "LoggingMonHandler"]
+__all__ = ["LoggingMonHandler", "MonAgent", "MonService"]
 
 import contextlib
 import json

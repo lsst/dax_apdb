@@ -91,7 +91,7 @@ def metadata_show(config: str, use_json: bool) -> None:
     """
     apdb = Apdb.from_uri(config)
     if use_json:
-        data = {key: value for key, value in apdb.metadata.items()}
+        data = dict(apdb.metadata.items())
         json.dump(data, sys.stdout, indent=2)
         print()
     else:

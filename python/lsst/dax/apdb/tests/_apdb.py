@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import astropy.time
 import pandas
 import yaml
+
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 
 from .. import (
@@ -719,14 +720,16 @@ class ApdbTest(TestCaseMixin, ABC):
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
             self.assertEqual(
-                apdb._schema.schemaVersion(), VersionTuple(0, 1, 0)  # type: ignore[attr-defined]
+                apdb._schema.schemaVersion(),  # type: ignore[attr-defined]
+                VersionTuple(0, 1, 0),
             )
 
         with update_schema_yaml(default_schema, version="99.0.0") as schema_file:
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
             self.assertEqual(
-                apdb._schema.schemaVersion(), VersionTuple(99, 0, 0)  # type: ignore[attr-defined]
+                apdb._schema.schemaVersion(),  # type: ignore[attr-defined]
+                VersionTuple(99, 0, 0),
             )
 
     def test_config_freeze(self) -> None:

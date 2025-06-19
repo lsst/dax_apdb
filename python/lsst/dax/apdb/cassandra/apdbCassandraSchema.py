@@ -465,7 +465,7 @@ class ApdbCassandraSchema:
         """
         query = "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s"
         result = self._session.execute(query, (self._keyspace,))
-        table_names = set(row[0] for row in result.all())
+        table_names = {row[0] for row in result.all()}
 
         existing_tables = []
         missing_tables = []
@@ -509,7 +509,7 @@ class ApdbCassandraSchema:
             # Some of the tables should have per-partition tables.
             query = "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s"
             result = self._session.execute(query, (self._keyspace,))
-            table_names = set(row[0] for row in result.all())
+            table_names = {row[0] for row in result.all()}
 
             tables = {}
             for table_enum in args:

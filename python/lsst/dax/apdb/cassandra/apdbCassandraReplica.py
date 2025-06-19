@@ -153,8 +153,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
         table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
         query = (
-            f'DELETE FROM "{config.keyspace}"."{table_name}" '
-            f"WHERE partition = ? AND apdb_replica_chunk = ?"
+            f'DELETE FROM "{config.keyspace}"."{table_name}" WHERE partition = ? AND apdb_replica_chunk = ?'
         )
         statement = context.preparer.prepare(query)
 
@@ -218,9 +217,9 @@ class ApdbCassandraReplica(ApdbReplica):
                 timeout=config.connection_config.read_timeout,
                 execution_profile="read_tuples",
             )
-            has_chunk_sub_partitions = {chunk_id: has_subchunk for chunk_id, has_subchunk in result}
+            has_chunk_sub_partitions = dict(result)
         else:
-            has_chunk_sub_partitions = {chunk_id: False for chunk_id in chunks}
+            has_chunk_sub_partitions = dict.fromkeys(chunks, False)
 
         # Check what kind of tables we want to query, if chunk list is empty
         # then use tbales which should exist in the schema.

@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbConfig", "Apdb"]
+__all__ = ["Apdb", "ApdbConfig"]
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 import astropy.time
 import pandas
+
 from lsst.resources import ResourcePathExpression
 from lsst.sphgeom import Region
 

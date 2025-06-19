@@ -69,7 +69,7 @@ if CASSANDRA_IMPORTED:
         """
 
         def __init__(self, public_ips: tuple[str, ...], private_ips: tuple[str, ...]):
-            self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
+            self._map = dict(zip(private_ips, public_ips))
 
         def translate(self, private_ip: str) -> str:
             return self._map.get(private_ip, private_ip)
