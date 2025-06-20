@@ -73,6 +73,7 @@ from .cassandra_utils import (
 from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
+from .partitioner import Partitioner
 from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
@@ -114,9 +115,6 @@ class ApdbCassandra(Apdb):
         Configuration object.
     """
 
-    partition_zero_epoch = astropy.time.Time(0, format="unix_tai")
-    """Start time for partition 0, this should never be changed."""
-
     def __init__(self, config: ApdbCassandraConfig):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
@@ -124,7 +122,6 @@ class ApdbCassandra(Apdb):
         self._config = config
         self._keyspace = config.keyspace
         self._schema = ApdbSchema(config.schema_file, config.schema_name)
-        self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
 
         self._session_factory = SessionFactory(config)
         self._connection_context: ConnectionContext | None = None
@@ -469,17 +466,16 @@ class ApdbCassandra(Apdb):
 
             # Ask schema to create all tables.
             if config.partitioning.time_partition_tables:
+                partitioner = Partitioner(config)
                 time_partition_start = astropy.time.Time(
                     config.partitioning.time_partition_start, format="isot", scale="tai"
                 )
                 time_partition_end = astropy.time.Time(
                     config.partitioning.time_partition_end, format="isot", scale="tai"
                 )
-                part_epoch = float(cls.partition_zero_epoch.mjd)
-                part_days = config.partitioning.time_partition_days
                 part_range = (
-                    cls._time_partition_cls(time_partition_start, part_epoch, part_days),
-                    cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
+                    partitioner.time_partition(time_partition_start),
+                    partitioner.time_partition(time_partition_end) + 1,
                 )
                 schema.makeSchema(
                     drop=drop,
@@ -522,7 +518,7 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
-        sp_where = self._spatial_where(region)
+        sp_where = context.partitioner.spatial_where(region, for_prepare=True)
         _LOG.debug("getDiaObjects: #partitions: %s", len(sp_where))
 
         # We need to exclude extra partitioning columns from result.
@@ -619,7 +615,7 @@ class ApdbCassandra(Apdb):
         # stored records. With per-partition tables there will be many tables
         # in the list, but it is unlikely that we'll use that setup in
         # production.
-        sp_where = self._spatial_where(region, use_ranges=True)
+        sp_where = context.partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
         visit_detector_where = ("visit = ? AND detector = ?", (visit, detector))
 
         # Sources are partitioned on their midPointMjdTai. To avoid precision
@@ -629,8 +625,8 @@ class ApdbCassandra(Apdb):
 
         statements: list[tuple] = []
         for table_type in ApdbTables.DiaSource, ApdbTables.DiaForcedSource:
-            tables, temporal_where = self._temporal_where(
-                table_type, mjd_start, mjd_end, query_per_time_part=True
+            tables, temporal_where = context.partitioner.temporal_where(
+                table_type, mjd_start, mjd_end, query_per_time_part=True, for_prepare=True
             )
             for table in tables:
                 prefix = f'SELECT apdb_part FROM "{self._keyspace}"."{table}"'
@@ -866,8 +862,10 @@ class ApdbCassandra(Apdb):
             if len(object_id_set) == 0:
                 return self._make_empty_catalog(table_name)
 
-        sp_where = self._spatial_where(region)
-        tables, temporal_where = self._temporal_where(table_name, mjd_start, mjd_end)
+        sp_where = context.partitioner.spatial_where(region, for_prepare=True)
+        tables, temporal_where = context.partitioner.temporal_where(
+            table_name, mjd_start, mjd_end, for_prepare=True
+        )
 
         # We need to exclude extra partitioning columns from result.
         column_names = context.schema.apdbColumnNames(table_name)
@@ -1044,7 +1042,7 @@ class ApdbCassandra(Apdb):
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
         extra_columns["validityStart"] = visit_time_dt
-        time_part: int | None = self._time_partition(visit_time)
+        time_part: int | None = context.partitioner.time_partition(visit_time)
         if not config.partitioning.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
             time_part = None
@@ -1098,7 +1096,7 @@ class ApdbCassandra(Apdb):
         # Time partitioning has to be based on midpointMjdTai, not visit_time
         # as visit_time is not really a visit time.
         tp_sources = sources.copy(deep=False)
-        tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(self._time_partition)
+        tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(context.partitioner.time_partition)
         extra_columns: dict[str, Any] = {}
         if not config.partitioning.time_partition_tables:
             self._storeObjectsPandas(tp_sources, table_name)
@@ -1159,7 +1157,7 @@ class ApdbCassandra(Apdb):
 
         id_map = cast(pandas.DataFrame, sources[["diaSourceId", "apdb_part"]])
         extra_columns = {
-            "apdb_time_part": self._time_partition(visit_time),
+            "apdb_time_part": context.partitioner.time_partition(visit_time),
             "apdb_replica_chunk": replica_chunk.id if replica_chunk is not None else None,
         }
         if context.has_chunk_sub_partitions:
@@ -1313,63 +1311,11 @@ class ApdbCassandra(Apdb):
         ra_col, dec_col = config.ra_dec_columns
         for i, (ra, dec) in enumerate(zip(df[ra_col], df[dec_col])):
             uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
-            idx = context.pixelization.pixel(uv3d)
+            idx = context.partitioner.pixel(uv3d)
             apdb_part[i] = idx
         df = df.copy()
         df["apdb_part"] = apdb_part
         return df
-
-    @classmethod
-    def _time_partition_cls(cls, time: float | astropy.time.Time, epoch_mjd: float, part_days: int) -> int:
-        """Calculate time partition number for a given time.
-
-        Parameters
-        ----------
-        time : `float` or `astropy.time.Time`
-            Time for which to calculate partition number. Can be float to mean
-            MJD or `astropy.time.Time`
-        epoch_mjd : `float`
-            Epoch time for partition 0.
-        part_days : `int`
-            Number of days per partition.
-
-        Returns
-        -------
-        partition : `int`
-            Partition number for a given time.
-        """
-        if isinstance(time, astropy.time.Time):
-            mjd = float(time.mjd)
-        else:
-            mjd = time
-        days_since_epoch = mjd - epoch_mjd
-        partition = int(days_since_epoch) // part_days
-        return partition
-
-    def _time_partition(self, time: float | astropy.time.Time) -> int:
-        """Calculate time partition number for a given time.
-
-        Parameters
-        ----------
-        time : `float` or `astropy.time.Time`
-            Time for which to calculate partition number. Can be float to mean
-            MJD or `astropy.time.Time`
-
-        Returns
-        -------
-        partition : `int`
-            Partition number for a given time.
-        """
-        context = self._context
-        config = context.config
-
-        if isinstance(time, astropy.time.Time):
-            mjd = float(time.mjd)
-        else:
-            mjd = time
-        days_since_epoch = mjd - self._partition_zero_epoch_mjd
-        partition = int(days_since_epoch) // config.partitioning.time_partition_days
-        return partition
 
     def _make_empty_catalog(self, table_name: ApdbTables) -> pandas.DataFrame:
         """Make an empty catalog for a table with a given name.
@@ -1441,101 +1387,6 @@ class ApdbCassandra(Apdb):
                     # trying to prepare it.
                     statement = cassandra.query.SimpleStatement(full_query)
                 yield (statement, params)
-
-    def _spatial_where(
-        self, region: sphgeom.Region | None, use_ranges: bool = False
-    ) -> list[tuple[str, tuple]]:
-        """Generate expressions for spatial part of WHERE clause.
-
-        Parameters
-        ----------
-        region : `sphgeom.Region`
-            Spatial region for query results.
-        use_ranges : `bool`
-            If True then use pixel ranges ("apdb_part >= p1 AND apdb_part <=
-            p2") instead of exact list of pixels. Should be set to True for
-            large regions covering very many pixels.
-
-        Returns
-        -------
-        expressions : `list` [ `tuple` ]
-            Empty list is returned if ``region`` is `None`, otherwise a list
-            of one or more (expression, parameters) tuples
-        """
-        if region is None:
-            return []
-
-        context = self._context
-        config = context.config
-
-        if use_ranges:
-            pixel_ranges = context.pixelization.envelope(region)
-            expressions: list[tuple[str, tuple]] = []
-            for lower, upper in pixel_ranges:
-                upper -= 1
-                if lower == upper:
-                    expressions.append(('"apdb_part" = ?', (lower,)))
-                else:
-                    expressions.append(('"apdb_part" >= ? AND "apdb_part" <= ?', (lower, upper)))
-            return expressions
-        else:
-            pixels = context.pixelization.pixels(region)
-            if config.partitioning.query_per_spatial_part:
-                return [('"apdb_part" = ?', (pixel,)) for pixel in pixels]
-            else:
-                pixels_str = ",".join([str(pix) for pix in pixels])
-                return [(f'"apdb_part" IN ({pixels_str})', ())]
-
-    def _temporal_where(
-        self,
-        table: ApdbTables,
-        start_time: float | astropy.time.Time,
-        end_time: float | astropy.time.Time,
-        query_per_time_part: bool | None = None,
-    ) -> tuple[list[str], list[tuple[str, tuple]]]:
-        """Generate table names and expressions for temporal part of WHERE
-        clauses.
-
-        Parameters
-        ----------
-        table : `ApdbTables`
-            Table to select from.
-        start_time : `astropy.time.Time` or `float`
-            Starting Datetime of MJD value of the time range.
-        end_time : `astropy.time.Time` or `float`
-            Starting Datetime of MJD value of the time range.
-        query_per_time_part : `bool`, optional
-            If None then use ``query_per_time_part`` from configuration.
-
-        Returns
-        -------
-        tables : `list` [ `str` ]
-            List of the table names to query.
-        expressions : `list` [ `tuple` ]
-            A list of zero or more (expression, parameters) tuples.
-        """
-        context = self._context
-        config = context.config
-
-        tables: list[str]
-        temporal_where: list[tuple[str, tuple]] = []
-        table_name = context.schema.tableName(table)
-        time_part_start = self._time_partition(start_time)
-        time_part_end = self._time_partition(end_time)
-        time_parts = list(range(time_part_start, time_part_end + 1))
-        if config.partitioning.time_partition_tables:
-            tables = [f"{table_name}_{part}" for part in time_parts]
-        else:
-            tables = [table_name]
-            if query_per_time_part is None:
-                query_per_time_part = config.partitioning.query_per_time_part
-            if query_per_time_part:
-                temporal_where = [('"apdb_time_part" = ?', (time_part,)) for time_part in time_parts]
-            else:
-                time_part_list = ",".join([str(part) for part in time_parts])
-                temporal_where = [(f'"apdb_time_part" IN ({time_part_list})', ())]
-
-        return tables, temporal_where
 
     def _fix_input_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Update timestamp columns in input DataFrame to be naive datetime

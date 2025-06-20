@@ -66,11 +66,12 @@ class ApdbCassandraAdmin(ApdbAdmin):
         context = self._apdb._context
 
         uv3d = UnitVector3d(LonLat.fromDegrees(ra, dec))
-        return context.pixelization.pixel(uv3d)
+        return context.partitioner.pixel(uv3d)
 
     def apdb_time_part(self, midpointMjdTai: float) -> int:
         # docstring is inherited from a base class
-        return self._apdb._time_partition(midpointMjdTai)
+        context = self._apdb._context
+        return context.partitioner.time_partition(midpointMjdTai)
 
     def delete_records(
         self,
