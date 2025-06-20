@@ -37,7 +37,6 @@ except ImportError:
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
-from ..pixelization import Pixelization
 from ..schema_model import Table
 from ..versionTuple import VersionTuple
 from .apdbCassandraReplica import ApdbCassandraReplica
@@ -45,6 +44,7 @@ from .apdbCassandraSchema import ApdbCassandraSchema
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .cassandra_utils import PreparedStatementCache
 from .config import ApdbCassandraConfig
+from .partitioner import Partitioner
 
 _LOG = logging.getLogger(__name__)
 
@@ -148,11 +148,7 @@ class ConnectionContext:
         # Cache for prepared statements
         self.preparer = PreparedStatementCache(self.session)
 
-        self.pixelization = Pixelization(
-            self.config.partitioning.part_pixelization,
-            self.config.partitioning.part_pix_level,
-            self.config.partitioning.part_pix_max_ranges,
-        )
+        self.partitioner = Partitioner(self.config)
 
         self.schema = ApdbCassandraSchema(
             session=self.session,
