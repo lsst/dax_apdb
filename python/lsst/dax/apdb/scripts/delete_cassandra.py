@@ -23,7 +23,7 @@ from __future__ import annotations
 
 __all__ = ["delete_cassandra"]
 
-from ..cassandra import ApdbCassandra
+from ..cassandra.apdbCassandraAdmin import ApdbCassandraAdmin
 
 
 def delete_cassandra(host: str, keyspace: str, confirm: bool) -> None:
@@ -45,4 +45,4 @@ def delete_cassandra(host: str, keyspace: str, confirm: bool) -> None:
                 return
         except EOFError:
             return
-    ApdbCassandra.delete_database(host=host, keyspace=keyspace)
+    ApdbCassandraAdmin.delete_database(host=host, keyspace=keyspace)

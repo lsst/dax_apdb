@@ -25,7 +25,7 @@ __all__ = ["list_cassandra"]
 
 from astropy.table import Table
 
-from ..cassandra import ApdbCassandra
+from ..cassandra.apdbCassandraAdmin import ApdbCassandraAdmin
 
 
 def list_cassandra(host: str, verbose: bool) -> None:
@@ -38,7 +38,7 @@ def list_cassandra(host: str, verbose: bool) -> None:
     verbose : `bool`
         If `True` provide detailed output.
     """
-    databases = ApdbCassandra.list_databases(host=host)
+    databases = ApdbCassandraAdmin.list_databases(host=host)
     if databases:
         if verbose:
             table = Table(names=["Keyspace", "Role", "Permissions"], dtype=[str, str, str])
