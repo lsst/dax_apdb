@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 import astropy.time
 import pandas
 import yaml
+
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 
 from .. import (
@@ -719,14 +720,16 @@ class ApdbTest(TestCaseMixin, ABC):
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
             self.assertEqual(
-                apdb._schema.schemaVersion(), VersionTuple(0, 1, 0)  # type: ignore[attr-defined]
+                apdb._schema.schemaVersion(),  # type: ignore[attr-defined]
+                VersionTuple(0, 1, 0),
             )
 
         with update_schema_yaml(default_schema, version="99.0.0") as schema_file:
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
             self.assertEqual(
-                apdb._schema.schemaVersion(), VersionTuple(99, 0, 0)  # type: ignore[attr-defined]
+                apdb._schema.schemaVersion(),  # type: ignore[attr-defined]
+                VersionTuple(99, 0, 0),
             )
 
     def test_config_freeze(self) -> None:
@@ -737,7 +740,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # implementations.
         config.enable_replica = not self.enable_replica
         apdb = Apdb.from_config(config)
-        frozen_config = apdb.config  # type: ignore[attr-defined]
+        frozen_config = apdb.getConfig()
         self.assertEqual(frozen_config.enable_replica, self.enable_replica)
 
 
@@ -795,3 +798,5 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
             config.schema_file = schema_file
             with self.assertRaises(IncompatibleVersionError):
                 apdb = Apdb.from_config(config)
+                # Version is checked only when we try to do connect.
+                apdb.metadata.items()

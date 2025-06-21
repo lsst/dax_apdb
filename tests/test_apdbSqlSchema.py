@@ -25,12 +25,13 @@ import os
 import unittest
 from typing import Any
 
-import lsst.utils.tests
 import sqlalchemy
+from sqlalchemy import create_engine
+
+import lsst.utils.tests
 from lsst.dax.apdb.apdbSchema import ApdbTables
 from lsst.dax.apdb.sql.apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from lsst.dax.apdb.tests import update_schema_yaml
-from sqlalchemy import create_engine
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 

@@ -19,8 +19,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from .apdbCassandra import *
-from .apdbCassandraReplica import *
-from .apdbCassandraSchema import CreateTableOptions, TableOptions
-from .config import *
-from .exceptions import *
+from __future__ import annotations
+
+__all__ = ["CassandraMissingError"]
+
+
+class CassandraMissingError(Exception):
+    """Exception raised when cassandra driver module is missing."""
+
+    def __init__(self) -> None:
+        super().__init__("cassandra-driver module cannot be imported")

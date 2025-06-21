@@ -30,8 +30,9 @@ from collections.abc import Mapping
 from typing import ClassVar
 
 import yaml
-from lsst.resources import ResourcePath
 from pydantic import TypeAdapter, ValidationError
+
+from lsst.resources import ResourcePath
 
 _LOG = logging.getLogger(__name__)
 

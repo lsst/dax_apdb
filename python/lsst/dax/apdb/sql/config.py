@@ -46,7 +46,7 @@ class ApdbSqlConnectionConfig(BaseModel):
     connection_pool: bool = Field(
         default=True,
         description=(
-            "If False then disable SQLAlchemy connection pool. " "Do not use connection pool when forking."
+            "If False then disable SQLAlchemy connection pool. Do not use connection pool when forking."
         ),
     )
 

@@ -28,6 +28,7 @@ import warnings
 from typing import Any
 
 import yaml
+
 from lsst.resources import ResourcePath
 
 from ..cassandra import ApdbCassandra, CreateTableOptions

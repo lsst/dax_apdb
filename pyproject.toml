@@ -77,13 +77,9 @@ write_to = "python/lsst/dax/apdb/version.py"
 
 [tool.ruff]
 line-length = 110
-target-version = "py312"
+target-version = "py311"
 exclude = [
     "__init__.py",
-    "config/apdb-cassandra.py",
-    "config/apdb-mysql.py",
-    "config/apdb-pg.py",
-    "config/apdb-sqlite.py",
     "doc/conf.py",
 ]
 
@@ -111,6 +107,10 @@ select = [
     "N",  # pep8-naming
     "W",  # pycodestyle
     "D",  # pydocstyle
+    "UP", # pyupgrade
+    "C4", # flake8-comprehensions
+    "I",  # isort
+    "RUF022",  # sort __all__
 ]
 extend-select = [
     "RUF100", # Warn about unused noqa
@@ -123,6 +123,14 @@ max-doc-length = 79
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.ruff.lint.isort]
+known-first-party = ["lsst"]
+
+[tool.ruff.format]
+docstring-code-format = true
+# Formatter does not know about indenting.
+docstring-code-line-length = 69
 
 [tool.coverage.report]
 exclude_lines = [

@@ -287,7 +287,7 @@ def literal(v: Any) -> Any:
         pass
     elif isinstance(v, datetime):
         v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1) * 1000)
-    elif isinstance(v, (bytes, str, UUID, int)):
+    elif isinstance(v, bytes | str | UUID | int):
         pass
     else:
         try:

@@ -27,7 +27,7 @@ implement APDB.
 
 from __future__ import annotations
 
-__all__ = ["ApdbTables", "ApdbSchema"]
+__all__ = ["ApdbSchema", "ApdbTables"]
 
 import enum
 import logging

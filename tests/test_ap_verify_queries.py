@@ -26,9 +26,10 @@ from collections.abc import Mapping
 from typing import Any
 
 import astropy.time
-import lsst.utils.tests
 import numpy
 import pandas
+
+import lsst.utils.tests
 from lsst.dax.apdb import Apdb
 from lsst.dax.apdb.sql import ApdbSql
 

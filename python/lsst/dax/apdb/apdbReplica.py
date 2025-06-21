@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbReplica", "ReplicaChunk", "ApdbTableData"]
+__all__ = ["ApdbReplica", "ApdbTableData", "ReplicaChunk"]
 
 import uuid
 from abc import ABC, abstractmethod
@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import astropy.time
+
 from lsst.resources import ResourcePathExpression
 
 from .apdb import ApdbConfig
