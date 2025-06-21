@@ -51,6 +51,7 @@ except ImportError:
 import lsst.utils.tests
 from lsst.dax.apdb import ApdbConfig, ApdbTables
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
+from lsst.dax.apdb.cassandra.apdbCassandraAdmin import ApdbCassandraAdmin
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
 
@@ -102,7 +103,7 @@ class ApdbCassandraMixin:
     def tearDown(self) -> None:
         # Delete per-test keyspace.
         assert self.cluster_host is not None
-        ApdbCassandra.delete_database(self.cluster_host, self.keyspace)
+        ApdbCassandraAdmin.delete_database(self.cluster_host, self.keyspace)
 
     def pixelization(self, config: ApdbConfig) -> Pixelization:
         """Return pixelization used by implementation."""

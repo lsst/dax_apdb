@@ -23,7 +23,6 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandra"]
 
-import dataclasses
 import datetime
 import logging
 import random
@@ -88,22 +87,6 @@ VERSION = VersionTuple(0, 1, 2)
 updated following compatibility rules when schema produced by this code
 changes.
 """
-
-
-@dataclasses.dataclass
-class DatabaseInfo:
-    """Collection of information about a specific database."""
-
-    name: str
-    """Keyspace name."""
-
-    permissions: dict[str, set[str]] | None = None
-    """Roles that can access the database and their permissions.
-
-    `None` means that authentication information is not accessible due to
-    system table permissions. If anonymous access is enabled then dictionary
-    will be empty but not `None`.
-    """
 
 
 class ApdbCassandra(Apdb):
@@ -352,84 +335,6 @@ class ApdbCassandra(Apdb):
         cls._makeSchema(config, drop=drop, replication_factor=replication_factor, table_options=table_options)
 
         return config
-
-    @classmethod
-    def list_databases(cls, host: str) -> Iterable[DatabaseInfo]:
-        """Return the list of keyspaces with APDB databases.
-
-        Parameters
-        ----------
-        host : `str`
-            Name of one of the hosts in Cassandra cluster.
-
-        Returns
-        -------
-        databases : `~collections.abc.Iterable` [`DatabaseInfo`]
-            Information about databases that contain APDB instance.
-        """
-        # For DbAuth we need to use database name "*" to try to match any
-        # database.
-        config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
-        with SessionContext(config) as session:
-            # Get names of all keyspaces containing DiaSource table
-            table_name = ApdbTables.DiaSource.table_name()
-            query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
-            result = session.execute(query, (table_name,))
-            keyspaces = [row[0] for row in result.all()]
-
-            if not keyspaces:
-                return []
-
-            # Retrieve roles for each keyspace.
-            template = ", ".join(["%s"] * len(keyspaces))
-            query = (
-                "SELECT resource, role, permissions FROM system_auth.role_permissions "
-                f"WHERE resource IN ({template}) ALLOW FILTERING"
-            )
-            resources = [f"data/{keyspace}" for keyspace in keyspaces]
-            try:
-                result = session.execute(query, resources)
-                # If anonymous access is enabled then result will be empty,
-                # set infos to have empty permissions dict in that case.
-                infos = {keyspace: DatabaseInfo(name=keyspace, permissions={}) for keyspace in keyspaces}
-                for row in result:
-                    _, _, keyspace = row[0].partition("/")
-                    role: str = row[1]
-                    role_permissions: set[str] = set(row[2])
-                    infos[keyspace].permissions[role] = role_permissions  # type: ignore[index]
-            except cassandra.Unauthorized as exc:
-                # Likely that access to role_permissions is not granted for
-                # current user.
-                warnings.warn(
-                    f"Authentication information is not accessible to current user - {exc}", stacklevel=2
-                )
-                infos = {keyspace: DatabaseInfo(name=keyspace) for keyspace in keyspaces}
-
-            # Would be nice to get size estimate, but this is not available
-            # via CQL queries.
-            return infos.values()
-
-    @classmethod
-    def delete_database(cls, host: str, keyspace: str, *, timeout: int = 3600) -> None:
-        """Delete APDB database by dropping its keyspace.
-
-        Parameters
-        ----------
-        host : `str`
-            Name of one of the hosts in Cassandra cluster.
-        keyspace : `str`
-            Name of keyspace to delete.
-        timeout : `int`, optional
-            Timeout for delete operation in seconds. Dropping a large keyspace
-            can be a long operation, but this default value of one hour should
-            be sufficient for most or all cases.
-        """
-        # For DbAuth we need to use database name "*" to try to match any
-        # database.
-        config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
-        with SessionContext(config) as session:
-            query = f"DROP KEYSPACE {quote_id(keyspace)}"
-            session.execute(query, timeout=timeout)
 
     def get_replica(self) -> ApdbCassandraReplica:
         """Return `ApdbReplica` instance for this database."""
