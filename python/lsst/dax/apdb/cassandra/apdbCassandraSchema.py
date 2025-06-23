@@ -115,9 +115,18 @@ class ExtraTables(enum.Enum):
     ApdbVisitDetector = "ApdbVisitDetector"
     """Records attempted processing of visit/detector."""
 
-    def table_name(self, prefix: str = "") -> str:
-        """Return full table name."""
-        return prefix + self.value
+    def table_name(self, prefix: str = "", time_partition: int | None = None) -> str:
+        """Return full table name.
+
+        Parameters
+        ----------
+        prefix : `str`, optional
+            Optional prefix for table name.
+        time_partition : `int`, optional
+            Optional time partition, only used for tables that support time
+            patitioning.
+        """
+        return f"{prefix}{self.value}"
 
     @classmethod
     def replica_chunk_tables(cls, has_subchunks: bool) -> Mapping[ApdbTables, ExtraTables]:
@@ -523,9 +532,18 @@ class ApdbCassandraSchema:
             # Do not check that they exist, we know that they should.
             return {table_enum: [table_enum.table_name(self._prefix)] for table_enum in args}
 
-    def tableName(self, table_name: ApdbTables | ExtraTables) -> str:
-        """Return Cassandra table name for APDB table."""
-        return table_name.table_name(self._prefix)
+    def tableName(self, table_name: ApdbTables | ExtraTables, time_partition: int | None = None) -> str:
+        """Return Cassandra table name for APDB table.
+
+        Parameters
+        ----------
+        table_name : `ApdbTables` or `ExtraTables`
+            Table enum for which to generate table name.
+        time_partition : `int`, optional
+            Optional time partition, only used for tables that support time
+            patitioning.
+        """
+        return table_name.table_name(self._prefix, time_partition)
 
     def keyspace(self) -> str:
         """Return Cassandra keyspace for APDB tables."""
@@ -688,8 +706,7 @@ class ApdbCassandraSchema:
         table_list = [fullTable]
         if part_range is not None:
             if table in self._time_partitioned_tables:
-                partitions = range(*part_range)
-                table_list = [f"{fullTable}_{part}" for part in partitions]
+                table_list = [table.table_name(self._prefix, part) for part in range(*part_range)]
 
         if drop:
             queries = [f'DROP TABLE IF EXISTS "{self._keyspace}"."{table_name}"' for table_name in table_list]

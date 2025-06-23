@@ -218,36 +218,49 @@ class ApdbCassandraAdmin(ApdbAdmin):
                     )
                 )
 
-                # If DiaObject is in use then delete from that too.
-                if has_dia_object_table:
-                    # Need temporal partitions for DiaObject, the only source
-                    # for that is the timestamp of the associated DiaSource.
-                    # Problem here is that DiaObject temporal partitioning is
-                    # based on validityStart, which is "visit_time"", but
-                    # DiaSource does not record visit_time, it is partitioned
-                    # on midpointMjdTai. There is time_processed defiend for
-                    # DiaSource but it does not match "visit_time" though it is
-                    # close. I use midpointMjdTai as approximation for
-                    # validityStart, this may skip some DiaObjects, but in
-                    # production we are not going to have DiaObjects table at
-                    # all. There is also a chance that DiaObject moves from one
-                    # spatial partition to another with the same consequences,
-                    # which we also ignore.
-                    for oid in oid_chunk:
-                        temporal_partitions = {
-                            self.apdb_time_part(src.midpointMjdTai) for src in source_groups.get(oid, [])
-                        }
-                        if temporal_partitions:
-                            apdb_time_partitions = ",".join(str(part) for part in temporal_partitions)
-                            object_deletes.append(
-                                (
-                                    f'DELETE FROM "{keyspace}"."DiaObject" '
-                                    f"WHERE apdb_part = {apdb_part} "
-                                    f"AND apdb_time_part IN ({apdb_time_partitions}) "
-                                    f'AND "diaObjectId" = {oid}',
-                                    (),
-                                )
+        # If DiaObject is in use then delete from that too.
+        if has_dia_object_table:
+            # Need temporal partitions for DiaObject, the only source for that
+            # is the timestamp of the associated DiaSource. Problem here is
+            # that DiaObject temporal partitioning is based on validityStart,
+            # which is "visit_time"", but DiaSource does not record visit_time,
+            # it is partitioned on midpointMjdTai. There is time_processed
+            # defined for DiaSource but it does not match "visit_time" though
+            # it is close. I use midpointMjdTai as approximation for
+            # validityStart, this may skip some DiaObjects, but in production
+            # we are not going to have DiaObjects table at all. There is also
+            # a chance that DiaObject moves from one spatial partition to
+            # another with the same consequences, which we also ignore.
+            oids_by_partition: dict[tuple[int, int], list[int]] = defaultdict(list)
+            for apdb_part, oids in partitions.items():
+                for oid in oids:
+                    temporal_partitions = {
+                        self.apdb_time_part(src.midpointMjdTai) for src in source_groups.get(oid, [])
+                    }
+                    for time_part in temporal_partitions:
+                        oids_by_partition[(apdb_part, time_part)].append(oid)
+            for (apdb_part, time_part), oids in oids_by_partition.items():
+                for oid_chunk in chunk_iterable(oids, 1000):
+                    oids_str = ",".join(str(oid) for oid in oid_chunk)
+                    if config.partitioning.time_partition_tables:
+                        table_name = context.schema.tableName(ApdbTables.DiaObject, time_part)
+                        object_deletes.append(
+                            (
+                                f'DELETE FROM "{keyspace}"."{table_name}" '
+                                f'WHERE apdb_part = {apdb_part} AND "diaObjectId" IN ({oids_str})',
+                                (),
                             )
+                        )
+                    else:
+                        table_name = context.schema.tableName(ApdbTables.DiaObject)
+                        object_deletes.append(
+                            (
+                                f'DELETE FROM "{keyspace}"."{table_name}" '
+                                f"WHERE apdb_part = {apdb_part} AND apdb_time_part = {time_part} "
+                                f'AND "diaObjectId" IN ({oids_str})',
+                                (),
+                            )
+                        )
 
         # Delete from DiaObjectLastToPartition table.
         for oid_chunk in chunk_iterable(sorted(object_ids), 1000):
@@ -275,17 +288,19 @@ class ApdbCassandraAdmin(ApdbAdmin):
             for id_chunk in chunk_iterable(source_ids, 1000):
                 ids_str = ",".join(str(id) for id in id_chunk)
                 if config.partitioning.time_partition_tables:
+                    table_name = context.schema.tableName(ApdbTables.DiaSource, apdb_time_part)
                     source_deletes.append(
                         (
-                            f'DELETE FROM "{keyspace}"."DiaSource_{apdb_time_part}" '
+                            f'DELETE FROM "{keyspace}"."{table_name}" '
                             f'WHERE apdb_part = {apdb_part} and "diaSourceId" IN ({ids_str})',
                             (),
                         )
                     )
                 else:
+                    table_name = context.schema.tableName(ApdbTables.DiaSource)
                     source_deletes.append(
                         (
-                            f'DELETE FROM "{keyspace}"."DiaSource" '
+                            f'DELETE FROM "{keyspace}"."{table_name}" '
                             f"WHERE apdb_part = {apdb_part} AND apdb_time_part = {apdb_time_part} "
                             f'AND "diaSourceId" IN ({ids_str})',
                             (),
@@ -310,18 +325,20 @@ class ApdbCassandraAdmin(ApdbAdmin):
             for key_chunk in chunk_iterable(clustering_keys, 1000):
                 cl_str = ",".join(f"({oid}, {v}, {d})" for oid, v, d in key_chunk)
                 if config.partitioning.time_partition_tables:
+                    table_name = context.schema.tableName(ApdbTables.DiaForcedSource, apdb_time_part)
                     forced_source_deletes.append(
                         (
-                            f'DELETE FROM "{keyspace}"."DiaForcedSource_{apdb_time_part}" '
+                            f'DELETE FROM "{keyspace}"."{table_name}" '
                             f"WHERE apdb_part = {apdb_part}"
                             f'AND ("diaObjectId", visit, detector) IN ({cl_str})',
                             (),
                         )
                     )
                 else:
+                    table_name = context.schema.tableName(ApdbTables.DiaForcedSource)
                     forced_source_deletes.append(
                         (
-                            f'DELETE FROM "{keyspace}"."DiaForcedSource" '
+                            f'DELETE FROM "{keyspace}"."{table_name}" '
                             f"WHERE apdb_part = {apdb_part} "
                             f"AND apdb_time_part = {apdb_time_part} "
                             f'AND ("diaObjectId", visit, detector) IN ({cl_str})',

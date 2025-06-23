@@ -679,18 +679,19 @@ class ApdbCassandra(Apdb):
 
         # Reassign in standard tables
         queries: list[tuple[cassandra.query.PreparedStatement, tuple]] = []
-        table_name = context.schema.tableName(ApdbTables.DiaSource)
         for diaSourceId, ssObjectId in idMap.items():
             apdb_part, apdb_time_part = id2partitions[diaSourceId]
             values: tuple
             if config.partitioning.time_partition_tables:
+                table_name = context.schema.tableName(ApdbTables.DiaSource, apdb_time_part)
                 query = (
-                    f'UPDATE "{self._keyspace}"."{table_name}_{apdb_time_part}"'
+                    f'UPDATE "{self._keyspace}"."{table_name}"'
                     ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
                     ' WHERE "apdb_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, reassignTime, apdb_part, diaSourceId)
             else:
+                table_name = context.schema.tableName(ApdbTables.DiaSource)
                 query = (
                     f'UPDATE "{self._keyspace}"."{table_name}"'
                     ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
@@ -1163,9 +1164,7 @@ class ApdbCassandra(Apdb):
                 key = tuple(partitioning_values[field] for field in partition_columns)
                 values_by_key[key].append(values)
 
-            table = context.schema.tableName(table_name)
-            if time_part is not None:
-                table = f"{table}_{time_part}"
+            table = context.schema.tableName(table_name, time_part)
 
             holders = ",".join(["?"] * len(qfields))
             query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
