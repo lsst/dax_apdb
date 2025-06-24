@@ -32,10 +32,12 @@ import felis.datamodel
 import pydantic
 
 from .. import schema_model
-from ..apdbSchema import ApdbSchema, ApdbTables
+from ..apdbSchema import ApdbTables
 
 if TYPE_CHECKING:
     import cassandra.cluster
+
+    from ..schema_model import Table
 
 
 _LOG = logging.getLogger(__name__)
@@ -113,9 +115,18 @@ class ExtraTables(enum.Enum):
     ApdbVisitDetector = "ApdbVisitDetector"
     """Records attempted processing of visit/detector."""
 
-    def table_name(self, prefix: str = "") -> str:
-        """Return full table name."""
-        return prefix + self.value
+    def table_name(self, prefix: str = "", time_partition: int | None = None) -> str:
+        """Return full table name.
+
+        Parameters
+        ----------
+        prefix : `str`, optional
+            Optional prefix for table name.
+        time_partition : `int`, optional
+            Optional time partition, only used for tables that support time
+            patitioning.
+        """
+        return f"{prefix}{self.value}"
 
     @classmethod
     def replica_chunk_tables(cls, has_subchunks: bool) -> Mapping[ApdbTables, ExtraTables]:
@@ -136,7 +147,7 @@ class ExtraTables(enum.Enum):
             }
 
 
-class ApdbCassandraSchema(ApdbSchema):
+class ApdbCassandraSchema:
     """Class for management of APDB schema.
 
     Parameters
@@ -190,8 +201,7 @@ class ApdbCassandraSchema(ApdbSchema):
         self,
         session: cassandra.cluster.Session,
         keyspace: str,
-        schema_file: str,
-        schema_name: str = "ApdbSchema",
+        table_schemas: Mapping[ApdbTables, Table],
         prefix: str = "",
         time_partition_tables: bool = False,
         enable_replica: bool = False,
@@ -199,10 +209,9 @@ class ApdbCassandraSchema(ApdbSchema):
         has_chunk_sub_partitions: bool = True,
         has_visit_detector_table: bool = True,
     ):
-        super().__init__(schema_file, schema_name)
-
         self._session = session
         self._keyspace = keyspace
+        self._table_schemas = table_schemas
         self._prefix = prefix
         self._time_partition_tables = time_partition_tables
         self._enable_replica = enable_replica
@@ -218,7 +227,7 @@ class ApdbCassandraSchema(ApdbSchema):
         apdb_tables: dict[ApdbTables, schema_model.Table] = {}
 
         # add columns and index for partitioning.
-        for table, apdb_table_def in self.tableSchemas.items():
+        for table, apdb_table_def in self._table_schemas.items():
             part_columns = []
             add_columns = []
             primary_key = apdb_table_def.primary_key[:]
@@ -422,7 +431,7 @@ class ApdbCassandraSchema(ApdbSchema):
 
         replica_chunk_tables = ExtraTables.replica_chunk_tables(self._has_chunk_sub_partitions)
         for apdb_table_enum, chunk_table_enum in replica_chunk_tables.items():
-            apdb_table_def = self.tableSchemas[apdb_table_enum]
+            apdb_table_def = self._table_schemas[apdb_table_enum]
 
             extra_tables[chunk_table_enum] = schema_model.Table(
                 id="#" + chunk_table_enum.value,
@@ -465,7 +474,7 @@ class ApdbCassandraSchema(ApdbSchema):
         """
         query = "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s"
         result = self._session.execute(query, (self._keyspace,))
-        table_names = set(row[0] for row in result.all())
+        table_names = {row[0] for row in result.all()}
 
         existing_tables = []
         missing_tables = []
@@ -509,7 +518,7 @@ class ApdbCassandraSchema(ApdbSchema):
             # Some of the tables should have per-partition tables.
             query = "SELECT table_name FROM system_schema.tables WHERE keyspace_name = %s"
             result = self._session.execute(query, (self._keyspace,))
-            table_names = set(row[0] for row in result.all())
+            table_names = {row[0] for row in result.all()}
 
             tables = {}
             for table_enum in args:
@@ -523,9 +532,18 @@ class ApdbCassandraSchema(ApdbSchema):
             # Do not check that they exist, we know that they should.
             return {table_enum: [table_enum.table_name(self._prefix)] for table_enum in args}
 
-    def tableName(self, table_name: ApdbTables | ExtraTables) -> str:
-        """Return Cassandra table name for APDB table."""
-        return table_name.table_name(self._prefix)
+    def tableName(self, table_name: ApdbTables | ExtraTables, time_partition: int | None = None) -> str:
+        """Return Cassandra table name for APDB table.
+
+        Parameters
+        ----------
+        table_name : `ApdbTables` or `ExtraTables`
+            Table enum for which to generate table name.
+        time_partition : `int`, optional
+            Optional time partition, only used for tables that support time
+            patitioning.
+        """
+        return table_name.table_name(self._prefix, time_partition)
 
     def keyspace(self) -> str:
         """Return Cassandra keyspace for APDB tables."""
@@ -688,8 +706,7 @@ class ApdbCassandraSchema(ApdbSchema):
         table_list = [fullTable]
         if part_range is not None:
             if table in self._time_partitioned_tables:
-                partitions = range(*part_range)
-                table_list = [f"{fullTable}_{part}" for part in partitions]
+                table_list = [table.table_name(self._prefix, part) for part in range(*part_range)]
 
         if drop:
             queries = [f'DROP TABLE IF EXISTS "{self._keyspace}"."{table_name}"' for table_name in table_list]

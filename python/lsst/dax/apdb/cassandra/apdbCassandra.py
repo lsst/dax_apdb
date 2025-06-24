@@ -23,7 +23,6 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandra"]
 
-import dataclasses
 import datetime
 import logging
 import random
@@ -40,9 +39,6 @@ import pandas
 try:
     import cassandra
     import cassandra.query
-    from cassandra.auth import AuthProvider, PlainTextAuthProvider
-    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile, Session
-    from cassandra.policies import AddressTranslator, RoundRobinPolicy, WhiteListRoundRobinPolicy
     from cassandra.query import UNSET_VALUE
 
     CASSANDRA_IMPORTED = True
@@ -51,16 +47,15 @@ except ImportError:
 
 import astropy.time
 import felis.datamodel
+
 from lsst import sphgeom
-from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
 
 from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ApdbTableData, ReplicaChunk
-from ..apdbSchema import ApdbTables
+from ..apdbSchema import ApdbSchema, ApdbTables
 from ..monitor import MonAgent
-from ..pixelization import Pixelization
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
@@ -69,15 +64,16 @@ from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema, CreateTableOptions, ExtraTables
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .cassandra_utils import (
-    PreparedStatementCache,
     execute_concurrent,
     literal,
-    pandas_dataframe_factory,
     quote_id,
-    raw_data_factory,
     select_concurrent,
 )
 from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig
+from .connectionContext import ConnectionContext, DbVersions
+from .exceptions import CassandraMissingError
+from .partitioner import Partitioner
+from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
     from ..apdbMetadata import ApdbMetadata
@@ -93,69 +89,8 @@ changes.
 """
 
 
-def _dump_query(rf: Any) -> None:
-    """Dump cassandra query to debug log."""
-    _LOG.debug("Cassandra query: %s", rf.query)
-
-
-class CassandraMissingError(Exception):
-    def __init__(self) -> None:
-        super().__init__("cassandra-driver module cannot be imported")
-
-
-@dataclasses.dataclass
-class DatabaseInfo:
-    """Collection of information about a specific database."""
-
-    name: str
-    """Keyspace name."""
-
-    permissions: dict[str, set[str]] | None = None
-    """Roles that can access the database and their permissions.
-
-    `None` means that authentication information is not accessible due to
-    system table permissions. If anonymous access is enabled then dictionary
-    will be empty but not `None`.
-    """
-
-
-@dataclasses.dataclass
-class _DbVersions:
-    """Versions defined in APDB metadata table."""
-
-    schema_version: VersionTuple
-    """Version of the schema from which database was created."""
-
-    code_version: VersionTuple
-    """Version of ApdbCassandra with which database was created."""
-
-    replica_version: VersionTuple | None
-    """Version of ApdbCassandraReplica with which database was created, None
-    if replication was not configured.
-    """
-
-
-if CASSANDRA_IMPORTED:
-
-    class _AddressTranslator(AddressTranslator):
-        """Translate internal IP address to external.
-
-        Only used for docker-based setup, not viable long-term solution.
-        """
-
-        def __init__(self, public_ips: tuple[str, ...], private_ips: tuple[str, ...]):
-            self._map = dict((k, v) for k, v in zip(private_ips, public_ips))
-
-        def translate(self, private_ip: str) -> str:
-            return self._map.get(private_ip, private_ip)
-
-
 class ApdbCassandra(Apdb):
-    """Implementation of APDB database on to of Apache Cassandra.
-
-    The implementation is configured via standard ``pex_config`` mechanism
-    using `ApdbCassandraConfig` configuration class. For an example of
-    different configurations check config/ folder.
+    """Implementation of APDB database with Apache Cassandra backend.
 
     Parameters
     ----------
@@ -163,221 +98,47 @@ class ApdbCassandra(Apdb):
         Configuration object.
     """
 
-    metadataSchemaVersionKey = "version:schema"
-    """Name of the metadata key to store schema version number."""
-
-    metadataCodeVersionKey = "version:ApdbCassandra"
-    """Name of the metadata key to store code version number."""
-
-    metadataReplicaVersionKey = "version:ApdbCassandraReplica"
-    """Name of the metadata key to store replica code version number."""
-
-    metadataConfigKey = "config:apdb-cassandra.json"
-    """Name of the metadata key to store code version number."""
-
-    _frozen_parameters = (
-        "enable_replica",
-        "ra_dec_columns",
-        "replica_skips_diaobjects",
-        "replica_sub_chunk_count",
-        "partitioning.part_pixelization",
-        "partitioning.part_pix_level",
-        "partitioning.time_partition_tables",
-        "partitioning.time_partition_days",
-    )
-    """Names of the config parameters to be frozen in metadata table."""
-
-    partition_zero_epoch = astropy.time.Time(0, format="unix_tai")
-    """Start time for partition 0, this should never be changed."""
-
     def __init__(self, config: ApdbCassandraConfig):
         if not CASSANDRA_IMPORTED:
             raise CassandraMissingError()
 
+        self._config = config
         self._keyspace = config.keyspace
+        self._schema = ApdbSchema(config.schema_file, config.schema_name)
 
-        self._cluster, self._session = self._make_session(config)
+        self._session_factory = SessionFactory(config)
+        self._connection_context: ConnectionContext | None = None
 
-        meta_table_name = ApdbTables.metadata.table_name(config.prefix)
-        self._metadata = ApdbMetadataCassandra(
-            self._session, meta_table_name, config.keyspace, "read_tuples", "write"
-        )
+    @property
+    def _context(self) -> ConnectionContext:
+        """Establish connection if not established and return context."""
+        if self._connection_context is None:
+            session = self._session_factory.session()
+            self._connection_context = ConnectionContext(session, self._config, self._schema.tableSchemas)
 
-        # Read frozen config from metadata.
-        with self._timer("read_metadata_config"):
-            config_json = self._metadata.get(self.metadataConfigKey)
-            if config_json is not None:
-                # Update config from metadata.
-                freezer = ApdbConfigFreezer[ApdbCassandraConfig](self._frozen_parameters)
-                self.config = freezer.update(config, config_json)
-            else:
-                self.config = config
-
-        # Read versions stored in database.
-        self._db_versions = self._readVersions(self._metadata)
-        _LOG.debug("Database versions: %s", self._db_versions)
-
-        # Since replica version 1.1.0 we use finer partitioning for replica
-        # chunk tables.
-        self._has_chunk_sub_partitions = False
-        if self.config.enable_replica:
-            assert self._db_versions.replica_version is not None, "Replica version must be defined"
-            self._has_chunk_sub_partitions = ApdbCassandraReplica.hasChunkSubPartitions(
-                self._db_versions.replica_version
+            # Check version compatibility
+            current_versions = DbVersions(
+                schema_version=self._schema.schemaVersion(),
+                code_version=self.apdbImplementationVersion(),
+                replica_version=(
+                    ApdbCassandraReplica.apdbReplicaImplementationVersion()
+                    if self._connection_context.config.enable_replica
+                    else None
+                ),
             )
+            _LOG.debug("Current versions: %s", current_versions)
+            self._versionCheck(current_versions, self._connection_context.db_versions)
 
-        # Since version 0.1.2 we have an extra table for visit/detector.
-        self._has_visit_detector_table = self._db_versions.code_version >= VersionTuple(0, 1, 2)
+            if _LOG.isEnabledFor(logging.DEBUG):
+                _LOG.debug("ApdbCassandra Configuration: %s", self._connection_context.config.model_dump())
 
-        self._pixelization = Pixelization(
-            self.config.partitioning.part_pixelization,
-            self.config.partitioning.part_pix_level,
-            config.partitioning.part_pix_max_ranges,
-        )
-
-        self._schema = ApdbCassandraSchema(
-            session=self._session,
-            keyspace=self._keyspace,
-            schema_file=self.config.schema_file,
-            schema_name=self.config.schema_name,
-            prefix=self.config.prefix,
-            time_partition_tables=self.config.partitioning.time_partition_tables,
-            enable_replica=self.config.enable_replica,
-            has_chunk_sub_partitions=self._has_chunk_sub_partitions,
-            has_visit_detector_table=self._has_visit_detector_table,
-        )
-        self._partition_zero_epoch_mjd = float(self.partition_zero_epoch.mjd)
-
-        current_versions = _DbVersions(
-            schema_version=self._schema.schemaVersion(),
-            code_version=self.apdbImplementationVersion(),
-            replica_version=(
-                ApdbCassandraReplica.apdbReplicaImplementationVersion()
-                if self.config.enable_replica
-                else None
-            ),
-        )
-        _LOG.debug("Current versions: %s", current_versions)
-        self._versionCheck(current_versions, self._db_versions)
-
-        # Since replica version 1.1.0 we use finer partitioning for replica
-        # chunk tables.
-        self._has_chunk_sub_partitions = False
-        if self.config.enable_replica:
-            assert self._db_versions.replica_version is not None, "Replica version must be defined"
-            self._has_chunk_sub_partitions = ApdbCassandraReplica.hasChunkSubPartitions(
-                self._db_versions.replica_version
-            )
-
-        # Support for DiaObjectLastToPartition was added at code version 0.1.1
-        # in a backward-compatible way (we only use the table if it is there).
-        self._has_dia_object_last_to_partition = self._db_versions.code_version >= VersionTuple(0, 1, 1)
-
-        # Cache for prepared statements
-        self._preparer = PreparedStatementCache(self._session)
-
-        if _LOG.isEnabledFor(logging.DEBUG):
-            _LOG.debug("ApdbCassandra Configuration: %s", self.config.model_dump())
-
-    def __del__(self) -> None:
-        if hasattr(self, "_cluster"):
-            self._cluster.shutdown()
+        return self._connection_context
 
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
         return Timer(name, _MON, tags=tags)
 
-    @classmethod
-    def _make_session(cls, config: ApdbCassandraConfig) -> tuple[Cluster, Session]:
-        """Make Cassandra session."""
-        addressTranslator: AddressTranslator | None = None
-        if config.connection_config.private_ips:
-            addressTranslator = _AddressTranslator(
-                config.contact_points, config.connection_config.private_ips
-            )
-
-        with Timer("cluster_connect", _MON):
-            cluster = Cluster(
-                execution_profiles=cls._makeProfiles(config),
-                contact_points=config.contact_points,
-                port=config.connection_config.port,
-                address_translator=addressTranslator,
-                protocol_version=config.connection_config.protocol_version,
-                auth_provider=cls._make_auth_provider(config),
-                **config.connection_config.extra_parameters,
-            )
-            session = cluster.connect()
-
-        # Dump queries if debug level is enabled.
-        if _LOG.isEnabledFor(logging.DEBUG):
-            session.add_request_init_listener(_dump_query)
-
-        # Disable result paging
-        session.default_fetch_size = None
-
-        return cluster, session
-
-    @classmethod
-    def _make_auth_provider(cls, config: ApdbCassandraConfig) -> AuthProvider | None:
-        """Make Cassandra authentication provider instance."""
-        try:
-            dbauth = DbAuth()
-        except DbAuthNotFoundError:
-            # Credentials file doesn't exist, use anonymous login.
-            return None
-
-        empty_username = True
-        # Try every contact point in turn.
-        for hostname in config.contact_points:
-            try:
-                username, password = dbauth.getAuth(
-                    "cassandra",
-                    config.connection_config.username,
-                    hostname,
-                    config.connection_config.port,
-                    config.keyspace,
-                )
-                if not username:
-                    # Password without user name, try next hostname, but give
-                    # warning later if no better match is found.
-                    empty_username = True
-                else:
-                    return PlainTextAuthProvider(username=username, password=password)
-            except DbAuthNotFoundError:
-                pass
-
-        if empty_username:
-            _LOG.warning(
-                f"Credentials file ({dbauth.db_auth_path}) provided password but not "
-                "user name, anonymous Cassandra logon will be attempted."
-            )
-
-        return None
-
-    def _readVersions(self, metadata: ApdbMetadataCassandra) -> _DbVersions:
-        """Check schema version compatibility."""
-
-        def _get_version(key: str) -> VersionTuple:
-            """Retrieve version number from given metadata key."""
-            version_str = metadata.get(key)
-            if version_str is None:
-                # Should not happen with existing metadata table.
-                raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
-            return VersionTuple.fromString(version_str)
-
-        db_schema_version = _get_version(self.metadataSchemaVersionKey)
-        db_code_version = _get_version(self.metadataCodeVersionKey)
-
-        # Check replica code version only if replica is enabled.
-        db_replica_version: VersionTuple | None = None
-        if self.config.enable_replica:
-            db_replica_version = _get_version(self.metadataReplicaVersionKey)
-
-        return _DbVersions(
-            schema_version=db_schema_version, code_version=db_code_version, replica_version=db_replica_version
-        )
-
-    def _versionCheck(self, current_versions: _DbVersions, db_versions: _DbVersions) -> None:
+    def _versionCheck(self, current_versions: DbVersions, db_versions: DbVersions) -> None:
         """Check schema version compatibility."""
         if not current_versions.schema_version.checkCompatibility(db_versions.schema_version):
             raise IncompatibleVersionError(
@@ -416,6 +177,10 @@ class ApdbCassandra(Apdb):
             Version of the code defined in implementation class.
         """
         return VERSION
+
+    def getConfig(self) -> ApdbCassandraConfig:
+        # docstring is inherited from a base class
+        return self._context.config
 
     def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class
@@ -571,92 +336,11 @@ class ApdbCassandra(Apdb):
 
         return config
 
-    @classmethod
-    def list_databases(cls, host: str) -> Iterable[DatabaseInfo]:
-        """Return the list of keyspaces with APDB databases.
-
-        Parameters
-        ----------
-        host : `str`
-            Name of one of the hosts in Cassandra cluster.
-
-        Returns
-        -------
-        databases : `~collections.abc.Iterable` [`DatabaseInfo`]
-            Information about databases that contain APDB instance.
-        """
-        # For DbAuth we need to use database name "*" to try to match any
-        # database.
-        config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
-        cluster, session = cls._make_session(config)
-
-        with cluster, session:
-            # Get names of all keyspaces containing DiaSource table
-            table_name = ApdbTables.DiaSource.table_name()
-            query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
-            result = session.execute(query, (table_name,))
-            keyspaces = [row[0] for row in result.all()]
-
-            if not keyspaces:
-                return []
-
-            # Retrieve roles for each keyspace.
-            template = ", ".join(["%s"] * len(keyspaces))
-            query = (
-                "SELECT resource, role, permissions FROM system_auth.role_permissions "
-                f"WHERE resource IN ({template}) ALLOW FILTERING"
-            )
-            resources = [f"data/{keyspace}" for keyspace in keyspaces]
-            try:
-                result = session.execute(query, resources)
-                # If anonymous access is enabled then result will be empty,
-                # set infos to have empty permissions dict in that case.
-                infos = {keyspace: DatabaseInfo(name=keyspace, permissions={}) for keyspace in keyspaces}
-                for row in result:
-                    _, _, keyspace = row[0].partition("/")
-                    role: str = row[1]
-                    role_permissions: set[str] = set(row[2])
-                    infos[keyspace].permissions[role] = role_permissions  # type: ignore[index]
-            except cassandra.Unauthorized as exc:
-                # Likely that access to role_permissions is not granted for
-                # current user.
-                warnings.warn(
-                    f"Authentication information is not accessible to current user - {exc}", stacklevel=2
-                )
-                infos = {keyspace: DatabaseInfo(name=keyspace) for keyspace in keyspaces}
-
-            # Would be nice to get size estimate, but this is not available
-            # via CQL queries.
-            return infos.values()
-
-    @classmethod
-    def delete_database(cls, host: str, keyspace: str, *, timeout: int = 3600) -> None:
-        """Delete APDB database by dropping its keyspace.
-
-        Parameters
-        ----------
-        host : `str`
-            Name of one of the hosts in Cassandra cluster.
-        keyspace : `str`
-            Name of keyspace to delete.
-        timeout : `int`, optional
-            Timeout for delete operation in seconds. Dropping a large keyspace
-            can be a long operation, but this default value of one hour should
-            be sufficient for most or all cases.
-        """
-        # For DbAuth we need to use database name "*" to try to match any
-        # database.
-        config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
-        cluster, session = cls._make_session(config)
-        with cluster, session:
-            query = f"DROP KEYSPACE {quote_id(keyspace)}"
-            session.execute(query, timeout=timeout)
-
     def get_replica(self) -> ApdbCassandraReplica:
         """Return `ApdbReplica` instance for this database."""
         # Note that this instance has to stay alive while replica exists, so
         # we pass reference to self.
-        return ApdbCassandraReplica(self, self._schema, self._session)
+        return ApdbCassandraReplica(self)
 
     @classmethod
     def _makeSchema(
@@ -672,13 +356,13 @@ class ApdbCassandra(Apdb):
         if not isinstance(config, ApdbCassandraConfig):
             raise TypeError(f"Unexpected type of configuration object: {type(config)}")
 
-        cluster, session = cls._make_session(config)
-        with cluster, session:
+        simple_schema = ApdbSchema(config.schema_file, config.schema_name)
+
+        with SessionContext(config) as session:
             schema = ApdbCassandraSchema(
                 session=session,
                 keyspace=config.keyspace,
-                schema_file=config.schema_file,
-                schema_name=config.schema_name,
+                table_schemas=simple_schema.tableSchemas,
                 prefix=config.prefix,
                 time_partition_tables=config.partitioning.time_partition_tables,
                 enable_replica=config.enable_replica,
@@ -687,17 +371,16 @@ class ApdbCassandra(Apdb):
 
             # Ask schema to create all tables.
             if config.partitioning.time_partition_tables:
+                partitioner = Partitioner(config)
                 time_partition_start = astropy.time.Time(
                     config.partitioning.time_partition_start, format="isot", scale="tai"
                 )
                 time_partition_end = astropy.time.Time(
                     config.partitioning.time_partition_end, format="isot", scale="tai"
                 )
-                part_epoch = float(cls.partition_zero_epoch.mjd)
-                part_days = config.partitioning.time_partition_days
                 part_range = (
-                    cls._time_partition_cls(time_partition_start, part_epoch, part_days),
-                    cls._time_partition_cls(time_partition_end, part_epoch, part_days) + 1,
+                    partitioner.time_partition(time_partition_start),
+                    partitioner.time_partition(time_partition_end) + 1,
                 )
                 schema.makeSchema(
                     drop=drop,
@@ -716,38 +399,44 @@ class ApdbCassandra(Apdb):
             )
 
             # Fill version numbers, overrides if they existed before.
-            metadata.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
-            metadata.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
+            metadata.set(
+                ConnectionContext.metadataSchemaVersionKey, str(simple_schema.schemaVersion()), force=True
+            )
+            metadata.set(
+                ConnectionContext.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True
+            )
 
             if config.enable_replica:
                 # Only store replica code version if replica is enabled.
                 metadata.set(
-                    cls.metadataReplicaVersionKey,
+                    ConnectionContext.metadataReplicaVersionKey,
                     str(ApdbCassandraReplica.apdbReplicaImplementationVersion()),
                     force=True,
                 )
 
             # Store frozen part of a configuration in metadata.
-            freezer = ApdbConfigFreezer[ApdbCassandraConfig](cls._frozen_parameters)
-            metadata.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
+            freezer = ApdbConfigFreezer[ApdbCassandraConfig](ConnectionContext.frozen_parameters)
+            metadata.set(ConnectionContext.metadataConfigKey, freezer.to_json(config), force=True)
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
+        context = self._context
+        config = context.config
 
-        sp_where = self._spatial_where(region)
+        sp_where = context.partitioner.spatial_where(region, for_prepare=True)
         _LOG.debug("getDiaObjects: #partitions: %s", len(sp_where))
 
         # We need to exclude extra partitioning columns from result.
-        column_names = self._schema.apdbColumnNames(ApdbTables.DiaObjectLast)
+        column_names = context.schema.apdbColumnNames(ApdbTables.DiaObjectLast)
         what = ",".join(quote_id(column) for column in column_names)
 
-        table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
+        table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
         query = f'SELECT {what} from "{self._keyspace}"."{table_name}"'
         statements: list[tuple] = []
         for where, params in sp_where:
             full_query = f"{query} WHERE {where}"
             if params:
-                statement = self._preparer.prepare(full_query)
+                statement = context.preparer.prepare(full_query)
             else:
                 # If there are no params then it is likely that query has a
                 # bunch of literals rendered already, no point trying to
@@ -764,10 +453,10 @@ class ApdbCassandra(Apdb):
                 objects = cast(
                     pandas.DataFrame,
                     select_concurrent(
-                        self._session,
+                        context.session,
                         statements,
                         "read_pandas_multi",
-                        self.config.connection_config.read_concurrency,
+                        config.connection_config.read_concurrency,
                     ),
                 )
                 timer.add_values(row_count=len(objects))
@@ -779,7 +468,10 @@ class ApdbCassandra(Apdb):
         self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
-        months = self.config.read_sources_months
+        context = self._context
+        config = context.config
+
+        months = config.read_sources_months
         if months == 0:
             return None
         mjd_end = float(visit_time.mjd)
@@ -791,7 +483,10 @@ class ApdbCassandra(Apdb):
         self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
-        months = self.config.read_forced_sources_months
+        context = self._context
+        config = context.config
+
+        months = config.read_forced_sources_months
         if months == 0:
             return None
         mjd_end = float(visit_time.mjd)
@@ -807,15 +502,17 @@ class ApdbCassandra(Apdb):
         visit_time: astropy.time.Time,
     ) -> bool:
         # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
         # If ApdbDetectorVisit table exists just check it.
-        if self._has_visit_detector_table:
-            table_name = self._schema.tableName(ExtraTables.ApdbVisitDetector)
+        if context.has_visit_detector_table:
+            table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
             query = (
-                f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" '
-                "WHERE visit = %s AND detector = %s"
+                f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" WHERE visit = %s AND detector = %s'
             )
             with self._timer("contains_visit_detector_time"):
-                result = self._session.execute(query, (visit, detector))
+                result = context.session.execute(query, (visit, detector))
                 return bool(result.one()[0])
 
         # The order of checks corresponds to order in store(), on potential
@@ -823,7 +520,7 @@ class ApdbCassandra(Apdb):
         # stored records. With per-partition tables there will be many tables
         # in the list, but it is unlikely that we'll use that setup in
         # production.
-        sp_where = self._spatial_where(region, use_ranges=True)
+        sp_where = context.partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
         visit_detector_where = ("visit = ? AND detector = ?", (visit, detector))
 
         # Sources are partitioned on their midPointMjdTai. To avoid precision
@@ -833,8 +530,8 @@ class ApdbCassandra(Apdb):
 
         statements: list[tuple] = []
         for table_type in ApdbTables.DiaSource, ApdbTables.DiaForcedSource:
-            tables, temporal_where = self._temporal_where(
-                table_type, mjd_start, mjd_end, query_per_time_part=True
+            tables, temporal_where = context.partitioner.temporal_where(
+                table_type, mjd_start, mjd_end, query_per_time_part=True, for_prepare=True
             )
             for table in tables:
                 prefix = f'SELECT apdb_part FROM "{self._keyspace}"."{table}"'
@@ -848,22 +545,24 @@ class ApdbCassandra(Apdb):
             result = cast(
                 list[tuple[int] | None],
                 select_concurrent(
-                    self._session,
+                    context.session,
                     statements,
                     "read_tuples",
-                    self.config.connection_config.read_concurrency,
+                    config.connection_config.read_concurrency,
                 ),
             )
         return bool(result)
 
     def getSSObjects(self) -> pandas.DataFrame:
         # docstring is inherited from a base class
-        tableName = self._schema.tableName(ApdbTables.SSObject)
+        context = self._context
+
+        tableName = context.schema.tableName(ApdbTables.SSObject)
         query = f'SELECT * from "{self._keyspace}"."{tableName}"'
 
         objects = None
         with self._timer("select_time", tags={"table": "SSObject"}) as timer:
-            result = self._session.execute(query, execution_profile="read_pandas")
+            result = context.session.execute(query, execution_profile="read_pandas")
             objects = result._current_rows
             timer.add_values(row_count=len(objects))
 
@@ -878,7 +577,10 @@ class ApdbCassandra(Apdb):
         forced_sources: pandas.DataFrame | None = None,
     ) -> None:
         # docstring is inherited from a base class
-        if self._has_visit_detector_table:
+        context = self._context
+        config = context.config
+
+        if context.has_visit_detector_table:
             # Store visit/detector in a special table, this has to be done
             # before all other writes so if there is a failure at any point
             # later we still have a record for attempted write.
@@ -892,10 +594,10 @@ class ApdbCassandra(Apdb):
             if visit_detector:
                 # Typically there is only one entry, do not bother with
                 # concurrency.
-                table_name = self._schema.tableName(ExtraTables.ApdbVisitDetector)
+                table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
                 query = f'INSERT INTO "{self._keyspace}"."{table_name}" (visit, detector) VALUES (%s, %s)'
                 for item in visit_detector:
-                    self._session.execute(query, item, execution_profile="write")
+                    context.session.execute(query, item, execution_profile="write")
 
         objects = self._fix_input_timestamps(objects)
         if sources is not None:
@@ -904,8 +606,8 @@ class ApdbCassandra(Apdb):
             forced_sources = self._fix_input_timestamps(forced_sources)
 
         replica_chunk: ReplicaChunk | None = None
-        if self._schema.replication_enabled:
-            replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, self.config.replica_chunk_seconds)
+        if context.schema.replication_enabled:
+            replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, config.replica_chunk_seconds)
             self._storeReplicaChunk(replica_chunk, visit_time)
 
         # fill region partition column for DiaObjects
@@ -929,6 +631,8 @@ class ApdbCassandra(Apdb):
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
+        context = self._context
+        config = context.config
 
         # Current time as milliseconds since epoch.
         reassignTime = int(datetime.datetime.now(tz=datetime.UTC).timestamp() * 1000)
@@ -937,7 +641,7 @@ class ApdbCassandra(Apdb):
         # partition key) so we start by querying for diaSourceId to find the
         # primary keys.
 
-        table_name = self._schema.tableName(ExtraTables.DiaSourceToPartition)
+        table_name = context.schema.tableName(ExtraTables.DiaSourceToPartition)
         # split it into 1k IDs per query
         selects: list[tuple] = []
         for ids in chunk_iterable(idMap.keys(), 1_000):
@@ -956,7 +660,7 @@ class ApdbCassandra(Apdb):
         result = cast(
             list[tuple[int, int, int, int | None]],
             select_concurrent(
-                self._session, selects, "read_tuples", self.config.connection_config.read_concurrency
+                context.session, selects, "read_tuples", config.connection_config.read_concurrency
             ),
         )
 
@@ -975,25 +679,26 @@ class ApdbCassandra(Apdb):
 
         # Reassign in standard tables
         queries: list[tuple[cassandra.query.PreparedStatement, tuple]] = []
-        table_name = self._schema.tableName(ApdbTables.DiaSource)
         for diaSourceId, ssObjectId in idMap.items():
             apdb_part, apdb_time_part = id2partitions[diaSourceId]
             values: tuple
-            if self.config.partitioning.time_partition_tables:
+            if config.partitioning.time_partition_tables:
+                table_name = context.schema.tableName(ApdbTables.DiaSource, apdb_time_part)
                 query = (
-                    f'UPDATE "{self._keyspace}"."{table_name}_{apdb_time_part}"'
+                    f'UPDATE "{self._keyspace}"."{table_name}"'
                     ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
                     ' WHERE "apdb_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, reassignTime, apdb_part, diaSourceId)
             else:
+                table_name = context.schema.tableName(ApdbTables.DiaSource)
                 query = (
                     f'UPDATE "{self._keyspace}"."{table_name}"'
                     ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
                     ' WHERE "apdb_part" = ? AND "apdb_time_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, reassignTime, apdb_part, apdb_time_part, diaSourceId)
-            queries.append((self._preparer.prepare(query), values))
+            queries.append((context.preparer.prepare(query), values))
 
         # TODO: (DM-50190) Replication for updated records is not implemented.
         if id2chunk_id:
@@ -1001,7 +706,7 @@ class ApdbCassandra(Apdb):
 
         _LOG.debug("%s: will update %d records", table_name, len(idMap))
         with self._timer("source_reassign_time") as timer:
-            execute_concurrent(self._session, queries, execution_profile="write")
+            execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(source_count=len(idMap))
 
     def dailyJob(self) -> None:
@@ -1017,72 +722,13 @@ class ApdbCassandra(Apdb):
     @property
     def metadata(self) -> ApdbMetadata:
         # docstring is inherited from a base class
-        return self._metadata
+        context = self._context
+        return context.metadata
 
     @property
     def admin(self) -> ApdbCassandraAdmin:
         # docstring is inherited from a base class
         return ApdbCassandraAdmin(self)
-
-    @classmethod
-    def _makeProfiles(cls, config: ApdbCassandraConfig) -> Mapping[Any, ExecutionProfile]:
-        """Make all execution profiles used in the code."""
-        if config.connection_config.private_ips:
-            loadBalancePolicy = WhiteListRoundRobinPolicy(hosts=config.contact_points)
-        else:
-            loadBalancePolicy = RoundRobinPolicy()
-
-        read_tuples_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=cassandra.query.tuple_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        read_pandas_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=pandas_dataframe_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        read_raw_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=raw_data_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        # Profile to use with select_concurrent to return pandas data frame
-        read_pandas_multi_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=pandas_dataframe_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        # Profile to use with select_concurrent to return raw data (columns and
-        # rows)
-        read_raw_multi_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
-            request_timeout=config.connection_config.read_timeout,
-            row_factory=raw_data_factory,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        write_profile = ExecutionProfile(
-            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.write_consistency),
-            request_timeout=config.connection_config.write_timeout,
-            load_balancing_policy=loadBalancePolicy,
-        )
-        # To replace default DCAwareRoundRobinPolicy
-        default_profile = ExecutionProfile(
-            load_balancing_policy=loadBalancePolicy,
-        )
-        return {
-            "read_tuples": read_tuples_profile,
-            "read_pandas": read_pandas_profile,
-            "read_raw": read_raw_profile,
-            "read_pandas_multi": read_pandas_multi_profile,
-            "read_raw_multi": read_raw_multi_profile,
-            "write": write_profile,
-            EXEC_PROFILE_DEFAULT: default_profile,
-        }
 
     def _getSources(
         self,
@@ -1113,17 +759,22 @@ class ApdbCassandra(Apdb):
             Catalog containing DiaSource records. Empty catalog is returned if
             ``object_ids`` is empty.
         """
+        context = self._context
+        config = context.config
+
         object_id_set: Set[int] = set()
         if object_ids is not None:
             object_id_set = set(object_ids)
             if len(object_id_set) == 0:
                 return self._make_empty_catalog(table_name)
 
-        sp_where = self._spatial_where(region)
-        tables, temporal_where = self._temporal_where(table_name, mjd_start, mjd_end)
+        sp_where = context.partitioner.spatial_where(region, for_prepare=True)
+        tables, temporal_where = context.partitioner.temporal_where(
+            table_name, mjd_start, mjd_end, for_prepare=True
+        )
 
         # We need to exclude extra partitioning columns from result.
-        column_names = self._schema.apdbColumnNames(table_name)
+        column_names = context.schema.apdbColumnNames(table_name)
         what = ",".join(quote_id(column) for column in column_names)
 
         # Build all queries
@@ -1141,10 +792,10 @@ class ApdbCassandra(Apdb):
                 catalog = cast(
                     pandas.DataFrame,
                     select_concurrent(
-                        self._session,
+                        context.session,
                         statements,
                         "read_pandas_multi",
-                        self.config.connection_config.read_concurrency,
+                        config.connection_config.read_concurrency,
                     ),
                 )
                 timer.add_values(row_count_from_db=len(catalog))
@@ -1162,17 +813,20 @@ class ApdbCassandra(Apdb):
         return catalog
 
     def _storeReplicaChunk(self, replica_chunk: ReplicaChunk, visit_time: astropy.time.Time) -> None:
+        context = self._context
+        config = context.config
+
         # Cassandra timestamp uses milliseconds since epoch
         timestamp = int(replica_chunk.last_update_time.unix_tai * 1000)
 
         # everything goes into a single partition
         partition = 0
 
-        table_name = self._schema.tableName(ExtraTables.ApdbReplicaChunks)
+        table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
 
         columns = ["partition", "apdb_replica_chunk", "last_update_time", "unique_id"]
         values = [partition, replica_chunk.id, timestamp, replica_chunk.unique_id]
-        if self._has_chunk_sub_partitions:
+        if context.has_chunk_sub_partitions:
             columns.append("has_subchunks")
             values.append(True)
 
@@ -1180,16 +834,19 @@ class ApdbCassandra(Apdb):
         placeholders = ",".join(["%s"] * len(columns))
         query = f'INSERT INTO "{self._keyspace}"."{table_name}" ({column_list}) VALUES ({placeholders})'
 
-        self._session.execute(
+        context.session.execute(
             query,
             values,
-            timeout=self.config.connection_config.write_timeout,
+            timeout=config.connection_config.write_timeout,
             execution_profile="write",
         )
 
     def _queryDiaObjectLastPartitions(self, ids: Iterable[int]) -> Mapping[int, int]:
         """Return existing mapping of diaObjectId to its last partition."""
-        table_name = self._schema.tableName(ExtraTables.DiaObjectLastToPartition)
+        context = self._context
+        config = context.config
+
+        table_name = context.schema.tableName(ExtraTables.DiaObjectLastToPartition)
         queries = []
         object_count = 0
         for id_chunk in chunk_iterable(ids, 10_000):
@@ -1205,7 +862,10 @@ class ApdbCassandra(Apdb):
             data = cast(
                 ApdbTableData,
                 select_concurrent(
-                    self._session, queries, "read_raw_multi", self.config.connection_config.read_concurrency
+                    context.session,
+                    queries,
+                    "read_raw_multi",
+                    config.connection_config.read_concurrency,
                 ),
             )
             timer.add_values(object_count=object_count, row_count=len(data.rows()))
@@ -1221,8 +881,10 @@ class ApdbCassandra(Apdb):
         one, so we need to explicitly remove old versions before inserting new
         ones.
         """
+        context = self._context
+
         # Extract all object IDs.
-        new_partitions = {oid: part for oid, part in zip(objs["diaObjectId"], objs["apdb_part"])}
+        new_partitions = dict(zip(objs["diaObjectId"], objs["apdb_part"]))
         old_partitions = self._queryDiaObjectLastPartitions(objs["diaObjectId"])
 
         moved_oids: dict[int, tuple[int, int]] = {}
@@ -1234,27 +896,27 @@ class ApdbCassandra(Apdb):
 
         if moved_oids:
             # Delete old records from DiaObjectLast.
-            table_name = self._schema.tableName(ApdbTables.DiaObjectLast)
+            table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
             query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE apdb_part = ? AND "diaObjectId" = ?'
-            statement = self._preparer.prepare(query)
+            statement = context.preparer.prepare(query)
             queries = []
             for oid, (old_part, _) in moved_oids.items():
                 queries.append((statement, (old_part, oid)))
             with self._timer("delete_object_last") as timer:
-                execute_concurrent(self._session, queries, execution_profile="write")
+                execute_concurrent(context.session, queries, execution_profile="write")
                 timer.add_values(row_count=len(moved_oids))
 
         # Add all new records to the map.
-        table_name = self._schema.tableName(ExtraTables.DiaObjectLastToPartition)
+        table_name = context.schema.tableName(ExtraTables.DiaObjectLastToPartition)
         query = f'INSERT INTO "{self._keyspace}"."{table_name}" ("diaObjectId", apdb_part) VALUES (?,?)'
-        statement = self._preparer.prepare(query)
+        statement = context.preparer.prepare(query)
 
         queries = []
         for oid, new_part in new_partitions.items():
             queries.append((statement, (oid, new_part)))
 
         with self._timer("update_object_last_partition") as timer:
-            execute_concurrent(self._session, queries, execution_profile="write")
+            execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(queries))
 
     def _storeDiaObjects(
@@ -1275,35 +937,38 @@ class ApdbCassandra(Apdb):
             _LOG.debug("No objects to write to database.")
             return
 
-        if self._has_dia_object_last_to_partition:
+        context = self._context
+        config = context.config
+
+        if context.has_dia_object_last_to_partition:
             self._deleteMovingObjects(objs)
 
         visit_time_dt = visit_time.datetime
-        extra_columns = dict(lastNonForcedSource=visit_time_dt)
+        extra_columns = {"lastNonForcedSource": visit_time_dt}
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
         extra_columns["validityStart"] = visit_time_dt
-        time_part: int | None = self._time_partition(visit_time)
-        if not self.config.partitioning.time_partition_tables:
+        time_part: int | None = context.partitioner.time_partition(visit_time)
+        if not config.partitioning.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
             time_part = None
 
         # Only store DiaObects if not doing replication or explicitly
         # configured to always store them.
-        if replica_chunk is None or not self.config.replica_skips_diaobjects:
+        if replica_chunk is None or not config.replica_skips_diaobjects:
             self._storeObjectsPandas(
                 objs, ApdbTables.DiaObject, extra_columns=extra_columns, time_part=time_part
             )
 
         if replica_chunk is not None:
-            extra_columns = dict(apdb_replica_chunk=replica_chunk.id, validityStart=visit_time_dt)
+            extra_columns = {"apdb_replica_chunk": replica_chunk.id, "validityStart": visit_time_dt}
             table = ExtraTables.DiaObjectChunks
-            if self._has_chunk_sub_partitions:
+            if context.has_chunk_sub_partitions:
                 table = ExtraTables.DiaObjectChunks2
                 # Use a random number for a second part of partitioning key so
                 # that different clients could wrtite to different partitions.
                 # This makes it not exactly reproducible.
-                extra_columns["apdb_replica_subchunk"] = random.randrange(self.config.replica_sub_chunk_count)
+                extra_columns["apdb_replica_subchunk"] = random.randrange(config.replica_sub_chunk_count)
             self._storeObjectsPandas(objs, table, extra_columns=extra_columns)
 
     def _storeDiaSources(
@@ -1331,12 +996,15 @@ class ApdbCassandra(Apdb):
             Subchunk number for resulting replica data, `None` if relication is
             not enabled ot subchunking is not enabled.
         """
+        context = self._context
+        config = context.config
+
         # Time partitioning has to be based on midpointMjdTai, not visit_time
         # as visit_time is not really a visit time.
         tp_sources = sources.copy(deep=False)
-        tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(self._time_partition)
+        tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(context.partitioner.time_partition)
         extra_columns: dict[str, Any] = {}
-        if not self.config.partitioning.time_partition_tables:
+        if not config.partitioning.time_partition_tables:
             self._storeObjectsPandas(tp_sources, table_name)
         else:
             # Group by time partition
@@ -1353,9 +1021,9 @@ class ApdbCassandra(Apdb):
 
         subchunk: int | None = None
         if replica_chunk is not None:
-            extra_columns = dict(apdb_replica_chunk=replica_chunk.id)
-            if self._has_chunk_sub_partitions:
-                subchunk = random.randrange(self.config.replica_sub_chunk_count)
+            extra_columns = {"apdb_replica_chunk": replica_chunk.id}
+            if context.has_chunk_sub_partitions:
+                subchunk = random.randrange(config.replica_sub_chunk_count)
                 extra_columns["apdb_replica_subchunk"] = subchunk
                 if table_name is ApdbTables.DiaSource:
                     extra_table = ExtraTables.DiaSourceChunks2
@@ -1391,12 +1059,14 @@ class ApdbCassandra(Apdb):
             Replication sub-chunk, or `None` when replication is disabled or
             sub-chunking is not used.
         """
+        context = self._context
+
         id_map = cast(pandas.DataFrame, sources[["diaSourceId", "apdb_part"]])
         extra_columns = {
-            "apdb_time_part": self._time_partition(visit_time),
+            "apdb_time_part": context.partitioner.time_partition(visit_time),
             "apdb_replica_chunk": replica_chunk.id if replica_chunk is not None else None,
         }
-        if self._has_chunk_sub_partitions:
+        if context.has_chunk_sub_partitions:
             extra_columns["apdb_replica_subchunk"] = subchunk
 
         self._storeObjectsPandas(
@@ -1434,6 +1104,8 @@ class ApdbCassandra(Apdb):
         defined in a table, but partition and clustering keys must be present
         in a catalog or ``extra_columns``.
         """
+        context = self._context
+
         # use extra columns if specified
         if extra_columns is None:
             extra_columns = {}
@@ -1442,14 +1114,14 @@ class ApdbCassandra(Apdb):
         # Fields that will come from dataframe.
         df_fields = [column for column in records.columns if column not in extra_fields]
 
-        column_map = self._schema.getColumnMap(table_name)
+        column_map = context.schema.getColumnMap(table_name)
         # list of columns (as in felis schema)
         fields = [column_map[field].name for field in df_fields if field in column_map]
         fields += extra_fields
 
         # check that all partitioning and clustering columns are defined
-        partition_columns = self._schema.partitionColumns(table_name)
-        required_columns = partition_columns + self._schema.clusteringColumns(table_name)
+        partition_columns = context.schema.partitionColumns(table_name)
+        required_columns = partition_columns + context.schema.clusteringColumns(table_name)
         missing_columns = [column for column in required_columns if column not in fields]
         if missing_columns:
             raise ValueError(f"Primary key columns are missing from catalog: {missing_columns}")
@@ -1492,13 +1164,11 @@ class ApdbCassandra(Apdb):
                 key = tuple(partitioning_values[field] for field in partition_columns)
                 values_by_key[key].append(values)
 
-            table = self._schema.tableName(table_name)
-            if time_part is not None:
-                table = f"{table}_{time_part}"
+            table = context.schema.tableName(table_name, time_part)
 
             holders = ",".join(["?"] * len(qfields))
             query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
-            statement = self._preparer.prepare(query)
+            statement = context.preparer.prepare(query)
             # Cassandra has 64k limit on batch size, normally that should be
             # enough but some tests generate too many forced sources.
             queries = []
@@ -1510,9 +1180,9 @@ class ApdbCassandra(Apdb):
                     queries.append((batch, None))
                     assert batch.routing_key is not None and batch.keyspace is not None
 
-        _LOG.debug("%s: will store %d records", self._schema.tableName(table_name), records.shape[0])
+        _LOG.debug("%s: will store %d records", context.schema.tableName(table_name), records.shape[0])
         with self._timer("insert_time", tags={"table": table_name.name}) as timer:
-            execute_concurrent(self._session, queries, execution_profile="write")
+            execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(records), num_batches=len(queries))
 
     def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
@@ -1537,65 +1207,19 @@ class ApdbCassandra(Apdb):
         (``apdb_part``). Original DataFrame is not changed, copy of a DataFrame
         is returned.
         """
+        context = self._context
+        config = context.config
+
         # Calculate pixelization index for every record.
         apdb_part = np.zeros(df.shape[0], dtype=np.int64)
-        ra_col, dec_col = self.config.ra_dec_columns
+        ra_col, dec_col = config.ra_dec_columns
         for i, (ra, dec) in enumerate(zip(df[ra_col], df[dec_col])):
             uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
-            idx = self._pixelization.pixel(uv3d)
+            idx = context.partitioner.pixel(uv3d)
             apdb_part[i] = idx
         df = df.copy()
         df["apdb_part"] = apdb_part
         return df
-
-    @classmethod
-    def _time_partition_cls(cls, time: float | astropy.time.Time, epoch_mjd: float, part_days: int) -> int:
-        """Calculate time partition number for a given time.
-
-        Parameters
-        ----------
-        time : `float` or `astropy.time.Time`
-            Time for which to calculate partition number. Can be float to mean
-            MJD or `astropy.time.Time`
-        epoch_mjd : `float`
-            Epoch time for partition 0.
-        part_days : `int`
-            Number of days per partition.
-
-        Returns
-        -------
-        partition : `int`
-            Partition number for a given time.
-        """
-        if isinstance(time, astropy.time.Time):
-            mjd = float(time.mjd)
-        else:
-            mjd = time
-        days_since_epoch = mjd - epoch_mjd
-        partition = int(days_since_epoch) // part_days
-        return partition
-
-    def _time_partition(self, time: float | astropy.time.Time) -> int:
-        """Calculate time partition number for a given time.
-
-        Parameters
-        ----------
-        time : `float` or `astropy.time.Time`
-            Time for which to calculate partition number. Can be float to mean
-            MJD or `astropy.time.Time`
-
-        Returns
-        -------
-        partition : `int`
-            Partition number for a given time.
-        """
-        if isinstance(time, astropy.time.Time):
-            mjd = float(time.mjd)
-        else:
-            mjd = time
-        days_since_epoch = mjd - self._partition_zero_epoch_mjd
-        partition = int(days_since_epoch) // self.config.partitioning.time_partition_days
-        return partition
 
     def _make_empty_catalog(self, table_name: ApdbTables) -> pandas.DataFrame:
         """Make an empty catalog for a table with a given name.
@@ -1635,6 +1259,8 @@ class ApdbCassandra(Apdb):
             Initial statement prefix that comes before WHERE clause, e.g.
             "SELECT * from Table"
         """
+        context = self._context
+
         # If lists are empty use special sentinels.
         if not where1:
             where1 = [("", ())]
@@ -1658,101 +1284,13 @@ class ApdbCassandra(Apdb):
                 if suffix:
                     full_query += " " + suffix
                 if params:
-                    statement = self._preparer.prepare(full_query)
+                    statement = context.preparer.prepare(full_query)
                 else:
                     # If there are no params then it is likely that query
                     # has a bunch of literals rendered already, no point
                     # trying to prepare it.
                     statement = cassandra.query.SimpleStatement(full_query)
                 yield (statement, params)
-
-    def _spatial_where(
-        self, region: sphgeom.Region | None, use_ranges: bool = False
-    ) -> list[tuple[str, tuple]]:
-        """Generate expressions for spatial part of WHERE clause.
-
-        Parameters
-        ----------
-        region : `sphgeom.Region`
-            Spatial region for query results.
-        use_ranges : `bool`
-            If True then use pixel ranges ("apdb_part >= p1 AND apdb_part <=
-            p2") instead of exact list of pixels. Should be set to True for
-            large regions covering very many pixels.
-
-        Returns
-        -------
-        expressions : `list` [ `tuple` ]
-            Empty list is returned if ``region`` is `None`, otherwise a list
-            of one or more (expression, parameters) tuples
-        """
-        if region is None:
-            return []
-        if use_ranges:
-            pixel_ranges = self._pixelization.envelope(region)
-            expressions: list[tuple[str, tuple]] = []
-            for lower, upper in pixel_ranges:
-                upper -= 1
-                if lower == upper:
-                    expressions.append(('"apdb_part" = ?', (lower,)))
-                else:
-                    expressions.append(('"apdb_part" >= ? AND "apdb_part" <= ?', (lower, upper)))
-            return expressions
-        else:
-            pixels = self._pixelization.pixels(region)
-            if self.config.partitioning.query_per_spatial_part:
-                return [('"apdb_part" = ?', (pixel,)) for pixel in pixels]
-            else:
-                pixels_str = ",".join([str(pix) for pix in pixels])
-                return [(f'"apdb_part" IN ({pixels_str})', ())]
-
-    def _temporal_where(
-        self,
-        table: ApdbTables,
-        start_time: float | astropy.time.Time,
-        end_time: float | astropy.time.Time,
-        query_per_time_part: bool | None = None,
-    ) -> tuple[list[str], list[tuple[str, tuple]]]:
-        """Generate table names and expressions for temporal part of WHERE
-        clauses.
-
-        Parameters
-        ----------
-        table : `ApdbTables`
-            Table to select from.
-        start_time : `astropy.time.Time` or `float`
-            Starting Datetime of MJD value of the time range.
-        end_time : `astropy.time.Time` or `float`
-            Starting Datetime of MJD value of the time range.
-        query_per_time_part : `bool`, optional
-            If None then use ``query_per_time_part`` from configuration.
-
-        Returns
-        -------
-        tables : `list` [ `str` ]
-            List of the table names to query.
-        expressions : `list` [ `tuple` ]
-            A list of zero or more (expression, parameters) tuples.
-        """
-        tables: list[str]
-        temporal_where: list[tuple[str, tuple]] = []
-        table_name = self._schema.tableName(table)
-        time_part_start = self._time_partition(start_time)
-        time_part_end = self._time_partition(end_time)
-        time_parts = list(range(time_part_start, time_part_end + 1))
-        if self.config.partitioning.time_partition_tables:
-            tables = [f"{table_name}_{part}" for part in time_parts]
-        else:
-            tables = [table_name]
-            if query_per_time_part is None:
-                query_per_time_part = self.config.partitioning.query_per_time_part
-            if query_per_time_part:
-                temporal_where = [('"apdb_time_part" = ?', (time_part,)) for time_part in time_parts]
-            else:
-                time_part_list = ",".join([str(part) for part in time_parts])
-                temporal_where = [(f'"apdb_time_part" IN ({time_part_list})', ())]
-
-        return tables, temporal_where
 
     def _fix_input_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Update timestamp columns in input DataFrame to be naive datetime
@@ -1771,11 +1309,14 @@ class ApdbCassandra(Apdb):
 
     def _batch_size(self, table: ApdbTables | ExtraTables) -> int:
         """Calculate batch size based on config parameters."""
+        context = self._context
+        config = context.config
+
         # Cassandra limit on number of statements in a batch is 64k.
         batch_size = 65_535
-        if 0 < self.config.batch_statement_limit < batch_size:
-            batch_size = self.config.batch_statement_limit
-        if self.config.batch_size_limit > 0:
+        if 0 < config.batch_statement_limit < batch_size:
+            batch_size = config.batch_statement_limit
+        if config.batch_size_limit > 0:
             # The purpose of this limit is to try not to exceed batch size
             # threshold which is set on server side. Cassandra wire protocol
             # for prepared queries (and batches) only sends column values with
@@ -1783,7 +1324,7 @@ class ApdbCassandra(Apdb):
             # not included for NULL or NOT_SET values, but the size is always
             # there. There is additional small per-query overhead, which we
             # ignore.
-            row_size = self._schema.table_row_size(table)
-            row_size += 4 * len(self._schema.getColumnMap(table))
-            batch_size = min(batch_size, (self.config.batch_size_limit // row_size) + 1)
+            row_size = context.schema.table_row_size(table)
+            row_size += 4 * len(context.schema.getColumnMap(table))
+            batch_size = min(batch_size, (config.batch_size_limit // row_size) + 1)
         return batch_size

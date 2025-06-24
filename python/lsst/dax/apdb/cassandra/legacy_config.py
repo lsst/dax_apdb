@@ -67,7 +67,7 @@ class ApdbCassandraConfig(legacy_config.ApdbConfig):
     )
     prefix = Field[str](doc="Prefix to add to table names", default="")
     part_pixelization = ChoiceField[str](
-        allowed=dict(htm="HTM pixelization", q3c="Q3C pixelization", mq3c="MQ3C pixelization"),
+        allowed={"htm": "HTM pixelization", "q3c": "Q3C pixelization", "mq3c": "MQ3C pixelization"},
         doc="Pixelization used for partitioning index.",
         default="mq3c",
     )

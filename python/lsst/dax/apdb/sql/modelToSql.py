@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ModelToSql", "GUID"]
+__all__ = ["GUID", "ModelToSql"]
 
 import uuid
 from collections.abc import Iterable, Mapping
@@ -73,7 +73,7 @@ class GUID(sqlalchemy.TypeDecorator):
         if dialect.name == "postgresql":
             return str(value)
         else:
-            return "%.32x" % value.int
+            return f"{value.int:032x}"
 
     def process_result_value(
         self, value: str | uuid.UUID | None, dialect: sqlalchemy.engine.Dialect
@@ -171,7 +171,7 @@ class ModelToSql:
         """
         column_defs: list[sqlalchemy.schema.Column] = []
         for column in table.columns:
-            kwargs: dict[str, Any] = dict(nullable=column.nullable)
+            kwargs: dict[str, Any] = {"nullable": column.nullable}
             if column.value is not None:
                 kwargs.update(server_default=str(column.value))
             if column in table.primary_key and column.autoincrement is None:

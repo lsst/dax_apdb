@@ -29,8 +29,9 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
-import lsst.utils.tests
 import sqlalchemy
+
+import lsst.utils.tests
 from lsst.dax.apdb import Apdb, ApdbConfig, ApdbReplica, ApdbTables
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.sql import ApdbSql, ApdbSqlConfig

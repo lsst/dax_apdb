@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbConfig", "Apdb"]
+__all__ = ["Apdb", "ApdbConfig"]
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 import astropy.time
 import pandas
+
 from lsst.resources import ResourcePathExpression
 from lsst.sphgeom import Region
 
@@ -84,6 +85,18 @@ class Apdb(ABC):
         """
         config = ApdbConfig.from_uri(uri)
         return make_apdb(config)
+
+    @abstractmethod
+    def getConfig(self) -> ApdbConfig:
+        """Return APDB configuration for this instance, including any updates
+        that may be read from database.
+
+        Returns
+        -------
+        config : `ApdbConfig`
+            APDB configuration.
+        """
+        raise NotImplementedError()
 
     @abstractmethod
     def tableDef(self, table: ApdbTables) -> Table | None:

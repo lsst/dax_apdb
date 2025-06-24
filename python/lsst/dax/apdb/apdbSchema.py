@@ -27,7 +27,7 @@ implement APDB.
 
 from __future__ import annotations
 
-__all__ = ["ApdbTables", "ApdbSchema"]
+__all__ = ["ApdbSchema", "ApdbTables"]
 
 import enum
 import logging
@@ -94,9 +94,21 @@ class ApdbTables(enum.Enum):
     metadata = "metadata"
     """Name of the metadata table, this table may not always exist."""
 
-    def table_name(self, prefix: str = "") -> str:
-        """Return full table name."""
-        return prefix + self.value
+    def table_name(self, prefix: str = "", time_partition: int | None = None) -> str:
+        """Return full table name.
+
+        Parameters
+        ----------
+        prefix : `str`, optional
+            Optional prefix for table name.
+        time_partition : `int`, optional
+            Optional time partition, should only be used for tables that
+            support time partitioning.
+        """
+        name = f"{prefix}{self.value}"
+        if time_partition is not None:
+            name = f"{name}_{time_partition}"
+        return name
 
 
 class ApdbSchema:

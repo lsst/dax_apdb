@@ -39,11 +39,12 @@ import pandas
 import sqlalchemy
 import sqlalchemy.dialects.postgresql
 import sqlalchemy.dialects.sqlite
+from sqlalchemy import func, sql
+from sqlalchemy.pool import NullPool
+
 from lsst.sphgeom import HtmPixelization, LonLat, Region, UnitVector3d
 from lsst.utils.db_auth import DbAuth, DbAuthNotFoundError
 from lsst.utils.iteration import chunk_iterable
-from sqlalchemy import func, sql
-from sqlalchemy.pool import NullPool
 
 from ..apdb import Apdb
 from ..apdbConfigFreezer import ApdbConfigFreezer
@@ -81,7 +82,7 @@ def _coerce_uint64(df: pandas.DataFrame) -> pandas.DataFrame:
     frame.
     """
     names = [c[0] for c in df.dtypes.items() if c[1] == np.uint64]
-    return df.astype({name: np.int64 for name in names})
+    return df.astype(dict.fromkeys(names, np.int64))
 
 
 def _make_midpointMjdTai_start(visit_time: astropy.time.Time, months: int) -> float:
@@ -200,7 +201,7 @@ class ApdbSql(Apdb):
         # engine is reused between multiple processes, make sure that we don't
         # share connections by disabling pool (by using NullPool class)
         kw: MutableMapping[str, Any] = dict(config.connection_config.extra_parameters)
-        conn_args: dict[str, Any] = dict()
+        conn_args: dict[str, Any] = {}
         if not config.connection_config.connection_pool:
             kw.update(poolclass=NullPool)
         if config.connection_config.isolation_level is not None:
@@ -478,6 +479,10 @@ class ApdbSql(Apdb):
 
         return res
 
+    def getConfig(self) -> ApdbSqlConfig:
+        # docstring is inherited from a base class
+        return self.config
+
     def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class
         return self._schema.tableSchemas.get(table)
@@ -680,7 +685,7 @@ class ApdbSql(Apdb):
 
             query = sql.select(table.columns[idColumn], table.columns[idColumn].in_(ids))
             result = conn.execute(query)
-            knownIds = set(row.ssObjectId for row in result)
+            knownIds = {row.ssObjectId for row in result}
 
             filter = objects[idColumn].isin(knownIds)
             toUpdate = cast(pandas.DataFrame, objects[filter])
@@ -712,7 +717,12 @@ class ApdbSql(Apdb):
             # is missing.
             missing_ids: list[int] = []
             for key, value in idMap.items():
-                params = dict(srcId=key, diaObjectId=0, ssObjectId=value, ssObjectReassocTime=reassignTime)
+                params = {
+                    "srcId": key,
+                    "diaObjectId": 0,
+                    "ssObjectId": value,
+                    "ssObjectReassocTime": reassignTime,
+                }
                 result = conn.execute(query, params)
                 if result.rowcount == 0:
                     missing_ids.append(key)
@@ -882,7 +892,7 @@ class ApdbSql(Apdb):
         # `visit_time.datetime` returns naive datetime, even though all astropy
         # times are in UTC. Add UTC timezone to timestampt so that database
         # can store a correct value.
-        dt = datetime.datetime.fromtimestamp(visit_time.unix_tai, tz=datetime.timezone.utc)
+        dt = datetime.datetime.fromtimestamp(visit_time.unix_tai, tz=datetime.UTC)
 
         table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
 
@@ -1183,16 +1193,16 @@ class ApdbSql(Apdb):
         columns = [
             column
             for column, dtype in df.dtypes.items()
-            if isinstance(dtype, pandas.DatetimeTZDtype) and dtype.tz is not datetime.timezone.utc
+            if isinstance(dtype, pandas.DatetimeTZDtype) and dtype.tz is not datetime.UTC
         ]
         for column in columns:
-            df[column] = df[column].dt.tz_convert(datetime.timezone.utc)
+            df[column] = df[column].dt.tz_convert(datetime.UTC)
         # Find all columns with naive timestamps and add UTC timezone.
         columns = [
             column for column, dtype in df.dtypes.items() if pandas.api.types.is_datetime64_dtype(dtype)
         ]
         for column in columns:
-            df[column] = df[column].dt.tz_localize(datetime.timezone.utc)
+            df[column] = df[column].dt.tz_localize(datetime.UTC)
         return df
 
     def _fix_result_timestamps(self, df: pandas.DataFrame) -> pandas.DataFrame:

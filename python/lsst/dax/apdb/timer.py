@@ -161,7 +161,7 @@ class Timer:
 
     def __str__(self) -> str:
         real, user, sys = self.accumulated()
-        info = "real=%.3f user=%.3f sys=%.3f" % (real, user, sys)
+        info = f"real={real:.3f} user={user:.3f} sys={sys:.3f}"
         if self._name:
             info = self._name + ": " + info
         if self._tags:

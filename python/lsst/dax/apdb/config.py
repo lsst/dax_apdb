@@ -29,8 +29,9 @@ from collections.abc import Mapping
 from typing import Any, ClassVar, cast
 
 import yaml
-from lsst.resources import ResourcePath, ResourcePathExpression
 from pydantic import BaseModel, Field
+
+from lsst.resources import ResourcePath, ResourcePathExpression
 
 from .apdbIndex import ApdbIndex
 from .factory import config_type_for_name

@@ -225,8 +225,7 @@ class ApdbCassandraConfig(ApdbConfig):
     batch_statement_limit: int = Field(
         default=65_535,
         description=(
-            "Limit on a number of rows in a BatchStatement. "
-            "Default is the same as Cassandra limit of 65535."
+            "Limit on a number of rows in a BatchStatement. Default is the same as Cassandra limit of 65535."
         ),
     )
 
