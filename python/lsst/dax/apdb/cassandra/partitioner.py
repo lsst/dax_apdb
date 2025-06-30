@@ -47,7 +47,7 @@ class Partitioner:
 
     def __init__(self, config: ApdbCassandraConfig):
         self._config = config
-        self._pixelization = Pixelization(
+        self.pixelization = Pixelization(
             config.partitioning.part_pixelization,
             config.partitioning.part_pix_level,
             config.partitioning.part_pix_max_ranges,
@@ -67,7 +67,7 @@ class Partitioner:
         pixel : `int`
             Pixel index.
         """
-        return self._pixelization.pixel(direction)
+        return self.pixelization.pixel(direction)
 
     def time_partition(self, time: float | astropy.time.Time) -> int:
         """Calculate time partition number for a given time.
@@ -90,6 +90,28 @@ class Partitioner:
         days_since_epoch = mjd - self._epoch
         partition = int(days_since_epoch) // self._config.partitioning.time_partition_days
         return partition
+
+    def partition_period(self, time_partition: int) -> tuple[astropy.time.Time, astropy.time.Time]:
+        """Return time period for specified taime partition.
+
+        Parameters
+        ----------
+        time_partition : `int`
+            Time partition.
+
+        Returns
+        -------
+        start : `astropy.time.Time`
+            Start of the period, inclusive boundary.
+        end : `astropy.time.Time`
+            Start of the period, exclusive boundary.
+        """
+        partition_days = self._config.partitioning.time_partition_days
+        start_mjd = self._epoch + partition_days * time_partition
+        end_mjd = self._epoch + partition_days * (time_partition + 1)
+        start = astropy.time.Time(start_mjd, format="mjd", scale="tai")
+        end = astropy.time.Time(end_mjd, format="mjd", scale="tai")
+        return (start, end)
 
     def spatial_where(
         self, region: sphgeom.Region | None, *, use_ranges: bool = False, for_prepare: bool = False
@@ -121,7 +143,7 @@ class Partitioner:
 
         expressions: list[tuple[str, tuple]] = []
         if use_ranges:
-            pixel_ranges = self._pixelization.envelope(region)
+            pixel_ranges = self.pixelization.envelope(region)
             for lower, upper in pixel_ranges:
                 upper -= 1
                 if lower == upper:
@@ -132,7 +154,7 @@ class Partitioner:
                 else:
                     expressions.append((f'"apdb_part" >= {token} AND "apdb_part" <= {token}', (lower, upper)))
         else:
-            pixels = self._pixelization.pixels(region)
+            pixels = self.pixelization.pixels(region)
             if self._config.partitioning.query_per_spatial_part:
                 expressions.extend((f'"apdb_part" = {token}', (pixel,)) for pixel in pixels)
             else:
