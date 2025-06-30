@@ -88,6 +88,22 @@ class Pixelization:
         index = self.pixelator.index(direction)
         return index
 
+    def region(self, pixel: int) -> sphgeom.Region:
+        """Return region corresponding to a pixel index.
+
+        Parameters
+        ----------
+        pixel : `int`
+            Pixel index.
+
+        Returns
+        -------
+        region : `lsst.sphgeom.Region`
+            Region for a given pixel index.
+        """
+        region = self.pixelator.pixel(pixel)
+        return region
+
     def envelope(self, region: sphgeom.Region) -> list[tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.
 

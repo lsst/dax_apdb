@@ -71,6 +71,25 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         self.assertEqual(partitioner.time_partition(60827.0), 674)
         self.assertEqual(partitioner.time_partition(60857.0), 675)
 
+    def test_partition_period(self) -> None:
+        """Test partition_period() method."""
+        partitioner = self.make_partitioner()
+
+        self.assertEqual(
+            partitioner.partition_period(674),
+            (
+                Time("2025-05-12T00:00:00", format="isot", scale="tai"),
+                Time("2025-06-11T00:00:00", format="isot", scale="tai"),
+            ),
+        )
+        self.assertEqual(
+            partitioner.partition_period(800),
+            (
+                Time("2035-09-17T00:00:00", format="isot", scale="tai"),
+                Time("2035-10-17T00:00:00", format="isot", scale="tai"),
+            ),
+        )
+
     def test_spatial_where(self) -> None:
         """Test spatial_where() method."""
         region = Box.fromDegrees(-0.05, 0.05, 0.05, 0.15)
