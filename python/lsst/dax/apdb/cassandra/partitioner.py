@@ -115,7 +115,7 @@ class Partitioner:
 
     def spatial_where(
         self, region: sphgeom.Region | None, *, use_ranges: bool = False, for_prepare: bool = False
-    ) -> list[tuple[str, tuple]]:
+    ) -> tuple[list[tuple[str, tuple]], int]:
         """Generate expressions for spatial part of WHERE clause.
 
         Parameters
@@ -135,12 +135,15 @@ class Partitioner:
         expressions : `list` [ `tuple` ]
             Empty list is returned if ``region`` is `None`, otherwise a list
             of one or more ``(expression: str, parameters: tuple)`` tuples.
+        partition_count : `int`
+            Number of spatial partitions in the result.
         """
         if region is None:
-            return []
+            return [], 0
 
         token = "?" if for_prepare else "%s"
 
+        count = 0
         expressions: list[tuple[str, tuple]] = []
         if use_ranges:
             pixel_ranges = self.pixelization.envelope(region)
@@ -148,20 +151,24 @@ class Partitioner:
                 upper -= 1
                 if lower == upper:
                     expressions.append((f'"apdb_part" = {token}', (lower,)))
+                    count += 1
                 elif lower + 1 == upper:
                     expressions.append((f'"apdb_part" = {token}', (lower,)))
                     expressions.append((f'"apdb_part" = {token}', (upper,)))
+                    count += 2
                 else:
+                    count += upper - lower + 1
                     expressions.append((f'"apdb_part" >= {token} AND "apdb_part" <= {token}', (lower, upper)))
         else:
             pixels = self.pixelization.pixels(region)
+            count = len(pixels)
             if self._config.partitioning.query_per_spatial_part:
                 expressions.extend((f'"apdb_part" = {token}', (pixel,)) for pixel in pixels)
             else:
                 pixels_str = ",".join([str(pix) for pix in pixels])
                 expressions.append((f'"apdb_part" IN ({pixels_str})', ()))
 
-        return expressions
+        return expressions, count
 
     def temporal_where(
         self,
