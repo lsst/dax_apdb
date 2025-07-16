@@ -65,6 +65,8 @@ class ApdbCassandraMixin:
 
     schema_path = TEST_SCHEMA
 
+    time_partition_tables = False
+
     @classmethod
     def setUpClass(cls) -> None:
         """Prepare config for server connection."""
@@ -118,7 +120,6 @@ class ApdbCassandraMixin:
 class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     """A test case for ApdbCassandra class"""
 
-    time_partition_tables = False
     time_partition_start: str | None = None
     time_partition_end: str | None = None
     # Cassandra stores timestamps with millisecond precision internally,
@@ -153,12 +154,14 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     time_partition_tables = True
     time_partition_start = "2019-12-01T00:00:00"
     time_partition_end = "2022-01-01T00:00:00"
+    meta_row_count = 4
 
 
 class ApdbCassandraTestCaseReplica(ApdbCassandraTestCase):
     """A test case  with enabled replica tables."""
 
     enable_replica = True
+    meta_row_count = 4
 
 
 class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):
@@ -170,7 +173,7 @@ class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest
             "hosts": (self.cluster_host,),
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
-            "time_partition_tables": False,
+            "time_partition_tables": self.time_partition_tables,
         }
         kw.update(kwargs)
         return ApdbCassandra.init_database(**kw)  # type: ignore[arg-type]

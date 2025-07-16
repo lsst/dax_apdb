@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbCassandra"]
 
 import datetime
+import json
 import logging
 import random
 import warnings
@@ -69,7 +70,7 @@ from .cassandra_utils import (
     quote_id,
     select_concurrent,
 )
-from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig
+from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig, ApdbCassandraTimePartitionRange
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
 from .partitioner import Partitioner
@@ -82,7 +83,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 2)
+VERSION = VersionTuple(0, 1, 3)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -370,6 +371,7 @@ class ApdbCassandra(Apdb):
             )
 
             # Ask schema to create all tables.
+            part_range_config: ApdbCassandraTimePartitionRange | None = None
             if config.partitioning.time_partition_tables:
                 partitioner = Partitioner(config)
                 time_partition_start = astropy.time.Time(
@@ -378,13 +380,13 @@ class ApdbCassandra(Apdb):
                 time_partition_end = astropy.time.Time(
                     config.partitioning.time_partition_end, format="isot", scale="tai"
                 )
-                part_range = (
-                    partitioner.time_partition(time_partition_start),
-                    partitioner.time_partition(time_partition_end) + 1,
+                part_range_config = ApdbCassandraTimePartitionRange(
+                    start=partitioner.time_partition(time_partition_start),
+                    end=partitioner.time_partition(time_partition_end),
                 )
                 schema.makeSchema(
                     drop=drop,
-                    part_range=part_range,
+                    part_range=part_range_config,
                     replication_factor=replication_factor,
                     table_options=table_options,
                 )
@@ -417,6 +419,14 @@ class ApdbCassandra(Apdb):
             # Store frozen part of a configuration in metadata.
             freezer = ApdbConfigFreezer[ApdbCassandraConfig](ConnectionContext.frozen_parameters)
             metadata.set(ConnectionContext.metadataConfigKey, freezer.to_json(config), force=True)
+
+            # Store time partition range.
+            if part_range_config:
+                metadata.set(
+                    ConnectionContext.metadataTimePartitionKey,
+                    json.dumps(part_range_config.model_dump()),
+                    force=True,
+                )
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class

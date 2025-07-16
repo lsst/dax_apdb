@@ -122,7 +122,6 @@ class ApdbTest(TestCaseMixin, ABC):
     calls various assert methods.
     """
 
-    time_partition_tables = False
     visit_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
 
     fsrc_requires_id_list = False
@@ -139,6 +138,9 @@ class ApdbTest(TestCaseMixin, ABC):
 
     extra_chunk_columns = 1
     """Number of additional columns in chunk tables."""
+
+    meta_row_count = 3
+    """Initial row count in metadata table."""
 
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
@@ -687,8 +689,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # APDB should write two or three metadata items with version numbers
         # and a frozen JSON config.
         self.assertFalse(metadata.empty())
-        expected_rows = 4 if self.enable_replica else 3
-        self.assertEqual(len(list(metadata.items())), expected_rows)
+        self.assertEqual(len(list(metadata.items())), self.meta_row_count)
 
         metadata.set("meta", "data")
         metadata.set("data", "meta")

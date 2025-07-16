@@ -21,9 +21,14 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbCassandraConfig", "ApdbCassandraConnectionConfig", "ApdbCassandraPartitioningConfig"]
+__all__ = [
+    "ApdbCassandraConfig",
+    "ApdbCassandraConnectionConfig",
+    "ApdbCassandraPartitioningConfig",
+    "ApdbCassandraTimePartitionRange",
+]
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, field_validator
@@ -247,3 +252,21 @@ class ApdbCassandraConfig(ApdbConfig):
         if len(vtup) != 2:
             raise ValueError("ra_dec_columns must have exactly two column names")
         return vtup
+
+
+class ApdbCassandraTimePartitionRange(BaseModel):
+    """Configuration of the time partitions, this is not user-configurable,
+    but it is reflected in metadata.
+    """
+
+    start: int = Field(
+        description="Start partition number for per-time-partition tables that exist in the schema."
+    )
+
+    end: int = Field(
+        description="End partition number (inclusive) for per-time-partition tables that exist in the schema."
+    )
+
+    def range(self) -> Iterator[int]:
+        """Generate a sequence of partition numbers."""
+        yield from range(self.start, self.end + 1)

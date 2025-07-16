@@ -120,6 +120,7 @@ class ApdbSQLiteTestCaseReplica(ApdbSQLiteTestCase):
     """Test case for ApdbSql class using SQLite backend with replica tables."""
 
     enable_replica = True
+    meta_row_count = 4
 
 
 @unittest.skipUnless(testing is not None, "testing.postgresql module not found")
@@ -130,6 +131,7 @@ class ApdbPostgresTestCase(ApdbSQLTest, unittest.TestCase):
     dia_object_index = "last_object_table"
     postgresql: Any
     enable_replica = True
+    meta_row_count = 4
     schema_path = TEST_SCHEMA
     timestamp_type_name = "datetime64[ns]"
 

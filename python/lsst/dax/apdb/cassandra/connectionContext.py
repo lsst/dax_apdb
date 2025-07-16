@@ -93,6 +93,9 @@ class ConnectionContext:
     metadataConfigKey = "config:apdb-cassandra.json"
     """Name of the metadata key to store frozen part of the configuration."""
 
+    metadataTimePartitionKey = "config:time-partition-range"
+    """Name of the metadata key to store time partition range."""
+
     frozen_parameters = (
         "enable_replica",
         "ra_dec_columns",
@@ -137,6 +140,9 @@ class ConnectionContext:
             self.has_chunk_sub_partitions = ApdbCassandraReplica.hasChunkSubPartitions(
                 self.db_versions.replica_version
             )
+
+        # Since version 0.1.3 we have metadata for time partitions.
+        self.has_time_partition_meta = self.db_versions.code_version >= VersionTuple(0, 1, 3)
 
         # Since version 0.1.2 we have an extra table for visit/detector.
         self.has_visit_detector_table = self.db_versions.code_version >= VersionTuple(0, 1, 2)
