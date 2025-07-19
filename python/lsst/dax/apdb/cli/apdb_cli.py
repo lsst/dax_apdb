@@ -212,7 +212,7 @@ def _metrics_log_to_influx(subparsers: argparse._SubParsersAction) -> None:
         "-m",
         "--mode",
         help="Source of log file.",
-        choices=["ap_proto", "pipeline", "replication"],
+        choices=["ap_proto", "pipeline", "replication", "json_line"],
         default="ap_proto",
     )
     parser.add_argument(

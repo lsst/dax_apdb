@@ -64,6 +64,9 @@ _LOG_LINE_RE_AP_PROTO = re.compile(
     re.VERBOSE,
 )
 
+# Whole line is JSON object.
+_LOG_LINE_RE_JSON_LINE = re.compile("^(?P<metric>.*)$")
+
 # Error or warning message from cassandra logger.
 _LOG_LINE_CASSANDRA_RE = re.compile(
     r"""
@@ -133,7 +136,8 @@ def metrics_log_to_influx(
         If True then extract records counts from pipeline messages instead of
         metrics. A workaround for broken metrics.
     mode : `str`
-        Source of the log, one of "ap_proto", "pipeline", "replication".
+        Source of the log, one of "ap_proto", "pipeline", "replication",
+        "json_line".
     prefix : `str`
         Prefix to add to each tag name.
     no_header : `bool`
@@ -192,6 +196,8 @@ def _metrics_log_to_influx(
             line_re = _LOG_LINE_RE_REPLICATION
         case "ap_proto":
             line_re = _LOG_LINE_RE_AP_PROTO
+        case "json_line":
+            line_re = _LOG_LINE_RE_JSON_LINE
         case _:
             raise ValueError(f"Unexpected mode: {mode}")
 
