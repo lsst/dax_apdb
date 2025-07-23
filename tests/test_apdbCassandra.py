@@ -99,8 +99,8 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     """A test case for ApdbCassandra class with per-month tables."""
 
     time_partition_tables = True
-    time_partition_start = "2019-12-01T00:00:00"
-    time_partition_end = "2022-01-01T00:00:00"
+    time_partition_start = "2020-06-01T00:00:00"
+    time_partition_end = "2021-06-01T00:00:00"
     meta_row_count = 4
 
 

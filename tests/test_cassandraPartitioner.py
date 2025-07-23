@@ -25,7 +25,11 @@ from typing import Any
 from astropy.time import Time
 
 from lsst.dax.apdb import ApdbTables
-from lsst.dax.apdb.cassandra import ApdbCassandraConfig, ApdbCassandraPartitioningConfig
+from lsst.dax.apdb.cassandra import (
+    ApdbCassandraConfig,
+    ApdbCassandraPartitioningConfig,
+    ApdbCassandraTimePartitionRange,
+)
 from lsst.dax.apdb.cassandra.partitioner import Partitioner
 from lsst.sphgeom import Box, UnitVector3d
 
@@ -124,6 +128,34 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         result = partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
         self.assertEqual(result, [('"apdb_part" >= ? AND "apdb_part" <= ?', (12058622, 12058625))])
 
+    def _check_temporal_where(
+        self,
+        tables: list[str],
+        where: list[tuple],
+        part_start: int,
+        part_end: int,
+        *,
+        time_partition_tables: bool = False,
+        query_per_time_part: bool = False,
+        for_prepare: bool = False,
+    ) -> None:
+        if part_start > part_end:
+            self.assertEqual(tables, [])
+            self.assertEqual(where, [])
+        elif time_partition_tables:
+            expect_tables = [f"DiaSource_{part}" for part in range(part_start, part_end + 1)]
+            self.assertEqual(tables, expect_tables)
+            self.assertEqual(where, [])
+        elif query_per_time_part:
+            where_str = '"apdb_time_part" = ?' if for_prepare else '"apdb_time_part" = %s'
+            expect_where = [(where_str, (part,)) for part in range(part_start, part_end + 1)]
+            self.assertEqual(tables, ["DiaSource"])
+            self.assertEqual(where, expect_where)
+        else:
+            parts_str = ",".join(str(part) for part in range(part_start, part_end + 1))
+            self.assertEqual(tables, ["DiaSource"])
+            self.assertEqual(where, [(f'"apdb_time_part" IN ({parts_str})', ())])
+
     def test_temporal_where(self) -> None:
         """Test temporal_where() method."""
         start_time = Time("2025-01-01T00:00:00", format="isot", scale="tai")
@@ -132,24 +164,12 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         partitioner = self.make_partitioner()
 
         tables, where = partitioner.temporal_where(ApdbTables.DiaSource, start_time, end_time)
-        self.assertEqual(tables, ["DiaSource"])
-        self.assertEqual(where, [('"apdb_time_part" IN (669,670,671,672,673,674)', ())])
+        self._check_temporal_where(tables, where, 669, 674)
 
         tables, where = partitioner.temporal_where(
             ApdbTables.DiaSource, start_time, end_time, query_per_time_part=True
         )
-        self.assertEqual(tables, ["DiaSource"])
-        self.assertEqual(
-            where,
-            [
-                ('"apdb_time_part" = %s', (669,)),
-                ('"apdb_time_part" = %s', (670,)),
-                ('"apdb_time_part" = %s', (671,)),
-                ('"apdb_time_part" = %s', (672,)),
-                ('"apdb_time_part" = %s', (673,)),
-                ('"apdb_time_part" = %s', (674,)),
-            ],
-        )
+        self._check_temporal_where(tables, where, 669, 674, query_per_time_part=True)
 
         tables, where = partitioner.temporal_where(
             ApdbTables.DiaSource,
@@ -158,49 +178,41 @@ class CassandraPartitionerTestCase(unittest.TestCase):
             query_per_time_part=True,
             for_prepare=True,
         )
-        self.assertEqual(tables, ["DiaSource"])
-        self.assertEqual(
-            where,
-            [
-                ('"apdb_time_part" = ?', (669,)),
-                ('"apdb_time_part" = ?', (670,)),
-                ('"apdb_time_part" = ?', (671,)),
-                ('"apdb_time_part" = ?', (672,)),
-                ('"apdb_time_part" = ?', (673,)),
-                ('"apdb_time_part" = ?', (674,)),
-            ],
-        )
+        self._check_temporal_where(tables, where, 669, 674, query_per_time_part=True, for_prepare=True)
 
         partitioner = self.make_partitioner(query_per_time_part=True)
 
         tables, where = partitioner.temporal_where(ApdbTables.DiaSource, start_time, end_time)
-        self.assertEqual(tables, ["DiaSource"])
-        self.assertEqual(
-            where,
-            [
-                ('"apdb_time_part" = %s', (669,)),
-                ('"apdb_time_part" = %s', (670,)),
-                ('"apdb_time_part" = %s', (671,)),
-                ('"apdb_time_part" = %s', (672,)),
-                ('"apdb_time_part" = %s', (673,)),
-                ('"apdb_time_part" = %s', (674,)),
-            ],
-        )
+        self._check_temporal_where(tables, where, 669, 674, query_per_time_part=True)
 
         partitioner = self.make_partitioner(time_partition_tables=True)
         tables, where = partitioner.temporal_where(ApdbTables.DiaSource, start_time, end_time)
-        self.assertEqual(
-            tables,
-            [
-                "DiaSource_669",
-                "DiaSource_670",
-                "DiaSource_671",
-                "DiaSource_672",
-                "DiaSource_673",
-                "DiaSource_674",
-            ],
-        )
-        self.assertEqual(where, [])
+        self._check_temporal_where(tables, where, 669, 674, time_partition_tables=True)
+
+        # Check additional partition range constraint.
+        ranges = [
+            ((0, 1000), (669, 674)),
+            ((0, 1), (0, -1)),
+            ((600, 670), (669, 670)),
+            ((670, 770), (670, 674)),
+            ((671, 672), (671, 672)),
+        ]
+
+        partitioner = self.make_partitioner()
+        for (range_start, range_end), (result_start, result_end) in ranges:
+            part_range = ApdbCassandraTimePartitionRange(start=range_start, end=range_end)
+            tables, where = partitioner.temporal_where(
+                ApdbTables.DiaSource, start_time, end_time, partitons_range=part_range
+            )
+            self._check_temporal_where(tables, where, result_start, result_end)
+
+        partitioner = self.make_partitioner(time_partition_tables=True)
+        for (range_start, range_end), (result_start, result_end) in ranges:
+            part_range = ApdbCassandraTimePartitionRange(start=range_start, end=range_end)
+            tables, where = partitioner.temporal_where(
+                ApdbTables.DiaSource, start_time, end_time, partitons_range=part_range
+            )
+            self._check_temporal_where(tables, where, result_start, result_end, time_partition_tables=True)
 
 
 if __name__ == "__main__":

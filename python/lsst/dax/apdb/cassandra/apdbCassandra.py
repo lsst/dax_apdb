@@ -775,8 +775,14 @@ class ApdbCassandra(Apdb):
 
         sp_where = context.partitioner.spatial_where(region, for_prepare=True)
         tables, temporal_where = context.partitioner.temporal_where(
-            table_name, mjd_start, mjd_end, for_prepare=True
+            table_name, mjd_start, mjd_end, for_prepare=True, partitons_range=context.time_partitions_range
         )
+        if not tables:
+            start = astropy.time.Time(mjd_start, format="mjd", scale="tai")
+            end = astropy.time.Time(mjd_end, format="mjd", scale="tai")
+            warnings.warn(
+                f"Query time range ({start.isot} - {end.isot}) does not overlap database time partitions."
+            )
 
         # We need to exclude extra partitioning columns from result.
         column_names = context.schema.apdbColumnNames(table_name)
