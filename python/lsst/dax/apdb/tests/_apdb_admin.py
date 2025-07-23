@@ -19,6 +19,29 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from . import data_factory
-from ._apdb import *
-from ._apdb_admin import *
+from __future__ import annotations
+
+__all__ = ["ApdbAdminTest"]
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from .. import ApdbConfig
+from .utils import TestCaseMixin
+
+
+class ApdbAdminTest(TestCaseMixin, ABC):
+    """Base class for ApdbAdmin tests that can be specialized for concrete
+    implementation.
+
+    This can only be used as a mixin class for a unittest.TestCase and it
+    calls various assert methods.
+
+    There are no common test methods in this class yet, they may be added in
+    the future.
+    """
+
+    @abstractmethod
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
+        """Make database instance and return configuration for it."""
+        raise NotImplementedError()

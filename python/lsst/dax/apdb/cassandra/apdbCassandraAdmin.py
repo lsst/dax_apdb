@@ -31,6 +31,8 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
 
+import astropy.time
+
 from lsst.sphgeom import LonLat, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
 
@@ -44,11 +46,12 @@ from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
 from ..timer import Timer
 from .cassandra_utils import execute_concurrent, quote_id
-from .config import ApdbCassandraConfig
+from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
 from .sessionFactory import SessionContext
 
 if TYPE_CHECKING:
     from .apdbCassandra import ApdbCassandra
+    from .partitioner import Partitioner
 
 _LOG = logging.getLogger(__name__)
 
@@ -165,17 +168,20 @@ class ApdbCassandraAdmin(ApdbAdmin):
             query = f"DROP KEYSPACE {quote_id(keyspace)}"
             session.execute(query, timeout=timeout)
 
+    @property
+    def partitioner(self) -> Partitioner:
+        """Partitoner used by this APDB instance (`Partitioner`)."""
+        context = self._apdb._context
+        return context.partitioner
+
     def apdb_part(self, ra: float, dec: float) -> int:
         # docstring is inherited from a base class
-        context = self._apdb._context
-
         uv3d = UnitVector3d(LonLat.fromDegrees(ra, dec))
-        return context.partitioner.pixel(uv3d)
+        return self.partitioner.pixel(uv3d)
 
     def apdb_time_part(self, midpointMjdTai: float) -> int:
         # docstring is inherited from a base class
-        context = self._apdb._context
-        return context.partitioner.time_partition(midpointMjdTai)
+        return self.partitioner.time_partition(midpointMjdTai)
 
     def delete_records(
         self,
@@ -360,3 +366,168 @@ class ApdbCassandraAdmin(ApdbAdmin):
             execute_concurrent(context.session, source_deletes)
         with self._timer("delete_objects"):
             execute_concurrent(context.session, object_deletes)
+
+    def time_partitions(self) -> ApdbCassandraTimePartitionRange:
+        """Return range of existing time partitions.
+
+        Returns
+        -------
+        range : `ApdbCassandraTimePartitionRange`
+            Time partition range.
+
+        Raises
+        ------
+        TypeError
+            Raised if APDB instance does not use time-partition tables.
+        """
+        context = self._apdb._context
+        part_range = context.time_partitions_range
+        if not part_range:
+            raise TypeError("This APDB instance does not use time-partitioned tables.")
+        return part_range
+
+    def extend_time_partitions(
+        self,
+        time: astropy.time.Time,
+        forward: bool = True,
+        max_delta: astropy.time.TimeDelta | None = None,
+    ) -> list[int]:
+        """Extend set of time-partitioned tables to include specified time.
+
+        Parameters
+        ----------
+        time : `astropy.time.Time`
+            Time to which to extend partitions.
+        forward : `bool`, optional
+            If `True` then extend partitions into the future, time should be
+            later than the end time of the last existing partition. If `False`
+            then extend partitions into the past, time should be earlier than
+            the start time of the first existing partition.
+        max_delta : `astropy.time.TimeDelta`, optional
+            Maximum possible extension of the aprtitions, default is 365 days.
+
+        Returns
+        -------
+        partitions : `list` [`int`]
+            List of partitons added to the database, empty list returned if
+            ``time`` is already in the existing partition range.
+
+        Raises
+        ------
+        TypeError
+            Raised if APDB instance does not use time-partition tables.
+        ValueError
+            Raised if extension request exceeds time limit of ``max_delta``.
+        """
+        if max_delta is None:
+            max_delta = astropy.time.TimeDelta(365, format="jd")
+
+        context = self._apdb._context
+
+        # Get current partitions.
+        part_range = context.time_partitions_range
+        if not part_range:
+            raise TypeError("This APDB instance does not use time-partitioned tables.")
+
+        # Partitions that we need to create.
+        partitions = self._partitions_to_add(time, forward, max_delta)
+        if not partitions:
+            return []
+
+        _LOG.debug("New partitions to create: %s", partitions)
+
+        # Tables that are time-partitioned.
+        config = context.config
+        keyspace = self._apdb._keyspace
+        has_dia_object_table = not (config.enable_replica and config.replica_skips_diaobjects)
+        tables = [ApdbTables.DiaSource, ApdbTables.DiaForcedSource]
+        if has_dia_object_table:
+            tables.append(ApdbTables.DiaObject)
+
+        # Easiest way to create new tables is to take DDL from existing one
+        # and update table name.
+        table_name_token = "%TABLE_NAME%"
+        table_schemas = {}
+        for table in tables:
+            existing_table_name = context.schema.tableName(table, part_range.end)
+            query = f'DESCRIBE TABLE "{keyspace}"."{existing_table_name}"'
+            result = context.session.execute(query).one()
+            if not result:
+                raise LookupError(f'Failed to read schema for table "{keyspace}"."{existing_table_name}"')
+            schema: str = result.create_statement
+            schema = schema.replace(existing_table_name, table_name_token)
+            table_schemas[table] = schema
+
+        # Be paranoid and check that none of the new tables exist.
+        exsisting_tables = context.schema.existing_tables(*tables)
+        for table in tables:
+            new_tables = {context.schema.tableName(table, partition) for partition in partitions}
+            old_tables = new_tables.intersection(exsisting_tables[table])
+            if old_tables:
+                raise ValueError(f"Some to be created tables already exist: {old_tables}")
+
+        # Now can create all of them.
+        for table, schema in table_schemas.items():
+            for partition in partitions:
+                new_table_name = context.schema.tableName(table, partition)
+                _LOG.debug("Creating table %s", new_table_name)
+                new_ddl = schema.replace(table_name_token, new_table_name)
+                context.session.execute(new_ddl)
+
+        # Update metadata.
+        if context.has_time_partition_meta:
+            if forward:
+                part_range.end = max(partitions)
+            else:
+                part_range.start = min(partitions)
+            part_range.save_to_meta(context.metadata)
+
+        return partitions
+
+    def _partitions_to_add(
+        self,
+        time: astropy.time.Time,
+        forward: bool,
+        max_delta: astropy.time.TimeDelta,
+    ) -> list[int]:
+        """Make the list of time partitions to add to current range."""
+        context = self._apdb._context
+        part_range = context.time_partitions_range
+        assert part_range is not None
+
+        new_partition = context.partitioner.time_partition(time)
+        if forward:
+            if new_partition <= part_range.end:
+                _LOG.debug(
+                    "Partition for time=%s (%d) is below existing end (%d)",
+                    time,
+                    new_partition,
+                    part_range.end,
+                )
+                return []
+            _, end = context.partitioner.partition_period(part_range.end)
+            if time - end > max_delta:
+                raise ValueError(
+                    f"Extension exceeds limit: current end time = {end.isot}, new end time = {time.isot}, "
+                    f"limit = {max_delta.jd} days"
+                )
+            partitions = list(range(part_range.end + 1, new_partition + 1))
+        else:
+            if new_partition >= part_range.start:
+                _LOG.debug(
+                    "Partition for time=%s (%d) is above existing start (%d)",
+                    time,
+                    new_partition,
+                    part_range.start,
+                )
+                return []
+            start, _ = context.partitioner.partition_period(part_range.start)
+            if start - time > max_delta:
+                raise ValueError(
+                    f"Extension exceeds limit: current start time = {start.isot}, "
+                    f"new start time = {time.isot}, "
+                    f"limit = {max_delta.jd} days"
+                )
+            partitions = list(range(new_partition, part_range.start))
+
+        return partitions

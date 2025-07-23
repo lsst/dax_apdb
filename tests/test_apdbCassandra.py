@@ -37,75 +37,21 @@ no need to pre-create a keyspace with predefined name.
 import logging
 import os
 import unittest
-import uuid
 from typing import Any
-
-try:
-    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
-    from cassandra.policies import RoundRobinPolicy
-
-    CASSANDRA_IMPORTED = True
-except ImportError:
-    CASSANDRA_IMPORTED = False
 
 import lsst.utils.tests
 from lsst.dax.apdb import ApdbConfig, ApdbTables
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
-from lsst.dax.apdb.cassandra.apdbCassandraAdmin import ApdbCassandraAdmin
 from lsst.dax.apdb.pixelization import Pixelization
-from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
+from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 logging.basicConfig(level=logging.INFO)
 
 
-class ApdbCassandraMixin:
+class ApdbCassandraMixin(cassandra_mixin.ApdbCassandraMixin):
     """Mixin class which defines common methods for unit tests."""
-
-    schema_path = TEST_SCHEMA
-
-    time_partition_tables = False
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Prepare config for server connection."""
-        if not CASSANDRA_IMPORTED:
-            raise unittest.SkipTest("FAiled to import Cassandra modules")
-        cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
-        if not cluster_host:
-            raise unittest.SkipTest("DAX_APDB_TEST_CASSANDRA_CLUSTER is not set")
-        if not CASSANDRA_IMPORTED:
-            raise unittest.SkipTest("cassandra_driver cannot be imported")
-
-    def _run_query(self, query: str) -> None:
-        # Used protocol version from default config.
-        config = ApdbCassandraConfig()
-        default_profile = ExecutionProfile(load_balancing_policy=RoundRobinPolicy())
-        profiles = {EXEC_PROFILE_DEFAULT: default_profile}
-        cluster = Cluster(
-            contact_points=[self.cluster_host],
-            execution_profiles=profiles,
-            protocol_version=config.connection_config.protocol_version,
-        )
-        session = cluster.connect()
-        # Deleting many tables can take long time, use long timeout.
-        session.execute(query, timeout=600)
-        del session
-        cluster.shutdown()
-
-    def setUp(self) -> None:
-        """Prepare config for server connection."""
-        self.cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
-        # Use dedicated keyspace for each test, keyspace is created by
-        # init_database if it does not exist.
-        key = uuid.uuid4()
-        self.keyspace = f"apdb_{key.hex}"
-
-    def tearDown(self) -> None:
-        # Delete per-test keyspace.
-        assert self.cluster_host is not None
-        ApdbCassandraAdmin.delete_database(self.cluster_host, self.keyspace)
 
     def pixelization(self, config: ApdbConfig) -> Pixelization:
         """Return pixelization used by implementation."""
@@ -120,6 +66,7 @@ class ApdbCassandraMixin:
 class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     """A test case for ApdbCassandra class"""
 
+    time_partition_tables = False
     time_partition_start: str | None = None
     time_partition_end: str | None = None
     # Cassandra stores timestamps with millisecond precision internally,
@@ -166,6 +113,8 @@ class ApdbCassandraTestCaseReplica(ApdbCassandraTestCase):
 
 class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):
     """A test case for schema updates using Cassandra backend."""
+
+    time_partition_tables = False
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""

@@ -24,7 +24,6 @@ from __future__ import annotations
 __all__ = ["ApdbCassandra"]
 
 import datetime
-import json
 import logging
 import random
 import warnings
@@ -422,11 +421,7 @@ class ApdbCassandra(Apdb):
 
             # Store time partition range.
             if part_range_config:
-                metadata.set(
-                    ConnectionContext.metadataTimePartitionKey,
-                    json.dumps(part_range_config.model_dump()),
-                    force=True,
-                )
+                part_range_config.save_to_meta(metadata)
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class

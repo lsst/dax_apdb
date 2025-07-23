@@ -46,6 +46,7 @@ def main(args: Sequence[str] | None = None) -> int | None:
     _convert_legacy_config_subcommand(subparsers)
     _metrics_subcommand(subparsers)
     _replication_subcommand(subparsers)
+    _partition_subcommand(subparsers)
 
     parsed_args = parser.parse_args(args)
     log_cli.process_args(parsed_args)
@@ -275,3 +276,31 @@ def _replication_delete_chunks_subcommand(subparsers: argparse._SubParsersAction
         default=False,
     )
     parser.set_defaults(method=scripts.replication_delete_chunks)
+
+
+def _partition_subcommand(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("partition", help="Operations with APDB partitioning.")
+    subparsers = parser.add_subparsers(title="available subcommands", required=True)
+    _partition_show_temporal(subparsers)
+    _partition_extend_temporal(subparsers)
+
+
+def _partition_show_temporal(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("show-temporal", help="Print range of temporal partitions.")
+    parser.add_argument("apdb_config", help="Path to the APDB configuration.")
+    parser.set_defaults(method=scripts.partition_show_temporal)
+
+
+def _partition_extend_temporal(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("extend-temporal", help="Extend the range of temporal partitions.")
+    parser.add_argument("apdb_config", help="Path to the APDB configuration.")
+    parser.add_argument("time", help="Timestamps in ISOT format and TAI scale (YYYY-MM-DDTHH:MM:SS).")
+    parser.add_argument("--past", action="store_true", default=False, help="Extend the range in the past.")
+    parser.add_argument(
+        "--max-days",
+        type=int,
+        default=365,
+        metavar="NUMBER",
+        help="Max. number of days for extension, default: %(default)s.",
+    )
+    parser.set_defaults(method=scripts.partition_extend_temporal)

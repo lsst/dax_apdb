@@ -27,7 +27,6 @@ import contextlib
 import datetime
 import os
 import tempfile
-import unittest
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from tempfile import TemporaryDirectory
@@ -50,17 +49,10 @@ from .. import (
     VersionTuple,
 )
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
+from .utils import TestCaseMixin
 
 if TYPE_CHECKING:
     from ..pixelization import Pixelization
-
-    class TestCaseMixin(unittest.TestCase):
-        """Base class for mixin test classes that use TestCase methods."""
-
-else:
-
-    class TestCaseMixin:
-        """Do-nothing definition of mixin base class for regular execution."""
 
 
 def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:

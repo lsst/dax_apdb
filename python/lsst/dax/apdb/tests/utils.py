@@ -19,6 +19,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from . import data_factory
-from ._apdb import *
-from ._apdb_admin import *
+from __future__ import annotations
+
+import unittest
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+
+    class TestCaseMixin(unittest.TestCase):
+        """Base class for mixin test classes that use TestCase methods."""
+
+else:
+
+    class TestCaseMixin:
+        """Do-nothing definition of mixin base class for regular execution."""
