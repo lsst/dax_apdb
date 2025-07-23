@@ -44,6 +44,7 @@ import astropy.time
 from lsst.dax.apdb import Apdb, ApdbConfig
 from lsst.dax.apdb.cassandra import ApdbCassandra
 from lsst.dax.apdb.cassandra.apdbCassandraAdmin import ApdbCassandraAdmin
+from lsst.dax.apdb.cassandra.partitioner import Partitioner
 from lsst.dax.apdb.tests import ApdbAdminTest, cassandra_mixin
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
@@ -95,6 +96,19 @@ class ApdbCassandraAdminTestCase(cassandra_mixin.ApdbCassandraMixin, ApdbAdminTe
         with self.assertRaisesRegex(TypeError, "does not use time-partitioned tables"):
             admin.extend_time_partitions(astropy.time.Time("2020-01-01T00:00:00Z", format="isot"))
 
+    def test_delete_time_partitions(self) -> None:
+        """Test delete_time_partitions() method."""
+        admin = self.make_admin()
+
+        self._test_delete_time_partitions(admin)
+
+    def _test_delete_time_partitions(self, admin: ApdbCassandraAdmin) -> None:
+        """Implement test_delete_time_partitions, to be specialized in
+        subclasses.
+        """
+        with self.assertRaisesRegex(TypeError, "does not use time-partitioned tables"):
+            admin.delete_time_partitions(astropy.time.Time("2020-01-01T00:00:00Z", format="isot"))
+
 
 class ApdbCassandraAdminTimePartitionedTestCase(ApdbCassandraAdminTestCase):
     """A test case for ApdbCassandraAdmin class with per-month tables."""
@@ -139,6 +153,55 @@ class ApdbCassandraAdminTimePartitionedTestCase(ApdbCassandraAdminTestCase):
         )
         time_part = admin.time_partitions()
         self.assertEqual((time_part.start, time_part.end), (658, 692))
+
+    def _no_confirm(self, *, partitions: list[int], tables: list[str], partitioner: Partitioner) -> bool:
+        return False
+
+    def _confirm(self, *, partitions: list[int], tables: list[str], partitioner: Partitioner) -> bool:
+        return True
+
+    def _test_delete_time_partitions(self, admin: ApdbCassandraAdmin) -> None:
+        time_part = admin.time_partitions()
+        self.assertEqual((time_part.start, time_part.end), (669, 681))
+
+        # Should not delete anyhting.
+        partitions = admin.delete_time_partitions(
+            astropy.time.Time(self.time_partition_start, format="isot", scale="tai")
+        )
+        self.assertEqual(partitions, [])
+        partitions = admin.delete_time_partitions(
+            astropy.time.Time(self.time_partition_end, format="isot", scale="tai"), after=True
+        )
+        self.assertEqual(partitions, [])
+        partitions = admin.delete_time_partitions(astropy.time.Time("2020-01-01", format="isot", scale="tai"))
+        self.assertEqual(partitions, [])
+        partitions = admin.delete_time_partitions(
+            astropy.time.Time("2030-01-01", format="isot", scale="tai"), after=True
+        )
+        self.assertEqual(partitions, [])
+
+        # Deletes one partiion
+        partitions = admin.delete_time_partitions(astropy.time.Time("2025-01-31", format="isot", scale="tai"))
+        self.assertEqual(partitions, [669])
+        time_part = admin.time_partitions()
+        self.assertEqual((time_part.start, time_part.end), (670, 681))
+
+        # Not confirmed.
+        partitions = admin.delete_time_partitions(
+            astropy.time.Time("2025-03-31", format="isot", scale="tai"), confirm=self._no_confirm
+        )
+        self.assertEqual(partitions, [])
+
+        # Confirmed.
+        partitions = admin.delete_time_partitions(
+            astropy.time.Time("2025-11-02", format="isot", scale="tai"), after=True, confirm=self._confirm
+        )
+        self.assertEqual(partitions, [680, 681])
+        time_part = admin.time_partitions()
+        self.assertEqual((time_part.start, time_part.end), (670, 679))
+
+        with self.assertRaisesRegex(ValueError, "Cannot delete all partitions"):
+            admin.delete_time_partitions(astropy.time.Time("2030-01-01", format="isot", scale="tai"))
 
 
 class ApdbCassandraAdminNoDiaObjectTestCase(ApdbCassandraAdminTimePartitionedTestCase):

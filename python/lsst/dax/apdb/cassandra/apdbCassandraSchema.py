@@ -802,3 +802,19 @@ class ApdbCassandraSchema:
         table_schema = self._table_schema(table)
         size = sum(column.size() for column in table_schema.columns)
         return size
+
+    def time_partitioned_tables(self) -> list[ApdbTables]:
+        """Make the list of time-partitioned tables.
+
+        Returns
+        -------
+        tables : `list` [`ApdbTables`]
+            Tables the are time-partitioned.
+        """
+        if not self._time_partition_tables:
+            return []
+        has_dia_object_table = not (self._enable_replica and self._replica_skips_diaobjects)
+        tables = [ApdbTables.DiaSource, ApdbTables.DiaForcedSource]
+        if has_dia_object_table:
+            tables.append(ApdbTables.DiaObject)
+        return tables

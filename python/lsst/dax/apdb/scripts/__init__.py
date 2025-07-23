@@ -27,5 +27,5 @@ from .list_cassandra import list_cassandra
 from .list_index import list_index
 from .metadata import metadata_delete, metadata_get, metadata_set, metadata_show
 from .metrics import metrics_log_to_influx
-from .partition import partition_extend_temporal, partition_show_temporal
+from .partition import partition_delete_temporal, partition_extend_temporal, partition_show_temporal
 from .replication import replication_delete_chunks, replication_list_chunks

@@ -29,7 +29,7 @@ import logging
 import warnings
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import astropy.time
 
@@ -56,6 +56,12 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
+
+
+class ConfirmDeletePartitions(Protocol):
+    """Protocol for callable which confirms deletion of partitions."""
+
+    def __call__(self, *, partitions: list[int], tables: list[str], partitioner: Partitioner) -> bool: ...
 
 
 @dataclasses.dataclass
@@ -437,12 +443,8 @@ class ApdbCassandraAdmin(ApdbAdmin):
         _LOG.debug("New partitions to create: %s", partitions)
 
         # Tables that are time-partitioned.
-        config = context.config
         keyspace = self._apdb._keyspace
-        has_dia_object_table = not (config.enable_replica and config.replica_skips_diaobjects)
-        tables = [ApdbTables.DiaSource, ApdbTables.DiaForcedSource]
-        if has_dia_object_table:
-            tables.append(ApdbTables.DiaObject)
+        tables = context.schema.time_partitioned_tables()
 
         # Easiest way to create new tables is to take DDL from existing one
         # and update table name.
@@ -531,3 +533,102 @@ class ApdbCassandraAdmin(ApdbAdmin):
             partitions = list(range(new_partition, part_range.start))
 
         return partitions
+
+    def delete_time_partitions(
+        self, time: astropy.time.Time, after: bool = False, *, confirm: ConfirmDeletePartitions | None = None
+    ) -> list[int]:
+        """Delete time-partitioned tables before or after specified time.
+
+        Parameters
+        ----------
+        time : `astropy.time.Time`
+            Time before or after which to remove partitions. Partition that
+            includes this time is not deleted.
+        after : `bool`, optional
+            If `True` then delete partitions after the specified time. Default
+            is to delete partitions before this time.
+        confirm : `~collections.abc.Callable`, optional
+            A callable that will be called to confirm deletion of the
+            partitions. The callable needs to accept three keyword arguments:
+
+                - `partitions` - a list of partition numbers to be deleted,
+                - `tables` - a list of table names to be deleted,
+                - `partitioner` - a `Partitioner` instance.
+
+            Partitions are deleted only if callable returns `True`.
+
+        Returns
+        -------
+        partitions : `list` [`int`]
+            List of partitons deleted from the database, empty list returned if
+            nothing is deleted.
+
+        Raises
+        ------
+        TypeError
+            Raised if APDB instance does not use time-partition tables.
+        ValueError
+            Raised if requested to delete all partitions.
+        """
+        context = self._apdb._context
+
+        # Get current partitions.
+        part_range = context.time_partitions_range
+        if not part_range:
+            raise TypeError("This APDB instance does not use time-partitioned tables.")
+
+        partitions = self._partitions_to_delete(time, after)
+        if not partitions:
+            return []
+
+        # Cannot delete all partitions.
+        if min(partitions) == part_range.start and max(partitions) == part_range.end:
+            raise ValueError("Cannot delete all partitions.")
+
+        # Tables that are time-partitioned.
+        keyspace = self._apdb._keyspace
+        tables = context.schema.time_partitioned_tables()
+
+        table_names = []
+        for table in tables:
+            for partition in partitions:
+                table_names.append(context.schema.tableName(table, partition))
+
+        if confirm is not None:
+            # It can raise an exception, but at this point it's completely
+            # harmless.
+            answer = confirm(partitions=partitions, tables=table_names, partitioner=context.partitioner)
+            if not answer:
+                return []
+
+        for table_name in table_names:
+            _LOG.debug("Dropping table %s", table_name)
+            # Use IF EXISTS just in case.
+            query = f'DROP TABLE IF EXISTS "{keyspace}"."{table_name}"'
+            context.session.execute(query)
+
+        # Update metadata.
+        if context.has_time_partition_meta:
+            if after:
+                part_range.end = min(partitions) - 1
+            else:
+                part_range.start = max(partitions) + 1
+            part_range.save_to_meta(context.metadata)
+
+        return partitions
+
+    def _partitions_to_delete(
+        self,
+        time: astropy.time.Time,
+        after: bool = False,
+    ) -> list[int]:
+        """Make the list of time partitions to delete."""
+        context = self._apdb._context
+        part_range = context.time_partitions_range
+        assert part_range is not None
+
+        partition = context.partitioner.time_partition(time)
+        if after:
+            return list(range(max(partition + 1, part_range.start), part_range.end + 1))
+        else:
+            return list(range(part_range.start, min(partition, part_range.end + 1)))

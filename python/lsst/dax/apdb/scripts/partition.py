@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["partition_extend_temporal", "partition_show_temporal"]
+__all__ = ["partition_delete_temporal", "partition_extend_temporal", "partition_show_temporal"]
 
 import sys
 
@@ -29,6 +29,7 @@ import astropy.time
 
 from ..apdb import Apdb
 from ..cassandra import ApdbCassandra
+from ..cassandra.partitioner import Partitioner
 
 
 def partition_show_temporal(apdb_config: str) -> int:
@@ -113,3 +114,68 @@ def partition_extend_temporal(apdb_config: str, time: str, past: bool, max_days:
         )
 
     return 0
+
+
+def partition_delete_temporal(apdb_config: str, time: str, after: bool, force: bool) -> int:
+    """Delete some temporal partitions.
+
+    Parameters
+    ----------
+    apdb_config : `str`
+        URL for APDB configuration file.
+    time : `str`
+        Timestamps in ISOT format and TAI scale. Partition that includes this
+        time is not deleted.
+    after : `bool`
+        If `True` then delete partitions after the specified time. Default is
+        to delete partitions before this time.
+    force : `bool`
+        If `True` then do not ask confirmation.
+    """
+    try:
+        astro_time = astropy.time.Time(time, format="isot", scale="tai")
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    apdb = Apdb.from_uri(apdb_config)
+    if not isinstance(apdb, ApdbCassandra):
+        print("ERROR: Non-Cassandra APDB does not use time-partitioned tables.", file=sys.stderr)
+        return 1
+
+    admin = apdb.admin
+    try:
+        result = admin.delete_time_partitions(
+            astro_time, after=after, confirm=None if force else _confirm_delete
+        )
+    except (TypeError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    part_range = admin.time_partitions()
+    start_time, _ = admin.partitioner.partition_period(part_range.start)
+    _, end_time = admin.partitioner.partition_period(part_range.end)
+
+    if result:
+        print(
+            "Time partitions succesfully deleted.\n"
+            f"New time partition range: {part_range.start} - {part_range.end} "
+            f"[{start_time.tai.isot}, {end_time.tai.isot})"
+        )
+    else:
+        print(
+            "Time partitions were not deleted.\n"
+            f"Current time partition range: {part_range.start} - {part_range.end} "
+            f"[{start_time.tai.isot}, {end_time.tai.isot})"
+        )
+
+    return 0
+
+
+def _confirm_delete(*, partitions: list[int], tables: list[str], partitioner: Partitioner) -> bool:
+    print("Partitions to be deleted:")
+    for part in partitions:
+        start_time, end_time = partitioner.partition_period(part)
+        print(f"   {part}: [{start_time.tai.isot}, {end_time.tai.isot})")
+    answer = input("Confirm deletion y/n: ")
+    return answer.strip().lower() == "y"

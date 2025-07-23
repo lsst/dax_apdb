@@ -283,6 +283,7 @@ def _partition_subcommand(subparsers: argparse._SubParsersAction) -> None:
     subparsers = parser.add_subparsers(title="available subcommands", required=True)
     _partition_show_temporal(subparsers)
     _partition_extend_temporal(subparsers)
+    _partition_delete_temporal(subparsers)
 
 
 def _partition_show_temporal(subparsers: argparse._SubParsersAction) -> None:
@@ -304,3 +305,17 @@ def _partition_extend_temporal(subparsers: argparse._SubParsersAction) -> None:
         help="Max. number of days for extension, default: %(default)s.",
     )
     parser.set_defaults(method=scripts.partition_extend_temporal)
+
+
+def _partition_delete_temporal(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser("delete-temporal", help="Delete temporal partitions.")
+    parser.add_argument("apdb_config", help="Path to the APDB configuration.")
+    parser.add_argument("time", help="Timestamps in ISOT format and TAI scale (YYYY-MM-DD[THH:MM:SS]).")
+    parser.add_argument(
+        "--after",
+        action="store_true",
+        default=False,
+        help="Delete partitions after specified time. Default is to delete partitions before this time.",
+    )
+    parser.add_argument("--force", action="store_true", default=False, help="Do not ask for confirmation.")
+    parser.set_defaults(method=scripts.partition_delete_temporal)
