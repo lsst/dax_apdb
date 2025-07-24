@@ -959,7 +959,10 @@ class ApdbCassandra(Apdb):
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
         extra_columns["validityStart"] = visit_time_dt
-        time_part: int | None = context.partitioner.time_partition(visit_time)
+        visit_time_part = context.partitioner.time_partition(visit_time)
+        time_part: int | None = visit_time_part
+        if (time_partitions_range := context.time_partitions_range) is not None:
+            self._check_time_partitions([visit_time_part], time_partitions_range)
         if not config.partitioning.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
             time_part = None
@@ -1014,6 +1017,8 @@ class ApdbCassandra(Apdb):
         # as visit_time is not really a visit time.
         tp_sources = sources.copy(deep=False)
         tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(context.partitioner.time_partition)
+        if (time_partitions_range := context.time_partitions_range) is not None:
+            self._check_time_partitions(tp_sources["apdb_time_part"], time_partitions_range)
         extra_columns: dict[str, Any] = {}
         if not config.partitioning.time_partition_tables:
             self._storeObjectsPandas(tp_sources, table_name)
@@ -1048,6 +1053,34 @@ class ApdbCassandra(Apdb):
             self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns)
 
         return subchunk
+
+    def _check_time_partitions(
+        self, partitions: Iterable[int], time_partitions_range: ApdbCassandraTimePartitionRange
+    ) -> None:
+        """Check that time partitons for new data actually exist.
+
+        Parameters
+        ----------
+        partitions : `~collections.abc.Iterable` [`int`]
+            Time partitions for new data.
+        time_partitions_range : `ApdbCassandraTimePartitionRange`
+            Currrent time partition range.
+        """
+        partitions = set(partitions)
+        min_part = min(partitions)
+        max_part = max(partitions)
+        if min_part < time_partitions_range.start or max_part > time_partitions_range.end:
+            raise ValueError(
+                "Attempt to store data for time partitions that do not yet exist. "
+                f"Partitons for new records: {min_part}-{max_part}. "
+                f"Database partitons: {time_partitions_range.start}-{time_partitions_range.end}."
+            )
+        # Make a noise when writing to the last partition.
+        if max_part == time_partitions_range.end:
+            warnings.warn(
+                "Writing into the last temporal partition. Partition range needs to be extended soon.",
+                stacklevel=3,
+            )
 
     def _storeDiaSourcesPartitions(
         self,

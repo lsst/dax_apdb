@@ -39,11 +39,14 @@ import os
 import unittest
 from typing import Any
 
+import astropy.time
+
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbConfig, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
+from lsst.dax.apdb.tests.data_factory import makeObjectCatalog
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
@@ -102,6 +105,25 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     time_partition_start = "2020-06-01T00:00:00"
     time_partition_end = "2021-06-01T00:00:00"
     meta_row_count = 4
+
+    def test_store_partition_range(self) -> None:
+        """Test that writing to non-existing partition raises an error."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region = self.make_region()
+
+        # Visit time is beyond time_partition_end.
+        visit_time = astropy.time.Time("2022-01-01", format="isot", scale="tai")
+        catalog = makeObjectCatalog(region, 100, visit_time)
+        with self.assertRaisesRegex(ValueError, "time partitions that do not yet exist"):
+            apdb.store(visit_time, catalog)
+
+        # Writing to last partition makes a warning.
+        visit_time = astropy.time.Time("2021-06-01", format="isot", scale="tai")
+        catalog = makeObjectCatalog(region, 100, visit_time)
+        with self.assertWarnsRegex(UserWarning, "Writing into the last temporal partition"):
+            apdb.store(visit_time, catalog)
 
 
 class ApdbCassandraTestCaseReplica(ApdbCassandraTestCase):
