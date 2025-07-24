@@ -37,73 +37,24 @@ no need to pre-create a keyspace with predefined name.
 import logging
 import os
 import unittest
-import uuid
 from typing import Any
 
-try:
-    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
-    from cassandra.policies import RoundRobinPolicy
-
-    CASSANDRA_IMPORTED = True
-except ImportError:
-    CASSANDRA_IMPORTED = False
+import astropy.time
 
 import lsst.utils.tests
-from lsst.dax.apdb import ApdbConfig, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
-from lsst.dax.apdb.cassandra.apdbCassandraAdmin import ApdbCassandraAdmin
 from lsst.dax.apdb.pixelization import Pixelization
-from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
+from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
+from lsst.dax.apdb.tests.data_factory import makeObjectCatalog
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
 
 logging.basicConfig(level=logging.INFO)
 
 
-class ApdbCassandraMixin:
+class ApdbCassandraMixin(cassandra_mixin.ApdbCassandraMixin):
     """Mixin class which defines common methods for unit tests."""
-
-    schema_path = TEST_SCHEMA
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Prepare config for server connection."""
-        if not CASSANDRA_IMPORTED:
-            raise unittest.SkipTest("FAiled to import Cassandra modules")
-        cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
-        if not cluster_host:
-            raise unittest.SkipTest("DAX_APDB_TEST_CASSANDRA_CLUSTER is not set")
-        if not CASSANDRA_IMPORTED:
-            raise unittest.SkipTest("cassandra_driver cannot be imported")
-
-    def _run_query(self, query: str) -> None:
-        # Used protocol version from default config.
-        config = ApdbCassandraConfig()
-        default_profile = ExecutionProfile(load_balancing_policy=RoundRobinPolicy())
-        profiles = {EXEC_PROFILE_DEFAULT: default_profile}
-        cluster = Cluster(
-            contact_points=[self.cluster_host],
-            execution_profiles=profiles,
-            protocol_version=config.connection_config.protocol_version,
-        )
-        session = cluster.connect()
-        # Deleting many tables can take long time, use long timeout.
-        session.execute(query, timeout=600)
-        del session
-        cluster.shutdown()
-
-    def setUp(self) -> None:
-        """Prepare config for server connection."""
-        self.cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
-        # Use dedicated keyspace for each test, keyspace is created by
-        # init_database if it does not exist.
-        key = uuid.uuid4()
-        self.keyspace = f"apdb_{key.hex}"
-
-    def tearDown(self) -> None:
-        # Delete per-test keyspace.
-        assert self.cluster_host is not None
-        ApdbCassandraAdmin.delete_database(self.cluster_host, self.keyspace)
 
     def pixelization(self, config: ApdbConfig) -> Pixelization:
         """Return pixelization used by implementation."""
@@ -151,18 +102,41 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     """A test case for ApdbCassandra class with per-month tables."""
 
     time_partition_tables = True
-    time_partition_start = "2019-12-01T00:00:00"
-    time_partition_end = "2022-01-01T00:00:00"
+    time_partition_start = "2020-06-01T00:00:00"
+    time_partition_end = "2021-06-01T00:00:00"
+    meta_row_count = 4
+
+    def test_store_partition_range(self) -> None:
+        """Test that writing to non-existing partition raises an error."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region = self.make_region()
+
+        # Visit time is beyond time_partition_end.
+        visit_time = astropy.time.Time("2022-01-01", format="isot", scale="tai")
+        catalog = makeObjectCatalog(region, 100, visit_time)
+        with self.assertRaisesRegex(ValueError, "time partitions that do not yet exist"):
+            apdb.store(visit_time, catalog)
+
+        # Writing to last partition makes a warning.
+        visit_time = astropy.time.Time("2021-06-01", format="isot", scale="tai")
+        catalog = makeObjectCatalog(region, 100, visit_time)
+        with self.assertWarnsRegex(UserWarning, "Writing into the last temporal partition"):
+            apdb.store(visit_time, catalog)
 
 
 class ApdbCassandraTestCaseReplica(ApdbCassandraTestCase):
     """A test case  with enabled replica tables."""
 
     enable_replica = True
+    meta_row_count = 4
 
 
 class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):
     """A test case for schema updates using Cassandra backend."""
+
+    time_partition_tables = False
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         """Make config class instance used in all tests."""
@@ -170,7 +144,7 @@ class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest
             "hosts": (self.cluster_host,),
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
-            "time_partition_tables": False,
+            "time_partition_tables": self.time_partition_tables,
         }
         kw.update(kwargs)
         return ApdbCassandra.init_database(**kw)  # type: ignore[arg-type]

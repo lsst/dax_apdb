@@ -69,7 +69,7 @@ from .cassandra_utils import (
     quote_id,
     select_concurrent,
 )
-from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig
+from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig, ApdbCassandraTimePartitionRange
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
 from .partitioner import Partitioner
@@ -82,7 +82,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 2)
+VERSION = VersionTuple(0, 1, 3)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -370,6 +370,7 @@ class ApdbCassandra(Apdb):
             )
 
             # Ask schema to create all tables.
+            part_range_config: ApdbCassandraTimePartitionRange | None = None
             if config.partitioning.time_partition_tables:
                 partitioner = Partitioner(config)
                 time_partition_start = astropy.time.Time(
@@ -378,13 +379,13 @@ class ApdbCassandra(Apdb):
                 time_partition_end = astropy.time.Time(
                     config.partitioning.time_partition_end, format="isot", scale="tai"
                 )
-                part_range = (
-                    partitioner.time_partition(time_partition_start),
-                    partitioner.time_partition(time_partition_end) + 1,
+                part_range_config = ApdbCassandraTimePartitionRange(
+                    start=partitioner.time_partition(time_partition_start),
+                    end=partitioner.time_partition(time_partition_end),
                 )
                 schema.makeSchema(
                     drop=drop,
-                    part_range=part_range,
+                    part_range=part_range_config,
                     replication_factor=replication_factor,
                     table_options=table_options,
                 )
@@ -417,6 +418,10 @@ class ApdbCassandra(Apdb):
             # Store frozen part of a configuration in metadata.
             freezer = ApdbConfigFreezer[ApdbCassandraConfig](ConnectionContext.frozen_parameters)
             metadata.set(ConnectionContext.metadataConfigKey, freezer.to_json(config), force=True)
+
+            # Store time partition range.
+            if part_range_config:
+                part_range_config.save_to_meta(metadata)
 
     def getDiaObjects(self, region: sphgeom.Region) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -770,8 +775,14 @@ class ApdbCassandra(Apdb):
 
         sp_where = context.partitioner.spatial_where(region, for_prepare=True)
         tables, temporal_where = context.partitioner.temporal_where(
-            table_name, mjd_start, mjd_end, for_prepare=True
+            table_name, mjd_start, mjd_end, for_prepare=True, partitons_range=context.time_partitions_range
         )
+        if not tables:
+            start = astropy.time.Time(mjd_start, format="mjd", scale="tai")
+            end = astropy.time.Time(mjd_end, format="mjd", scale="tai")
+            warnings.warn(
+                f"Query time range ({start.isot} - {end.isot}) does not overlap database time partitions."
+            )
 
         # We need to exclude extra partitioning columns from result.
         column_names = context.schema.apdbColumnNames(table_name)
@@ -948,7 +959,10 @@ class ApdbCassandra(Apdb):
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
 
         extra_columns["validityStart"] = visit_time_dt
-        time_part: int | None = context.partitioner.time_partition(visit_time)
+        visit_time_part = context.partitioner.time_partition(visit_time)
+        time_part: int | None = visit_time_part
+        if (time_partitions_range := context.time_partitions_range) is not None:
+            self._check_time_partitions([visit_time_part], time_partitions_range)
         if not config.partitioning.time_partition_tables:
             extra_columns["apdb_time_part"] = time_part
             time_part = None
@@ -1003,6 +1017,8 @@ class ApdbCassandra(Apdb):
         # as visit_time is not really a visit time.
         tp_sources = sources.copy(deep=False)
         tp_sources["apdb_time_part"] = tp_sources["midpointMjdTai"].apply(context.partitioner.time_partition)
+        if (time_partitions_range := context.time_partitions_range) is not None:
+            self._check_time_partitions(tp_sources["apdb_time_part"], time_partitions_range)
         extra_columns: dict[str, Any] = {}
         if not config.partitioning.time_partition_tables:
             self._storeObjectsPandas(tp_sources, table_name)
@@ -1037,6 +1053,34 @@ class ApdbCassandra(Apdb):
             self._storeObjectsPandas(sources, extra_table, extra_columns=extra_columns)
 
         return subchunk
+
+    def _check_time_partitions(
+        self, partitions: Iterable[int], time_partitions_range: ApdbCassandraTimePartitionRange
+    ) -> None:
+        """Check that time partitons for new data actually exist.
+
+        Parameters
+        ----------
+        partitions : `~collections.abc.Iterable` [`int`]
+            Time partitions for new data.
+        time_partitions_range : `ApdbCassandraTimePartitionRange`
+            Currrent time partition range.
+        """
+        partitions = set(partitions)
+        min_part = min(partitions)
+        max_part = max(partitions)
+        if min_part < time_partitions_range.start or max_part > time_partitions_range.end:
+            raise ValueError(
+                "Attempt to store data for time partitions that do not yet exist. "
+                f"Partitons for new records: {min_part}-{max_part}. "
+                f"Database partitons: {time_partitions_range.start}-{time_partitions_range.end}."
+            )
+        # Make a noise when writing to the last partition.
+        if max_part == time_partitions_range.end:
+            warnings.warn(
+                "Writing into the last temporal partition. Partition range needs to be extended soon.",
+                stacklevel=3,
+            )
 
     def _storeDiaSourcesPartitions(
         self,

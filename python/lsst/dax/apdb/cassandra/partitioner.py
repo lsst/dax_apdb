@@ -30,7 +30,7 @@ from lsst import sphgeom
 
 from ..apdbSchema import ApdbTables
 from ..pixelization import Pixelization
-from .config import ApdbCassandraConfig
+from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
 
 
 class Partitioner:
@@ -171,6 +171,7 @@ class Partitioner:
         *,
         query_per_time_part: bool | None = None,
         for_prepare: bool = False,
+        partitons_range: ApdbCassandraTimePartitionRange | None = None,
     ) -> tuple[list[str], list[tuple[str, tuple]]]:
         """Generate table names and expressions for temporal part of WHERE
         clauses.
@@ -188,28 +189,38 @@ class Partitioner:
         for_prepare : `bool`, optional
             If True then use placeholders for prepared statement (?), otherwise
             produce regulr statement placeholders (%s).
+        partitons_range : `ApdbCassandraTimePartitionRange` or `None`
+            Partitions range to further restrict time range.
 
         Returns
         -------
         tables : `list` [ `str` ]
-            List of the table names to query.
+            List of the table names to query. Empty list is returned when time
+            range does not overlap ``partitons_range``.
         expressions : `list` [ `tuple` ]
             A list of zero or more ``(expression: str, parameters: tuple)``
             tuples.
         """
         tables: list[str]
         temporal_where: list[tuple[str, tuple]] = []
-        table_name = table.table_name(self._config.prefix)
         # First and last partition.
         time_part_start = self.time_partition(start_time)
         time_part_end = self.time_partition(end_time)
+        if partitons_range:
+            # Check for non-overlapping ranges.
+            if time_part_start > partitons_range.end or time_part_end < partitons_range.start:
+                return [], []
+            if time_part_start < partitons_range.start:
+                time_part_start = partitons_range.start
+            if time_part_end > partitons_range.end:
+                time_part_end = partitons_range.end
         # Inclusive range.
         time_parts = list(range(time_part_start, time_part_end + 1))
         if self._config.partitioning.time_partition_tables:
-            tables = [f"{table_name}_{part}" for part in time_parts]
+            tables = [table.table_name(self._config.prefix, part) for part in time_parts]
         else:
             token = "?" if for_prepare else "%s"
-            tables = [table_name]
+            tables = [table.table_name(self._config.prefix)]
             if query_per_time_part is None:
                 query_per_time_part = self._config.partitioning.query_per_time_part
             if query_per_time_part:

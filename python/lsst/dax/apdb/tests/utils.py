@@ -1,8 +1,8 @@
-# This file is part of dax_apdb
+# This file is part of dax_apdb.
 #
 # Developed for the LSST Data Management System.
 # This product includes software developed by the LSST Project
-# (https://www.lsst.org).
+# (http://www.lsst.org).
 # See the COPYRIGHT file at the top-level directory of this distribution
 # for details of code ownership.
 #
@@ -17,15 +17,19 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from .convert_legacy_config import convert_legacy_config
-from .create_cassandra import create_cassandra
-from .create_sql import create_sql
-from .delete_cassandra import delete_cassandra
-from .list_cassandra import list_cassandra
-from .list_index import list_index
-from .metadata import metadata_delete, metadata_get, metadata_set, metadata_show
-from .metrics import metrics_log_to_influx
-from .partition import partition_delete_temporal, partition_extend_temporal, partition_show_temporal
-from .replication import replication_delete_chunks, replication_list_chunks
+from __future__ import annotations
+
+import unittest
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+
+    class TestCaseMixin(unittest.TestCase):
+        """Base class for mixin test classes that use TestCase methods."""
+
+else:
+
+    class TestCaseMixin:
+        """Do-nothing definition of mixin base class for regular execution."""

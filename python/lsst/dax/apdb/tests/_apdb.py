@@ -27,7 +27,6 @@ import contextlib
 import datetime
 import os
 import tempfile
-import unittest
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from tempfile import TemporaryDirectory
@@ -50,17 +49,10 @@ from .. import (
     VersionTuple,
 )
 from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
+from .utils import TestCaseMixin
 
 if TYPE_CHECKING:
     from ..pixelization import Pixelization
-
-    class TestCaseMixin(unittest.TestCase):
-        """Base class for mixin test classes that use TestCase methods."""
-
-else:
-
-    class TestCaseMixin:
-        """Do-nothing definition of mixin base class for regular execution."""
 
 
 def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
@@ -122,7 +114,6 @@ class ApdbTest(TestCaseMixin, ABC):
     calls various assert methods.
     """
 
-    time_partition_tables = False
     visit_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
 
     fsrc_requires_id_list = False
@@ -139,6 +130,9 @@ class ApdbTest(TestCaseMixin, ABC):
 
     extra_chunk_columns = 1
     """Number of additional columns in chunk tables."""
+
+    meta_row_count = 3
+    """Initial row count in metadata table."""
 
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
@@ -202,6 +196,10 @@ class ApdbTest(TestCaseMixin, ABC):
             len(catalog.column_names()), self.table_column_count[table] + self.extra_chunk_columns
         )
 
+    def make_region(self, xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
+        """Make a region to use in tests"""
+        return _make_region(xyz)
+
     def test_makeSchema(self) -> None:
         """Test for making APDB schema."""
         config = self.make_instance()
@@ -234,7 +232,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
 
         res: pandas.DataFrame | None
@@ -283,7 +281,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance(read_sources_months=0, read_forced_sources_months=0)
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
 
         res: pandas.DataFrame | None
@@ -314,7 +312,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
 
         # make catalog with Objects
@@ -333,7 +331,7 @@ class ApdbTest(TestCaseMixin, ABC):
         """Test calling storeObject when there are no objects: see DM-43270."""
         config = self.make_instance()
         apdb = Apdb.from_config(config)
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
         # make catalog with no Objects
         catalog = makeObjectCatalog(region, 0, visit_time)
@@ -381,7 +379,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
 
         # have to store Objects first
@@ -417,7 +415,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
 
         # have to store Objects first
@@ -447,7 +445,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
 
         # have to store Objects first
@@ -481,8 +479,8 @@ class ApdbTest(TestCaseMixin, ABC):
         apdb_replica = ApdbReplica.from_config(config)
         visit_time = self.visit_time
 
-        region1 = _make_region((1.0, 1.0, -1.0))
-        region2 = _make_region((-1.0, -1.0, -1.0))
+        region1 = self.make_region((1.0, 1.0, -1.0))
+        region2 = self.make_region((-1.0, -1.0, -1.0))
         nobj = 100
         objects1 = makeObjectCatalog(region1, nobj, visit_time)
         objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
@@ -578,7 +576,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
         objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
@@ -610,7 +608,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         # 2021-01-01 plus 360 days is 2021-12-27
         src_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
         src_time2 = astropy.time.Time("2021-01-01T00:00:02", format="isot", scale="tai")
@@ -647,7 +645,7 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        region = _make_region()
+        region = self.make_region()
         src_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
         src_time2 = astropy.time.Time("2021-01-01T00:00:02", format="isot", scale="tai")
         visit_time0 = astropy.time.Time("2021-12-26T23:59:59", format="isot", scale="tai")
@@ -687,8 +685,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # APDB should write two or three metadata items with version numbers
         # and a frozen JSON config.
         self.assertFalse(metadata.empty())
-        expected_rows = 4 if self.enable_replica else 3
-        self.assertEqual(len(list(metadata.items())), expected_rows)
+        self.assertEqual(len(list(metadata.items())), self.meta_row_count)
 
         metadata.set("meta", "data")
         metadata.set("data", "meta")
@@ -759,6 +756,10 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         """
         raise NotImplementedError()
 
+    def make_region(self, xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
+        """Make a region to use in tests"""
+        return _make_region(xyz)
+
     def test_schema_add_replica(self) -> None:
         """Check that new code can work with old schema without replica
         tables.
@@ -773,7 +774,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         apdb = Apdb.from_config(config)
 
         # Try to insert something, should work OK.
-        region = _make_region()
+        region = self.make_region()
         visit_time = self.visit_time
 
         # have to store Objects first

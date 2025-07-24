@@ -21,10 +21,16 @@
 
 from __future__ import annotations
 
-__all__ = ["ApdbCassandraConfig", "ApdbCassandraConnectionConfig", "ApdbCassandraPartitioningConfig"]
+__all__ = [
+    "ApdbCassandraConfig",
+    "ApdbCassandraConnectionConfig",
+    "ApdbCassandraPartitioningConfig",
+    "ApdbCassandraTimePartitionRange",
+]
 
-from collections.abc import Iterable
-from typing import Any, ClassVar
+import json
+from collections.abc import Iterable, Iterator
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -38,6 +44,9 @@ except ImportError:
 
 
 from ..config import ApdbConfig
+
+if TYPE_CHECKING:
+    from .apdbMetadataCassandra import ApdbMetadataCassandra
 
 
 class ApdbCassandraConnectionConfig(BaseModel):
@@ -247,3 +256,54 @@ class ApdbCassandraConfig(ApdbConfig):
         if len(vtup) != 2:
             raise ValueError("ra_dec_columns must have exactly two column names")
         return vtup
+
+
+class ApdbCassandraTimePartitionRange(BaseModel):
+    """Configuration of the time partitions, this is not user-configurable,
+    but it is reflected in metadata.
+    """
+
+    metadataTimePartitionKey: ClassVar[str] = "config:time-partition-range.json"
+    """Name of the metadata key to store time partition range."""
+
+    start: int = Field(
+        description="Start partition number for per-time-partition tables that exist in the schema."
+    )
+
+    end: int = Field(
+        description="End partition number (inclusive) for per-time-partition tables that exist in the schema."
+    )
+
+    def range(self) -> Iterator[int]:
+        """Generate a sequence of partition numbers."""
+        yield from range(self.start, self.end + 1)
+
+    @classmethod
+    def from_meta(cls, metadata: ApdbMetadataCassandra) -> Self:
+        """Read this configuration object from metadata table.
+
+        Parameters
+        ----------
+        metadata : `ApdbMetadataCassandra`
+            Metadata table.
+
+        Returns
+        -------
+        range : `ApdbCassandraTimePartitionRange`
+            Configuration retrieved from database.
+        """
+        time_partitions_str = metadata.get(cls.metadataTimePartitionKey)
+        if time_partitions_str is None:
+            raise LookupError(f"Key '{cls.metadataTimePartitionKey}' is missing from metadata table.")
+        time_partitions_json = json.loads(time_partitions_str)
+        return cls.model_validate(time_partitions_json)
+
+    def save_to_meta(self, metadata: ApdbMetadataCassandra) -> None:
+        """Save this configuration to metadata table.
+
+        Parameters
+        ----------
+        metadata : `ApdbMetadataCassandra`
+            Metadata table.
+        """
+        metadata.set(self.metadataTimePartitionKey, json.dumps(self.model_dump()), force=True)

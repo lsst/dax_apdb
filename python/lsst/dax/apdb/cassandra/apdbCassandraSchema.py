@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     import cassandra.cluster
 
     from ..schema_model import Table
+    from .config import ApdbCassandraTimePartitionRange
 
 
 _LOG = logging.getLogger(__name__)
@@ -619,7 +620,7 @@ class ApdbCassandraSchema:
         self,
         *,
         drop: bool = False,
-        part_range: tuple[int, int] | None = None,
+        part_range: ApdbCassandraTimePartitionRange | None = None,
         replication_factor: int | None = None,
         table_options: CreateTableOptions | None = None,
     ) -> None:
@@ -630,11 +631,10 @@ class ApdbCassandraSchema:
         drop : `bool`
             If True then drop tables before creating new ones. Note that
             only tables are dropped and not the whole keyspace.
-        part_range : `tuple` [ `int` ] or `None`
-            Start and end partition number for time partitions, end is not
-            inclusive. Used to create per-partition DiaObject, DiaSource, and
-            DiaForcedSource tables. If `None` then per-partition tables are
-            not created.
+        part_range : `ApdbCassandraTimePartitionRange` or `None`
+            Start and end partition number for time partitions. Used to create
+            per-partition DiaObject, DiaSource, and DiaForcedSource tables. If
+            `None` then per-partition tables are not created.
         replication_factor : `int`, optional
             Replication factor used when creating new keyspace, if keyspace
             already exists its replication factor is not changed.
@@ -696,7 +696,7 @@ class ApdbCassandraSchema:
         self,
         table: ApdbTables | ExtraTables,
         drop: bool = False,
-        part_range: tuple[int, int] | None = None,
+        part_range: ApdbCassandraTimePartitionRange | None = None,
         table_options: CreateTableOptions | None = None,
     ) -> None:
         _LOG.debug("Making table %s", table)
@@ -706,7 +706,7 @@ class ApdbCassandraSchema:
         table_list = [fullTable]
         if part_range is not None:
             if table in self._time_partitioned_tables:
-                table_list = [table.table_name(self._prefix, part) for part in range(*part_range)]
+                table_list = [table.table_name(self._prefix, part) for part in part_range.range()]
 
         if drop:
             queries = [f'DROP TABLE IF EXISTS "{self._keyspace}"."{table_name}"' for table_name in table_list]
@@ -802,3 +802,19 @@ class ApdbCassandraSchema:
         table_schema = self._table_schema(table)
         size = sum(column.size() for column in table_schema.columns)
         return size
+
+    def time_partitioned_tables(self) -> list[ApdbTables]:
+        """Make the list of time-partitioned tables.
+
+        Returns
+        -------
+        tables : `list` [`ApdbTables`]
+            Tables the are time-partitioned.
+        """
+        if not self._time_partition_tables:
+            return []
+        has_dia_object_table = not (self._enable_replica and self._replica_skips_diaobjects)
+        tables = [ApdbTables.DiaSource, ApdbTables.DiaForcedSource]
+        if has_dia_object_table:
+            tables.append(ApdbTables.DiaObject)
+        return tables

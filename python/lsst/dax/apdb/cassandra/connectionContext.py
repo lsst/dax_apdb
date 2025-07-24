@@ -43,7 +43,7 @@ from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .cassandra_utils import PreparedStatementCache
-from .config import ApdbCassandraConfig
+from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
 from .partitioner import Partitioner
 
 _LOG = logging.getLogger(__name__)
@@ -138,6 +138,9 @@ class ConnectionContext:
                 self.db_versions.replica_version
             )
 
+        # Since version 0.1.3 we have metadata for time partitions.
+        self.has_time_partition_meta = self.db_versions.code_version >= VersionTuple(0, 1, 3)
+
         # Since version 0.1.2 we have an extra table for visit/detector.
         self.has_visit_detector_table = self.db_versions.code_version >= VersionTuple(0, 1, 2)
 
@@ -160,6 +163,27 @@ class ConnectionContext:
             has_chunk_sub_partitions=self.has_chunk_sub_partitions,
             has_visit_detector_table=self.has_visit_detector_table,
         )
+
+    @property
+    def time_partitions_range(self) -> ApdbCassandraTimePartitionRange | None:
+        """Time partition range or None if instance does not use
+        time-partitioned tables (`ApdbCassandraTimePartitionRange` or `None`).
+        """
+        if not self.config.partitioning.time_partition_tables:
+            return None
+
+        if self.has_time_partition_meta:
+            return ApdbCassandraTimePartitionRange.from_meta(self.metadata)
+        else:
+            # Scan DiaSource tables and see which partitions are present.
+            partitions = set()
+            tables = self.schema.existing_tables(ApdbTables.DiaSource)
+            for table_name in tables[ApdbTables.DiaSource]:
+                _, _, part_str = table_name.rpartition("_")
+                partitions.add(int(part_str))
+            if not partitions:
+                raise LookupError("Failed to find any partitioned DiaSource table.")
+            return ApdbCassandraTimePartitionRange(start=min(partitions), end=max(partitions))
 
     def _readVersions(self, metadata: ApdbMetadataCassandra) -> DbVersions:
         """Read versions of all objects from metadata."""
