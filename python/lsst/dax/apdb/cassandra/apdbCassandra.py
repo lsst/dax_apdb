@@ -428,7 +428,7 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
-        sp_where = context.partitioner.spatial_where(region, for_prepare=True)
+        sp_where, num_sp_part = context.partitioner.spatial_where(region, for_prepare=True)
         _LOG.debug("getDiaObjects: #partitions: %s", len(sp_where))
 
         # We need to exclude extra partitioning columns from result.
@@ -452,7 +452,7 @@ class ApdbCassandra(Apdb):
 
         with _MON.context_tags({"table": "DiaObject"}):
             _MON.add_record(
-                "select_query_stats", values={"num_sp_part": len(sp_where), "num_queries": len(statements)}
+                "select_query_stats", values={"num_sp_part": num_sp_part, "num_queries": len(statements)}
             )
             with self._timer("select_time") as timer:
                 objects = cast(
@@ -525,7 +525,7 @@ class ApdbCassandra(Apdb):
         # stored records. With per-partition tables there will be many tables
         # in the list, but it is unlikely that we'll use that setup in
         # production.
-        sp_where = context.partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
+        sp_where, _ = context.partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
         visit_detector_where = ("visit = ? AND detector = ?", (visit, detector))
 
         # Sources are partitioned on their midPointMjdTai. To avoid precision
@@ -773,7 +773,7 @@ class ApdbCassandra(Apdb):
             if len(object_id_set) == 0:
                 return self._make_empty_catalog(table_name)
 
-        sp_where = context.partitioner.spatial_where(region, for_prepare=True)
+        sp_where, num_sp_part = context.partitioner.spatial_where(region, for_prepare=True)
         tables, temporal_where = context.partitioner.temporal_where(
             table_name, mjd_start, mjd_end, for_prepare=True, partitons_range=context.time_partitions_range
         )
@@ -797,7 +797,7 @@ class ApdbCassandra(Apdb):
 
         with _MON.context_tags({"table": table_name.name}):
             _MON.add_record(
-                "select_query_stats", values={"num_sp_part": len(sp_where), "num_queries": len(statements)}
+                "select_query_stats", values={"num_sp_part": num_sp_part, "num_queries": len(statements)}
             )
             with self._timer("select_time") as timer:
                 catalog = cast(

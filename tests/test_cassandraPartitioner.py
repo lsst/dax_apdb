@@ -99,13 +99,16 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         region = Box.fromDegrees(-0.05, 0.05, 0.05, 0.15)
 
         partitioner = self.make_partitioner()
-        result = partitioner.spatial_where(region)
+        result, count = partitioner.spatial_where(region)
+        self.assertEqual(count, 4)
         self.assertEqual(result, [('"apdb_part" IN (12058622,12058623,12058624,12058625)', ())])
-        result = partitioner.spatial_where(region, use_ranges=True)
+        result, count = partitioner.spatial_where(region, use_ranges=True)
+        self.assertEqual(count, 4)
         self.assertEqual(result, [('"apdb_part" >= %s AND "apdb_part" <= %s', (12058622, 12058625))])
 
         partitioner = self.make_partitioner(query_per_spatial_part=True)
-        result = partitioner.spatial_where(region)
+        result, count = partitioner.spatial_where(region)
+        self.assertEqual(count, 4)
         self.assertEqual(
             set(result),
             {
@@ -115,7 +118,8 @@ class CassandraPartitionerTestCase(unittest.TestCase):
                 ('"apdb_part" = %s', (12058625,)),
             },
         )
-        result = partitioner.spatial_where(region, for_prepare=True)
+        result, count = partitioner.spatial_where(region, for_prepare=True)
+        self.assertEqual(count, 4)
         self.assertEqual(
             set(result),
             {
@@ -125,7 +129,8 @@ class CassandraPartitionerTestCase(unittest.TestCase):
                 ('"apdb_part" = ?', (12058625,)),
             },
         )
-        result = partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
+        result, count = partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
+        self.assertEqual(count, 4)
         self.assertEqual(result, [('"apdb_part" >= ? AND "apdb_part" <= ?', (12058622, 12058625))])
 
     def _check_temporal_where(
