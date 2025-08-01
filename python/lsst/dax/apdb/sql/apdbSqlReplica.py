@@ -30,12 +30,14 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
 import astropy.time
+import felis.datamodel
 import sqlalchemy
 from sqlalchemy import sql
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
+from ..schema_model import ExtraDataTypes
 from ..timer import Timer
 from ..versionTuple import VersionTuple
 from .apdbSqlSchema import ExtraTables
@@ -58,12 +60,15 @@ changes.
 class ApdbSqlTableData(ApdbTableData):
     """Implementation of ApdbTableData that wraps sqlalchemy Result."""
 
-    def __init__(self, result: sqlalchemy.engine.Result):
-        self._keys = list(result.keys())
+    def __init__(self, result: sqlalchemy.engine.Result, column_types: dict[str, felis.datamodel.DataType]):
+        self._column_defs = tuple((column, column_types[column]) for column in result.keys())
         self._rows: list[tuple] = cast(list[tuple], list(result.fetchall()))
 
     def column_names(self) -> Sequence[str]:
-        return self._keys
+        return tuple(column_def[0] for column_def in self._column_defs)
+
+    def column_defs(self) -> Sequence[tuple[str, felis.datamodel.DataType]]:
+        return self._column_defs
 
     def rows(self) -> Collection[tuple]:
         return self._rows
@@ -174,11 +179,21 @@ class ApdbSqlReplica(ApdbReplica):
         where_clause = chunk_id_column.in_(chunks)
         query = sql.select(chunk_id_column, *apdb_columns).select_from(join).where(where_clause)
 
+        table_schema = self._schema.tableSchemas[table_enum]
+        # Regular tables should never have columns of ExtraDataTypes, this is
+        # just to make mypy happy.
+        column_types = {
+            column.name: column.datatype
+            for column in table_schema.columns
+            if not isinstance(column.datatype, ExtraDataTypes)
+        }
+        column_types["apdb_replica_chunk"] = felis.datamodel.DataType.long
+
         # execute select
         with self._timer("table_chunk_select_time", tags={"table": table.name}) as timer:
             with self._engine.begin() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
-                table_data = ApdbSqlTableData(result)
+                table_data = ApdbSqlTableData(result, column_types)
                 timer.add_values(row_count=len(table_data.rows()))
                 return table_data
 

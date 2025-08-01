@@ -33,6 +33,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 
 import astropy.time
+import felis.datamodel
 import pandas
 import yaml
 
@@ -195,6 +196,8 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertEqual(
             len(catalog.column_names()), self.table_column_count[table] + self.extra_chunk_columns
         )
+        column_defs = dict(catalog.column_defs())
+        self.assertEqual(column_defs["apdb_replica_chunk"], felis.datamodel.DataType.long)
 
     def make_region(self, xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
         """Make a region to use in tests"""

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import astropy.time
+import felis.datamodel
 
 from lsst.resources import ResourcePathExpression
 
@@ -51,6 +52,19 @@ class ApdbTableData(ABC):
         -------
         names : `~collections.abc.Sequence` [`str`]
             Column names.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def column_defs(self) -> Sequence[tuple[str, felis.datamodel.DataType]]:
+        """Return ordered sequence of column names and their types.
+
+        Returns
+        -------
+        columns : `~collections.abc.Sequence` \
+            [`tuple`[`str`, `felis.datamodel.DataType`]]
+            Sequence of 2-tuples, each tuple consists of column name and its
+            type.
         """
         raise NotImplementedError()
 

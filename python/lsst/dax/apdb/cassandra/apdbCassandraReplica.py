@@ -28,10 +28,12 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, cast
 
 import astropy.time
+import felis.datamodel
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
+from ..schema_model import ExtraDataTypes
 from ..timer import Timer
 from ..versionTuple import VersionTuple
 from .apdbCassandraSchema import ExtraTables
@@ -295,6 +297,20 @@ class ApdbCassandraReplica(ApdbReplica):
                 raise AssertionError("above logic is incorrect")
 
             timer.add_values(row_count=len(table_data.rows()))
+
+            table_schema = self._apdb._schema.tableSchemas[table]
+            # Regular tables should never have columns of ExtraDataTypes, this
+            # is just to make mypy happy.
+            column_types = {
+                column.name: column.datatype
+                for column in table_schema.columns
+                if not isinstance(column.datatype, ExtraDataTypes)
+            }
+            column_types["apdb_replica_chunk"] = felis.datamodel.DataType.long
+            # It may also have subchunk column, we do not always drop it, and
+            # clients should not need it, but we need to provide type for it.
+            column_types["apdb_replica_subchunk"] = felis.datamodel.DataType.int
+            table_data.set_column_types(column_types)
 
         return table_data
 
