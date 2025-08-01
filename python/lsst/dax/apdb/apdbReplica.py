@@ -33,7 +33,7 @@ import astropy.time
 
 from lsst.resources import ResourcePathExpression
 
-from .apdb import ApdbConfig
+from .apdb import ApdbConfig, ApdbTables
 from .factory import make_apdb_replica
 
 if TYPE_CHECKING:
@@ -204,66 +204,61 @@ class ApdbReplica(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        """Return catalog of DiaObject records from given replica chunks.
+    def getTableDataChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+        """Return catalog of new records for a table from given replica chunks.
 
         Parameters
         ----------
+        table : `ApdbTables`
+            Table for which to return the data. Acceptable tables are
+            `ApdbTables.DiaObject`, `ApdbTables.DiaSource`, and
+            `ApdbTables.DiaForcedSource`.
         chunks : `~collections.abc.Iterable` [`int`]
             Chunk identifiers to return.
 
         Returns
         -------
         data : `ApdbTableData`
-            Catalog containing DiaObject records. In addition to all regular
+            Catalog containing table records. In addition to all regular
             columns it will contain ``apdb_replica_chunk`` column.
 
         Notes
         -----
+        This method returns new records that have been added to the table by
+        `Apdb.store()` method. Updates to the records that happen at later time
+        are available from `getTableUpdateChunks` method.
+
         This part of API may not be very stable and can change before the
         implementation finalizes.
         """
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        """Return catalog of DiaSource records from given replica chunks.
+    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+        """Return the list of record updates for a table from given replica
+        chunks.
 
         Parameters
         ----------
+        table : `ApdbTables`
+            Table for which to return the updates. Acceptable tables are
+            `ApdbTables.DiaObject`, `ApdbTables.DiaSource`, and
+            `ApdbTables.DiaForcedSource`.
         chunks : `~collections.abc.Iterable` [`int`]
             Chunk identifiers to return.
 
         Returns
         -------
         data : `ApdbTableData`
-            Catalog containing DiaSource records. In addition to all regular
-            columns it will contain ``apdb_replica_chunk`` column.
+            Catalog containing table updates.
 
         Notes
         -----
-        This part of API may not be very stable and can change before the
-        implementation finalizes.
-        """
-        raise NotImplementedError()
+         The returned catalog will include all primary key columns,
+         ``timestamp`` column, ``apdb_replica_chunk`` column, and
+         ``update_action`` column containing a string with JSON-serialized
+         description of the update.
 
-    @abstractmethod
-    def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        """Return catalog of DiaForcedSource records from given replica chunks.
-
-        Parameters
-        ----------
-        chunks : `~collections.abc.Iterable` [`int`]
-            Chunk identifiers to return.
-
-        Returns
-        -------
-        data : `ApdbTableData`
-            Catalog containing DiaForcedSource records. In addition to all
-            regular columns it will contain ``apdb_replica_chunk`` column.
-
-        Notes
-        -----
         This part of API may not be very stable and can change before the
         implementation finalizes.
         """

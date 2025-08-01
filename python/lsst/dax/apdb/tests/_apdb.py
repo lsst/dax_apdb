@@ -510,20 +510,29 @@ class ApdbTest(TestCaseMixin, ABC):
             self.assertIsNone(replica_chunks)
 
             with self.assertRaisesRegex(ValueError, "APDB is not configured for replication"):
-                apdb_replica.getDiaObjectsChunks([])
+                apdb_replica.getTableDataChunks(ApdbTables.DiaObject, [])
 
         else:
             assert replica_chunks is not None
             self.assertEqual(len(replica_chunks), 4)
 
+            with self.assertRaisesRegex(ValueError, "does not support replica chunks"):
+                apdb_replica.getTableDataChunks(ApdbTables.SSObject, [])
+
             def _check_chunks(replica_chunks: list[ReplicaChunk], n_records: int | None = None) -> None:
                 if n_records is None:
                     n_records = len(replica_chunks) * nobj
-                res = apdb_replica.getDiaObjectsChunks(chunk.id for chunk in replica_chunks)
+                res = apdb_replica.getTableDataChunks(
+                    ApdbTables.DiaObject, (chunk.id for chunk in replica_chunks)
+                )
                 self.assert_table_data(res, n_records, ApdbTables.DiaObject)
-                res = apdb_replica.getDiaSourcesChunks(chunk.id for chunk in replica_chunks)
+                res = apdb_replica.getTableDataChunks(
+                    ApdbTables.DiaSource, (chunk.id for chunk in replica_chunks)
+                )
                 self.assert_table_data(res, n_records, ApdbTables.DiaSource)
-                res = apdb_replica.getDiaForcedSourcesChunks(chunk.id for chunk in replica_chunks)
+                res = apdb_replica.getTableDataChunks(
+                    ApdbTables.DiaForcedSource, (chunk.id for chunk in replica_chunks)
+                )
                 self.assert_table_data(res, n_records, ApdbTables.DiaForcedSource)
 
             # read it back and check sizes

@@ -176,25 +176,15 @@ class ApdbCassandraReplica(ApdbReplica):
                 execute_concurrent(context.session, queries)
                 timer.add_values(row_count=len(queries))
 
-    def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
+    def getTableDataChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_chunks(ApdbTables.DiaObject, chunks)
-
-    def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_chunks(ApdbTables.DiaSource, chunks)
-
-    def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_chunks(ApdbTables.DiaForcedSource, chunks)
-
-    def _get_chunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
-        """Return records from a particular table given set of insert IDs."""
         context = self._apdb._context
         config = context.config
 
         if not context.schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
+        if table not in ExtraTables.replica_chunk_tables(False):
+            raise ValueError(f"Table {table} does not support replica chunks.")
 
         # We need to iterate few times.
         chunks = list(chunks)
@@ -307,3 +297,7 @@ class ApdbCassandraReplica(ApdbReplica):
             timer.add_values(row_count=len(table_data.rows()))
 
         return table_data
+
+    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        raise NotImplementedError()

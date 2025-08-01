@@ -146,17 +146,12 @@ class ApdbSqlReplica(ApdbReplica):
                 conn.execute(stmt)
             timer.add_values(row_count=len(chunk_list))
 
-    def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
+    def getTableDataChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_chunks(chunks, ApdbTables.DiaObject, ExtraTables.DiaObjectChunks)
-
-    def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_chunks(chunks, ApdbTables.DiaSource, ExtraTables.DiaSourceChunks)
-
-    def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_chunks(chunks, ApdbTables.DiaForcedSource, ExtraTables.DiaForcedSourceChunks)
+        for chunk_table, table_enum in ExtraTables.replica_chunk_tables().items():
+            if table is table_enum:
+                return self._get_chunks(chunks, table, chunk_table)
+        raise ValueError(f"Table {table} does not support replica chunks.")
 
     def _get_chunks(
         self,
@@ -186,3 +181,7 @@ class ApdbSqlReplica(ApdbReplica):
                 table_data = ApdbSqlTableData(result)
                 timer.add_values(row_count=len(table_data.rows()))
                 return table_data
+
+    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        raise NotImplementedError()
