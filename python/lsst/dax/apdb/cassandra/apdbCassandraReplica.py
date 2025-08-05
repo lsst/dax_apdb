@@ -28,10 +28,12 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, cast
 
 import astropy.time
+import felis.datamodel
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
+from ..schema_model import ExtraDataTypes
 from ..timer import Timer
 from ..versionTuple import VersionTuple
 from .apdbCassandraSchema import ExtraTables
@@ -176,25 +178,15 @@ class ApdbCassandraReplica(ApdbReplica):
                 execute_concurrent(context.session, queries)
                 timer.add_values(row_count=len(queries))
 
-    def getDiaObjectsChunks(self, chunks: Iterable[int]) -> ApdbTableData:
+    def getTableDataChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
         # docstring is inherited from a base class
-        return self._get_chunks(ApdbTables.DiaObject, chunks)
-
-    def getDiaSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_chunks(ApdbTables.DiaSource, chunks)
-
-    def getDiaForcedSourcesChunks(self, chunks: Iterable[int]) -> ApdbTableData:
-        # docstring is inherited from a base class
-        return self._get_chunks(ApdbTables.DiaForcedSource, chunks)
-
-    def _get_chunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
-        """Return records from a particular table given set of insert IDs."""
         context = self._apdb._context
         config = context.config
 
         if not context.schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
+        if table not in ExtraTables.replica_chunk_tables(False):
+            raise ValueError(f"Table {table} does not support replica chunks.")
 
         # We need to iterate few times.
         chunks = list(chunks)
@@ -306,4 +298,22 @@ class ApdbCassandraReplica(ApdbReplica):
 
             timer.add_values(row_count=len(table_data.rows()))
 
+            table_schema = self._apdb._schema.tableSchemas[table]
+            # Regular tables should never have columns of ExtraDataTypes, this
+            # is just to make mypy happy.
+            column_types = {
+                column.name: column.datatype
+                for column in table_schema.columns
+                if not isinstance(column.datatype, ExtraDataTypes)
+            }
+            column_types["apdb_replica_chunk"] = felis.datamodel.DataType.long
+            # It may also have subchunk column, we do not always drop it, and
+            # clients should not need it, but we need to provide type for it.
+            column_types["apdb_replica_subchunk"] = felis.datamodel.DataType.int
+            table_data.set_column_types(column_types)
+
         return table_data
+
+    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+        # docstring is inherited from a base class
+        raise NotImplementedError()

@@ -37,6 +37,7 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
+import felis.datamodel
 import numpy as np
 import pandas
 
@@ -63,10 +64,30 @@ class ApdbCassandraTableData(ApdbTableData):
     def __init__(self, columns: list[str], rows: list[tuple]):
         self._columns = columns
         self._rows = rows
+        self._column_types: dict[str, felis.datamodel.DataType] = {}
+
+    def set_column_types(self, types: dict[str, felis.datamodel.DataType]) -> None:
+        """Update column types.
+
+        Parameters
+        ----------
+        types : `dict`[`str`, `felis.datamodel.DataType`]
+            Mapping of column name its type.
+
+        Notes
+        -----
+        Due to the way how instances of this class are constructed it is
+        impossible to pass types of columns to the constructor, instead we will
+        need to make a call to this method after construction.
+        """
+        self._column_types = types
 
     def column_names(self) -> Sequence[str]:
         # docstring inherited
         return self._columns
+
+    def column_defs(self) -> Sequence[tuple[str, felis.datamodel.DataType]]:
+        return tuple((column, self._column_types[column]) for column in self._columns)
 
     def rows(self) -> Collection[tuple]:
         # docstring inherited
