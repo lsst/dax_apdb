@@ -196,8 +196,11 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertEqual(
             len(catalog.column_names()), self.table_column_count[table] + self.extra_chunk_columns
         )
+
+    def assert_column_types(self, catalog: Any, types: dict[str, felis.datamodel.DataType]) -> None:
         column_defs = dict(catalog.column_defs())
-        self.assertEqual(column_defs["apdb_replica_chunk"], felis.datamodel.DataType.long)
+        for column, datatype in types.items():
+            self.assertEqual(column_defs[column], datatype)
 
     def make_region(self, xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
         """Make a region to use in tests"""
@@ -529,14 +532,46 @@ class ApdbTest(TestCaseMixin, ABC):
                     ApdbTables.DiaObject, (chunk.id for chunk in replica_chunks)
                 )
                 self.assert_table_data(res, n_records, ApdbTables.DiaObject)
+                self.assert_column_types(
+                    res,
+                    {
+                        "apdb_replica_chunk": felis.datamodel.DataType.long,
+                        "diaObjectId": felis.datamodel.DataType.long,
+                        "validityStart": felis.datamodel.DataType.timestamp,
+                        "ra": felis.datamodel.DataType.double,
+                        "dec": felis.datamodel.DataType.double,
+                        "parallax": felis.datamodel.DataType.float,
+                        "nDiaSources": felis.datamodel.DataType.int,
+                    },
+                )
+
                 res = apdb_replica.getTableDataChunks(
                     ApdbTables.DiaSource, (chunk.id for chunk in replica_chunks)
                 )
                 self.assert_table_data(res, n_records, ApdbTables.DiaSource)
+                self.assert_column_types(
+                    res,
+                    {
+                        "apdb_replica_chunk": felis.datamodel.DataType.long,
+                        "diaSourceId": felis.datamodel.DataType.long,
+                        "visit": felis.datamodel.DataType.long,
+                        "detector": felis.datamodel.DataType.short,
+                    },
+                )
+
                 res = apdb_replica.getTableDataChunks(
                     ApdbTables.DiaForcedSource, (chunk.id for chunk in replica_chunks)
                 )
                 self.assert_table_data(res, n_records, ApdbTables.DiaForcedSource)
+                self.assert_column_types(
+                    res,
+                    {
+                        "apdb_replica_chunk": felis.datamodel.DataType.long,
+                        "diaObjectId": felis.datamodel.DataType.long,
+                        "visit": felis.datamodel.DataType.long,
+                        "detector": felis.datamodel.DataType.short,
+                    },
+                )
 
             # read it back and check sizes
             _check_chunks(replica_chunks, 800)
