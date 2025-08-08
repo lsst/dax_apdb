@@ -70,7 +70,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 2)
+VERSION = VersionTuple(1, 0, 0)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -959,15 +959,6 @@ class ApdbSql(Apdb):
             last_objs = objs[last_column_names]
             last_objs = _coerce_uint64(last_objs)
 
-            if "lastNonForcedSource" in last_objs.columns:
-                # lastNonForcedSource is defined NOT NULL, fill it with visit
-                # time just in case.
-                last_objs.fillna({"lastNonForcedSource": dt}, inplace=True)
-            else:
-                extra_column = pandas.Series([dt] * len(objs), name="lastNonForcedSource")
-                last_objs.set_index(extra_column.index, inplace=True)
-                last_objs = pandas.concat([last_objs, extra_column], axis="columns")
-
             with self._timer("insert_time", tags={"table": "DiaObjectLast"}) as timer:
                 last_objs.to_sql(
                     table.name,
@@ -1009,12 +1000,6 @@ class ApdbSql(Apdb):
             objs["validityEnd"] = None
         else:
             extra_columns.append(pandas.Series([None] * len(objs), name="validityEnd"))
-        if "lastNonForcedSource" in objs.columns:
-            # lastNonForcedSource is defined NOT NULL, fill it with visit time
-            # just in case.
-            objs.fillna({"lastNonForcedSource": dt}, inplace=True)
-        else:
-            extra_columns.append(pandas.Series([dt] * len(objs), name="lastNonForcedSource"))
         if extra_columns:
             objs.set_index(extra_columns[0].index, inplace=True)
             objs = pandas.concat([objs] + extra_columns, axis="columns")

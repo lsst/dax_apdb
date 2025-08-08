@@ -82,7 +82,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(0, 1, 3)
+VERSION = VersionTuple(1, 0, 0)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -955,10 +955,9 @@ class ApdbCassandra(Apdb):
             self._deleteMovingObjects(objs)
 
         visit_time_dt = visit_time.datetime
-        extra_columns = {"lastNonForcedSource": visit_time_dt}
-        self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
+        self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast)
 
-        extra_columns["validityStart"] = visit_time_dt
+        extra_columns = {"validityStart": visit_time_dt}
         visit_time_part = context.partitioner.time_partition(visit_time)
         time_part: int | None = visit_time_part
         if (time_partitions_range := context.time_partitions_range) is not None:
