@@ -304,8 +304,8 @@ def select_concurrent(
 
 def literal(v: Any) -> Any:
     """Transform object into a value for the query."""
-    if v is None:
-        pass
+    if v is None or v is pandas.NA:
+        v = None
     elif isinstance(v, datetime):
         v = int((v - datetime(1970, 1, 1)) / timedelta(seconds=1) * 1000)
     elif isinstance(v, bytes | str | UUID | int):
