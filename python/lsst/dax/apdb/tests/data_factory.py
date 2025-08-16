@@ -101,14 +101,12 @@ def makeObjectCatalog(
     ras = numpy.array([lonlat.getLon().asDegrees() for lonlat in points], dtype=numpy.float64)
     decs = numpy.array([lonlat.getLat().asDegrees() for lonlat in points], dtype=numpy.float64)
     nDiaSources = numpy.ones(len(points), dtype=numpy.int32)
-    dt = visit_time.datetime
     data = dict(
         kwargs,
         diaObjectId=ids,
         ra=ras,
         dec=decs,
         nDiaSources=nDiaSources,
-        lastNonForcedSource=dt,
     )
     df = pandas.DataFrame(data)
     return df
