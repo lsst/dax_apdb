@@ -88,6 +88,9 @@ class ApdbTables(enum.Enum):
     SSObject = "SSObject"
     """Name of the table for SSObject records."""
 
+    SSSource = "SSSource"
+    """Name of the table for SSSource records."""
+
     DiaObject_To_Object_Match = "DiaObject_To_Object_Match"
     """Name of the table for DiaObject_To_Object_Match records."""
 
