@@ -325,12 +325,15 @@ class ApdbSqlSchema(ApdbSchema):
         mysql_engine : `str`, optional
             MySQL engine type to use for new tables.
         """
-        tables = {}
+        tables: dict[ApdbTables, schema_model.Table] = {}
         for table_enum in ApdbTables:
             if table_enum is ApdbTables.DiaObjectLast and self._dia_object_index != "last_object_table":
                 continue
             if table_enum is ApdbTables.metadata and table_enum not in self.tableSchemas:
                 # Schema does not define metadata.
+                continue
+            if table_enum is ApdbTables.SSSource:
+                # We do not support SSSource table yet.
                 continue
             table = self.tableSchemas[table_enum]
             tables[table_enum] = table

@@ -669,6 +669,9 @@ class ApdbCassandraSchema:
         for table in self._apdb_tables:
             if table is ApdbTables.DiaObject and self._enable_replica and self._replica_skips_diaobjects:
                 continue
+            if table is ApdbTables.SSSource:
+                # We do not support SSSource table yet.
+                continue
             self._makeTableSchema(table, drop, part_range, table_options)
         for extra_table in self._extra_tables:
             self._makeTableSchema(extra_table, drop, part_range, table_options)

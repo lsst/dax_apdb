@@ -49,7 +49,9 @@ class ApdbSchemaTestCase(unittest.TestCase):
         ApdbTables.DiaObjectLast: 4,
         ApdbTables.DiaSource: 12,
         ApdbTables.DiaForcedSource: 8,
+        ApdbTables.DiaObject_To_Object_Match: 3,
         ApdbTables.SSObject: 3,
+        ApdbTables.SSSource: 4,
         ApdbTables.metadata: 2,
     }
 
@@ -77,42 +79,25 @@ class ApdbSchemaTestCase(unittest.TestCase):
             engine=engine, dia_object_index="baseline", htm_index_column="pixelId", schema_file=TEST_SCHEMA
         )
         schema.makeSchema()
-        table = schema.get_table(ApdbTables.DiaObject)
-        # DiaObject table adds pixelId column.
-        self._assertTable(table, "DiaObject", self.table_column_count[ApdbTables.DiaObject] + 1)
-        self.assertEqual(len(table.primary_key), 2)
-        self.assertEqual(
-            len(schema.get_apdb_columns(ApdbTables.DiaObject)), self.table_column_count[ApdbTables.DiaObject]
-        )
-        with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
-            schema.get_table(ApdbTables.DiaObjectLast)
-        # DiaSource table also adds pixelId column.
-        self._assertTable(
-            schema.get_table(ApdbTables.DiaSource),
-            "DiaSource",
-            self.table_column_count[ApdbTables.DiaSource] + 1,
-        )
-        self.assertEqual(
-            len(schema.get_apdb_columns(ApdbTables.DiaSource)), self.table_column_count[ApdbTables.DiaSource]
-        )
-        self._assertTable(
-            schema.get_table(ApdbTables.DiaForcedSource),
-            "DiaForcedSource",
-            self.table_column_count[ApdbTables.DiaForcedSource],
-        )
-        self.assertEqual(
-            len(schema.get_apdb_columns(ApdbTables.DiaForcedSource)),
-            self.table_column_count[ApdbTables.DiaForcedSource],
-        )
-        self._assertTable(
-            schema.get_table(ApdbTables.metadata),
-            "metadata",
-            self.table_column_count[ApdbTables.metadata],
-        )
-        self.assertEqual(
-            len(schema.get_apdb_columns(ApdbTables.metadata)),
-            self.table_column_count[ApdbTables.metadata],
-        )
+
+        for apdb_table in ApdbTables:
+            if apdb_table in (ApdbTables.DiaObjectLast, ApdbTables.SSSource):
+                with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
+                    table = schema.get_table(apdb_table)
+                continue
+
+            table = schema.get_table(apdb_table)
+
+            column_count = self.table_column_count[apdb_table]
+            if apdb_table in (ApdbTables.DiaObject, ApdbTables.DiaSource):
+                # DiaObject and DiaSource tables add pixelId column.
+                column_count += 1
+
+            self._assertTable(table, apdb_table.table_name(), column_count)
+            self.assertEqual(len(schema.get_apdb_columns(apdb_table)), self.table_column_count[apdb_table])
+            if apdb_table is ApdbTables.DiaObject:
+                self.assertEqual(len(table.primary_key), 2)
+
         for table_enum in ExtraTables:
             with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
                 schema.get_table(table_enum)

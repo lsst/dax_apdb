@@ -341,3 +341,30 @@ tables:
     nullable: false
     description: Total number of DiaSources associated with this DiaObject.
   primaryKey: "#DiaObjectLast.diaObjectId"
+- name: SSSource
+  "@id": "#SSSource"
+  description: LSST-computed per-source quantities. 1:1 relationship with DIASource.
+    Recomputed daily, upon MPCORB ingestion.
+  primaryKey: "#SSSource.ssObjectId"
+  columns:
+  - name: ssObjectId
+    "@id": "#SSSource.ssObjectId"
+    datatype: long
+    autoincrement: false
+    description: Unique identifier of the object.
+    ivoa:ucd: meta.id;src
+  - name: diaSourceId
+    "@id": "#SSSource.diaSourceId"
+    datatype: long
+    description: Unique identifier of the observation.
+    ivoa:ucd: meta.id;src
+  - name: eclipticLambda
+    "@id": "#SSSource.eclipticLambda"
+    datatype: double
+    description: Ecliptic longitude.
+    fits:tunit: deg
+  - name: eclipticBeta
+    "@id": "#SSSource.eclipticBeta"
+    datatype: double
+    description: Ecliptic latitude.
+    fits:tunit: deg
