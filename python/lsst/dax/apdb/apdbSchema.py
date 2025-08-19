@@ -33,6 +33,7 @@ import enum
 import logging
 import os
 from collections.abc import Mapping, MutableMapping
+from functools import cached_property
 
 import felis.datamodel
 import numpy
@@ -227,3 +228,17 @@ class ApdbSchema:
             version = VersionTuple.fromString(schema.version.current)
 
         return tables, version
+
+    @cached_property
+    def has_mjd_timestamps(self) -> bool:
+        """True if timestamps columns are in MJD (`bool`)."""
+        table = self.tableSchemas[ApdbTables.DiaObject]
+        # Look for validityStartMjdTai or validityStart
+        for column in table.columns:
+            if column.name == "validityStartMjdTai":
+                return True
+            elif column.name == "validityStart":
+                return False
+        raise LookupError(
+            "Could not find validityStart or validityStartMjdTai column in DiaObject table schema."
+        )

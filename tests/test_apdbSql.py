@@ -43,6 +43,8 @@ except ImportError:
     testing = None
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
+# Schema that uses `datetime` for timestamps.
+TEST_SCHEMA_DT = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-datetime.yaml")
 
 
 class ApdbSQLTest(ApdbTest):
@@ -82,8 +84,7 @@ class ApdbSQLiteTestCase(ApdbSQLTest, unittest.TestCase):
 
     fsrc_requires_id_list = True
     dia_object_index = "baseline"
-    schema_path = TEST_SCHEMA
-    timestamp_type_name = "datetime64[ns]"
+    use_mjd = True
 
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
@@ -94,6 +95,29 @@ class ApdbSQLiteTestCase(ApdbSQLTest, unittest.TestCase):
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         return super().make_instance(db_url=self.db_url, **kwargs)
+
+
+class ApdbSQLiteDatetimeTestCase(ApdbSQLTest, unittest.TestCase):
+    """A test case for ApdbSql class using SQLite backend and schema with
+    timestamps in TAI MJD.
+    """
+
+    fsrc_requires_id_list = True
+    dia_object_index = "baseline"
+    use_mjd = False
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.mkdtemp()
+        self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tempdir, ignore_errors=True)
+
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
+        if "schema_file" in kwargs:
+            return super().make_instance(db_url=self.db_url, **kwargs)
+        else:
+            return super().make_instance(db_url=self.db_url, schema_file=TEST_SCHEMA_DT, **kwargs)
 
 
 class ApdbSQLiteTestCaseLastObject(ApdbSQLiteTestCase):
@@ -132,7 +156,6 @@ class ApdbPostgresTestCase(ApdbSQLTest, unittest.TestCase):
     postgresql: Any
     enable_replica = True
     meta_row_count = 4
-    schema_path = TEST_SCHEMA
     timestamp_type_name = "datetime64[ns]"
 
     @classmethod

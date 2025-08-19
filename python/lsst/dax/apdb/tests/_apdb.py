@@ -24,7 +24,6 @@ from __future__ import annotations
 __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
-import datetime
 import os
 import tempfile
 from abc import ABC, abstractmethod
@@ -49,7 +48,13 @@ from .. import (
     ReplicaChunk,
     VersionTuple,
 )
-from .data_factory import makeForcedSourceCatalog, makeObjectCatalog, makeSourceCatalog, makeSSObjectCatalog
+from .data_factory import (
+    makeForcedSourceCatalog,
+    makeObjectCatalog,
+    makeSourceCatalog,
+    makeSSObjectCatalog,
+    makeTimestampNow,
+)
 from .utils import TestCaseMixin
 
 if TYPE_CHECKING:
@@ -123,11 +128,8 @@ class ApdbTest(TestCaseMixin, ABC):
     enable_replica: bool = False
     """Set to true when support for replication is configured"""
 
-    schema_path: str
-    """Location of the Felis schema file."""
-
-    timestamp_type_name: str
-    """Type name of timestamp columns in DataFrames returned from queries."""
+    use_mjd: bool = True
+    """If True then timestamp columns are MJD TAI."""
 
     extra_chunk_columns = 1
     """Number of additional columns in chunk tables."""
@@ -397,7 +399,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # have to store Objects first
         objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
-        sources = makeSourceCatalog(objects, visit_time)
+        sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
 
         # save the objects and sources
         apdb.store(visit_time, objects, sources)
@@ -433,7 +435,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # have to store Objects first
         objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
-        catalog = makeForcedSourceCatalog(objects, visit_time)
+        catalog = makeForcedSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
 
         apdb.store(visit_time, objects, forced_sources=catalog)
 
@@ -460,15 +462,13 @@ class ApdbTest(TestCaseMixin, ABC):
         region = self.make_region()
         visit_time = self.visit_time
 
-        # have to store Objects first
-        time_before = datetime.datetime.now()
         # Cassandra has a millisecond precision, so subtract 1ms to allow for
         # truncated returned values.
-        time_before -= datetime.timedelta(milliseconds=1)
+        time_before = makeTimestampNow(self.use_mjd, -1)
         objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
-        catalog = makeForcedSourceCatalog(objects, visit_time)
-        time_after = datetime.datetime.now()
+        catalog = makeForcedSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
+        time_after = makeTimestampNow(self.use_mjd)
 
         apdb.store(visit_time, objects, forced_sources=catalog)
 
@@ -477,11 +477,13 @@ class ApdbTest(TestCaseMixin, ABC):
         assert res is not None
         self.assert_catalog(res, len(catalog), ApdbTables.DiaForcedSource)
 
-        self.assertIn("time_processed", res.dtypes)
-        dtype = res.dtypes["time_processed"]
-        self.assertEqual(dtype.name, self.timestamp_type_name)
+        time_processed_column = "timeProcessedMjdTai" if self.use_mjd else "time_processed"
+        self.assertIn(time_processed_column, res.dtypes)
+        dtype = res.dtypes[time_processed_column]
+        timestamp_type_name = "float64" if self.use_mjd else "datetime64[ns]"
+        self.assertEqual(dtype.name, timestamp_type_name)
         # Verify that returned time is sensible.
-        self.assertTrue(all(time_before <= dt <= time_after for dt in res["time_processed"]))
+        self.assertTrue(all(time_before <= dt <= time_after for dt in res[time_processed_column]))
 
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
@@ -512,8 +514,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
         start_id = 0
         for visit_time, objects in visits:
-            sources = makeSourceCatalog(objects, visit_time, start_id=start_id)
-            fsources = makeForcedSourceCatalog(objects, visit_time, visit=start_id)
+            sources = makeSourceCatalog(objects, visit_time, start_id=start_id, use_mjd=self.use_mjd)
+            fsources = makeForcedSourceCatalog(objects, visit_time, visit=start_id, use_mjd=self.use_mjd)
             apdb.store(visit_time, objects, sources, fsources)
             start_id += nobj
 
@@ -538,12 +540,16 @@ class ApdbTest(TestCaseMixin, ABC):
                     ApdbTables.DiaObject, (chunk.id for chunk in replica_chunks)
                 )
                 self.assert_table_data(res, n_records, ApdbTables.DiaObject)
+                validityStartColumn = "validityStartMjdTai" if self.use_mjd else "validityStart"
+                validityStartType = (
+                    felis.datamodel.DataType.double if self.use_mjd else felis.datamodel.DataType.timestamp
+                )
                 self.assert_column_types(
                     res,
                     {
                         "apdb_replica_chunk": felis.datamodel.DataType.long,
                         "diaObjectId": felis.datamodel.DataType.long,
-                        "validityStart": felis.datamodel.DataType.timestamp,
+                        validityStartColumn: validityStartType,
                         "ra": felis.datamodel.DataType.double,
                         "dec": felis.datamodel.DataType.double,
                         "parallax": felis.datamodel.DataType.float,
@@ -633,7 +639,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
         objects = makeObjectCatalog(region, 100, visit_time)
         oids = list(objects["diaObjectId"])
-        sources = makeSourceCatalog(objects, visit_time)
+        sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
         apdb.store(visit_time, objects, sources)
 
         catalog = makeSSObjectCatalog(100)
@@ -671,10 +677,10 @@ class ApdbTest(TestCaseMixin, ABC):
 
         objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
-        sources = makeSourceCatalog(objects, src_time1, 0)
+        sources = makeSourceCatalog(objects, src_time1, 0, use_mjd=self.use_mjd)
         apdb.store(src_time1, objects, sources)
 
-        sources = makeSourceCatalog(objects, src_time2, 100)
+        sources = makeSourceCatalog(objects, src_time2, 100, use_mjd=self.use_mjd)
         apdb.store(src_time2, objects, sources)
 
         # reading at time of last save should read all
@@ -707,10 +713,10 @@ class ApdbTest(TestCaseMixin, ABC):
 
         objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
-        sources = makeForcedSourceCatalog(objects, src_time1, 1)
+        sources = makeForcedSourceCatalog(objects, src_time1, 1, use_mjd=self.use_mjd)
         apdb.store(src_time1, objects, forced_sources=sources)
 
-        sources = makeForcedSourceCatalog(objects, src_time2, 2)
+        sources = makeForcedSourceCatalog(objects, src_time2, 2, use_mjd=self.use_mjd)
         apdb.store(src_time2, objects, forced_sources=sources)
 
         # reading at time of last save should read all

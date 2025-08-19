@@ -70,7 +70,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 0, 0)
+VERSION = VersionTuple(1, 1, 0)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -546,9 +546,14 @@ class ApdbSql(Apdb):
         # build selection
         query = query.where(self._filterRegion(table, region))
 
+        if self._schema.has_mjd_timestamps:
+            validity_end_column = "validityEndMjdTai"
+        else:
+            validity_end_column = "validityEnd"
+
         # select latest version of objects
         if self.config.dia_object_index != "last_object_table":
-            query = query.where(table.c.validityEnd == None)  # noqa: E711
+            query = query.where(table.columns[validity_end_column] == None)  # noqa: E711
 
         # _LOG.debug("query: %s", query)
 
@@ -740,9 +745,14 @@ class ApdbSql(Apdb):
         # Retrieve the DiaObject table.
         table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaObject)
 
+        if self._schema.has_mjd_timestamps:
+            validity_end_column = "validityEndMjdTai"
+        else:
+            validity_end_column = "validityEnd"
+
         # Construct the sql statement.
         stmt = sql.select(func.count()).select_from(table).where(table.c.nDiaSources == 1)
-        stmt = stmt.where(table.c.validityEnd == None)  # noqa: E711
+        stmt = stmt.where(table.columns[validity_end_column] == None)  # noqa: E711
 
         # Return the count.
         with self._engine.begin() as conn:
@@ -937,9 +947,14 @@ class ApdbSql(Apdb):
         ids = sorted(int(oid) for oid in objs["diaObjectId"])
         _LOG.debug("first object ID: %d", ids[0])
 
-        # TODO: Need to verify that we are using correct scale here for
-        # DATETIME representation (see DM-31996).
-        dt = visit_time.datetime
+        if self._schema.has_mjd_timestamps:
+            validity_start_column = "validityStartMjdTai"
+            validity_end_column = "validityEndMjdTai"
+            timestamp = visit_time.tai.mjd
+        else:
+            validity_start_column = "validityStart"
+            validity_end_column = "validityEnd"
+            timestamp = visit_time.datetime
 
         # everything to be done in single transaction
         if self.config.dia_object_index == "last_object_table":
@@ -974,11 +989,11 @@ class ApdbSql(Apdb):
 
             update = (
                 table.update()
-                .values(validityEnd=dt)
+                .values(**{validity_end_column: timestamp})
                 .where(
                     sql.expression.and_(
                         table.columns["diaObjectId"].in_(ids),
-                        table.columns["validityEnd"].is_(None),
+                        table.columns[validity_end_column].is_(None),
                     )
                 )
             )
@@ -992,14 +1007,14 @@ class ApdbSql(Apdb):
 
         # Fill additional columns
         extra_columns: list[pandas.Series] = []
-        if "validityStart" in objs.columns:
-            objs["validityStart"] = dt
+        if validity_start_column in objs.columns:
+            objs[validity_start_column] = timestamp
         else:
-            extra_columns.append(pandas.Series([dt] * len(objs), name="validityStart"))
-        if "validityEnd" in objs.columns:
-            objs["validityEnd"] = None
+            extra_columns.append(pandas.Series([timestamp] * len(objs), name=validity_start_column))
+        if validity_end_column in objs.columns:
+            objs[validity_end_column] = None
         else:
-            extra_columns.append(pandas.Series([None] * len(objs), name="validityEnd"))
+            extra_columns.append(pandas.Series([None] * len(objs), name=validity_end_column))
         if extra_columns:
             objs.set_index(extra_columns[0].index, inplace=True)
             objs = pandas.concat([objs] + extra_columns, axis="columns")

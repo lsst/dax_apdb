@@ -112,12 +112,56 @@ def makeObjectCatalog(
     return df
 
 
+def makeTimestampNow(use_mjd: bool, offset_ms: int = 0) -> float | datetime.datetime:
+    """Return current timestamp in yeither MJD TAI or datetime format.
+
+    Parameters
+    ----------
+    use_mjd : `bool`
+        If True return time as MJD TAI, otherwise as datetime.
+    offset_ms : `int`, optional
+        Additional offset in milliseconds to add to current timestamp.
+
+    Returns
+    -------
+    timestamp : `float` or `datetime.datetime`
+        Resulting timestamp.
+    """
+    if use_mjd:
+        ts = astropy.time.Time.now().tai.mjd
+        if offset_ms != 0:
+            ts += offset_ms / (24 * 3600 * 1_000)
+        return ts
+    else:
+        # TODO: Note that for now we use naive datetime for time_processed, to
+        # have it consistent with ap_association, this is being replaces with
+        # MJD TAI in the new APDB schema.
+        dt = datetime.datetime.now()
+        if offset_ms != 0:
+            dt += datetime.timedelta(milliseconds=offset_ms)
+        return dt
+
+
+def _makeTimestampColumn(column: str, use_mjd: bool = True) -> str:
+    """Return column name before/after schema migration to MJD TAI."""
+    if use_mjd:
+        if column == "time_processed":
+            return "timeProcessedMjdTai"
+        elif column == "time_withdrawn":
+            return "timeWithdrawnMjdTai"
+        else:
+            return f"{column}MjdTai"
+    else:
+        return column
+
+
 def makeSourceCatalog(
     objects: pandas.DataFrame,
     visit_time: astropy.time.Time,
     start_id: int = 0,
     visit: int = 1,
     detector: int = 1,
+    use_mjd: bool = True,
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaSources associated with the
     input DiaObjects.
@@ -132,6 +176,8 @@ def makeSourceCatalog(
         Starting value for ``diaObjectId``.
     visit, detector : `int`
         Value for ``visit`` and ``detector`` fields.
+    use_mjd : `bool`
+        If True use MJD TAI for timestamp columns.
 
     Returns
     -------
@@ -144,10 +190,6 @@ def makeSourceCatalog(
     """
     nrows = len(objects)
     midpointMjdTai = visit_time.mjd
-    # TODO: Note that for now we use naive datetime for time_processed, to have
-    # it consistent with ap_association, will need to update once we migrate
-    # to aware times everywhere.
-    time_processed = datetime.datetime.now()
     df = pandas.DataFrame(
         {
             "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
@@ -160,14 +202,18 @@ def makeSourceCatalog(
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
             "ssObjectId": pandas.NA,
-            "time_processed": time_processed,
+            _makeTimestampColumn("time_processed", use_mjd): makeTimestampNow(use_mjd),
         }
     )
     return df
 
 
 def makeForcedSourceCatalog(
-    objects: pandas.DataFrame, visit_time: astropy.time.Time, visit: int = 1, detector: int = 1
+    objects: pandas.DataFrame,
+    visit_time: astropy.time.Time,
+    visit: int = 1,
+    detector: int = 1,
+    use_mjd: bool = True,
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaForcedSources associated with
     the input DiaObjects.
@@ -180,6 +226,8 @@ def makeForcedSourceCatalog(
         Time of the visit.
     visit, detector : `int`
         Value for ``visit`` and ``detector`` fields.
+    use_mjd : `bool`
+        If True use MJD TAI for timestamp columns.
 
     Returns
     -------
@@ -192,10 +240,6 @@ def makeForcedSourceCatalog(
     """
     nrows = len(objects)
     midpointMjdTai = visit_time.mjd
-    # TODO: Note that for now we use naive datetime for time_processed, to have
-    # it consistent with ap_association, will need to update once we migrate
-    # to aware times everywhere.
-    time_processed = datetime.datetime.now()
     df = pandas.DataFrame(
         {
             "diaObjectId": objects["diaObjectId"],
@@ -205,7 +249,7 @@ def makeForcedSourceCatalog(
             "dec": objects["dec"],
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
             "flags": numpy.full(nrows, 0, dtype=numpy.int64),
-            "time_processed": time_processed,
+            _makeTimestampColumn("time_processed", use_mjd): makeTimestampNow(use_mjd),
         }
     )
     return df
