@@ -950,7 +950,7 @@ class ApdbSql(Apdb):
         if self._schema.has_mjd_timestamps:
             validity_start_column = "validityStartMjdTai"
             validity_end_column = "validityEndMjdTai"
-            timestamp = visit_time.tai.mjd
+            timestamp = float(visit_time.tai.mjd)
         else:
             validity_start_column = "validityStart"
             validity_end_column = "validityEnd"
