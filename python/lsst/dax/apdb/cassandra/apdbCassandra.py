@@ -82,7 +82,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 0, 0)
+VERSION = VersionTuple(1, 1, 0)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -639,8 +639,13 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
-        # Current time as milliseconds since epoch.
-        reassignTime = int(datetime.datetime.now(tz=datetime.UTC).timestamp() * 1000)
+        if self._schema.has_mjd_timestamps:
+            reassign_time_column = "ssObjectReassocTimeMjdTai"
+            reassignTime = astropy.time.Time.now().tai.mjd
+        else:
+            reassign_time_column = "ssObjectReassocTime"
+            # Current time as milliseconds since epoch.
+            reassignTime = int(datetime.datetime.now(tz=datetime.UTC).timestamp() * 1000)
 
         # To update a record we need to know its exact primary key (including
         # partition key) so we start by querying for diaSourceId to find the
@@ -691,7 +696,7 @@ class ApdbCassandra(Apdb):
                 table_name = context.schema.tableName(ApdbTables.DiaSource, apdb_time_part)
                 query = (
                     f'UPDATE "{self._keyspace}"."{table_name}"'
-                    ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
+                    f' SET "ssObjectId" = ?, "diaObjectId" = NULL, "{reassign_time_column}" = ?'
                     ' WHERE "apdb_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, reassignTime, apdb_part, diaSourceId)
@@ -699,7 +704,7 @@ class ApdbCassandra(Apdb):
                 table_name = context.schema.tableName(ApdbTables.DiaSource)
                 query = (
                     f'UPDATE "{self._keyspace}"."{table_name}"'
-                    ' SET "ssObjectId" = ?, "diaObjectId" = NULL, "ssObjectReassocTime" = ?'
+                    f' SET "ssObjectId" = ?, "diaObjectId" = NULL, "{reassign_time_column}" = ?'
                     ' WHERE "apdb_part" = ? AND "apdb_time_part" = ? AND "diaSourceId" = ?'
                 )
                 values = (ssObjectId, reassignTime, apdb_part, apdb_time_part, diaSourceId)
@@ -954,10 +959,16 @@ class ApdbCassandra(Apdb):
         if context.has_dia_object_last_to_partition:
             self._deleteMovingObjects(objs)
 
-        visit_time_dt = visit_time.datetime
+        if self._schema.has_mjd_timestamps:
+            validity_start_column = "validityStartMjdTai"
+            timestamp = visit_time.tai.mjd
+        else:
+            validity_start_column = "validityStart"
+            timestamp = visit_time.datetime
+
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast)
 
-        extra_columns = {"validityStart": visit_time_dt}
+        extra_columns = {validity_start_column: timestamp}
         visit_time_part = context.partitioner.time_partition(visit_time)
         time_part: int | None = visit_time_part
         if (time_partitions_range := context.time_partitions_range) is not None:
@@ -974,7 +985,7 @@ class ApdbCassandra(Apdb):
             )
 
         if replica_chunk is not None:
-            extra_columns = {"apdb_replica_chunk": replica_chunk.id, "validityStart": visit_time_dt}
+            extra_columns = {"apdb_replica_chunk": replica_chunk.id, validity_start_column: timestamp}
             table = ExtraTables.DiaObjectChunks
             if context.has_chunk_sub_partitions:
                 table = ExtraTables.DiaObjectChunks2

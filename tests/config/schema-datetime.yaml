@@ -30,16 +30,18 @@ tables:
     description: Unique id.
     mysql:datatype: BIGINT
     ivoa:ucd: meta.id;src
-  - name: validityStartMjdTai
-    "@id": "#DiaObject.validityStartMjdTai"
-    datatype: double
+  - name: validityStart
+    "@id": "#DiaObject.validityStart"
+    datatype: timestamp
     nullable: false
     description: Time when validity of this diaObject starts.
-  - name: validityEndMjdTai
-    "@id": "#DiaObject.validityEndMjdTai"
-    datatype: double
+    mysql:datatype: DATETIME
+  - name: validityEnd
+    "@id": "#DiaObject.validityEnd"
+    datatype: timestamp
     nullable: true
     description: Time when validity of this diaObject ends.
+    mysql:datatype: DATETIME
   - name: ra
     "@id": "#DiaObject.ra"
     datatype: double
@@ -68,12 +70,12 @@ tables:
     description: Total number of DiaSources associated with this DiaObject.
   primaryKey:
   - "#DiaObject.diaObjectId"
-  - "#DiaObject.validityStartMjdTai"
+  - "#DiaObject.validityStart"
   indexes:
-  - name: IDX_DiaObject_validityStartMjdTai
-    "@id": "#IDX_DiaObject_validityStartMjdTai"
+  - name: IDX_DiaObject_validityStart
+    "@id": "#IDX_DiaObject_validityStart"
     columns:
-    - "#DiaObject.validityStartMjdTai"
+    - "#DiaObject.validityStart"
 - name: SSObject
   "@id": "#SSObject"
   description: The SSObject table contains description of the Solar System (moving)
@@ -167,9 +169,9 @@ tables:
     mysql:datatype: DOUBLE
     fits:tunit: deg
     ivoa:ucd: pos.eq.dec
-  - name: ssObjectReassocTimeMjdTai
-    "@id": "#DiaSource.ssObjectReassocTimeMjdTai"
-    datatype: double
+  - name: ssObjectReassocTime
+    "@id": "#DiaSource.ssObjectReassocTime"
+    datatype: timestamp
     description: Time when this diaSource was reassociated from diaObject to ssObject
       (if such reassociation happens, otherwise NULL).
     mysql:datatype: DATETIME
@@ -189,9 +191,9 @@ tables:
     value: 0
     mysql:datatype: BIGINT
     ivoa:ucd: meta.code
-  - name: timeProcessedMjdTai
-    "@id": "#DiaSource.timeProcessedMjdTai"
-    datatype: double
+  - name: time_processed
+    "@id": "#DiaSource.time_processed"
+    datatype: timestamp
     nullable: false
     description: Time when the image was processed and this DiaSource record was generated.
   primaryKey: "#DiaSource.diaSourceId"
@@ -262,9 +264,9 @@ tables:
     value: 0
     mysql:datatype: BIGINT
     ivoa:ucd: meta.code
-  - name: timeProcessedMjdTai
-    "@id": "#DiaForcedSource.timeProcessedMjdTai"
-    datatype: double
+  - name: time_processed
+    "@id": "#DiaForcedSource.time_processed"
+    datatype: timestamp
     nullable: false
     description: Time when this record was generated.
   primaryKey:

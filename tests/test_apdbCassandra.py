@@ -34,7 +34,6 @@ Individual tests create and destroy unique keyspaces in the cluster, there is
 no need to pre-create a keyspace with predefined name.
 """
 
-import logging
 import os
 import unittest
 from typing import Any
@@ -49,8 +48,8 @@ from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
 from lsst.dax.apdb.tests.data_factory import makeObjectCatalog
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
-
-logging.basicConfig(level=logging.INFO)
+# Schema that uses `datetime` for timestamps.
+TEST_SCHEMA_DT = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-datetime.yaml")
 
 
 class ApdbCassandraMixin(cassandra_mixin.ApdbCassandraMixin):
@@ -72,9 +71,6 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     time_partition_tables = False
     time_partition_start: str | None = None
     time_partition_end: str | None = None
-    # Cassandra stores timestamps with millisecond precision internally,
-    # but pandas seem to convert them to nanosecond type.
-    timestamp_type_name = "datetime64[ns]"
     extra_chunk_columns = 2
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
@@ -131,6 +127,18 @@ class ApdbCassandraTestCaseReplica(ApdbCassandraTestCase):
 
     enable_replica = True
     meta_row_count = 4
+
+
+class ApdbCassandraTestCaseDatetimeReplica(ApdbCassandraTestCaseReplica):
+    """A test case with datetime timestamps."""
+
+    use_mjd = False
+
+    def make_instance(self, **kwargs: Any) -> ApdbConfig:
+        if "schema_file" in kwargs:
+            return super().make_instance(**kwargs)
+        else:
+            return super().make_instance(schema_file=TEST_SCHEMA_DT, **kwargs)
 
 
 class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest, unittest.TestCase):
