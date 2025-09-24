@@ -38,6 +38,7 @@ from .apdb import ApdbConfig, ApdbTables
 from .factory import make_apdb_replica
 
 if TYPE_CHECKING:
+    from .apdbUpdateRecord import ApdbUpdateRecord
     from .versionTuple import VersionTuple
 
 
@@ -248,32 +249,18 @@ class ApdbReplica(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
-        """Return the list of record updates for a table from given replica
-        chunks.
+    def getTableUpdateChunks(self, chunks: Iterable[int]) -> Iterable[ApdbUpdateRecord]:
+        """Return the list of record updates from given replica chunks.
 
         Parameters
         ----------
-        table : `ApdbTables`
-            Table for which to return the updates. Acceptable tables are
-            `ApdbTables.DiaObject`, `ApdbTables.DiaSource`, and
-            `ApdbTables.DiaForcedSource`.
         chunks : `~collections.abc.Iterable` [`int`]
             Chunk identifiers to return.
 
         Returns
         -------
-        data : `ApdbTableData`
-            Catalog containing table updates.
-
-        Notes
-        -----
-         The returned catalog will include all primary key columns,
-         ``timestamp`` column, ``apdb_replica_chunk`` column, and
-         ``update_action`` column containing a string with JSON-serialized
-         description of the update.
-
-        This part of API may not be very stable and can change before the
-        implementation finalizes.
+        records : `~collections.apdb.Iterable` [`ApdbUpdateRecord`]
+            Collection of update records. Records will be sorted according
+            their update time and update order.
         """
         raise NotImplementedError()

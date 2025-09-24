@@ -32,6 +32,7 @@ import felis.datamodel
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
+from ..apdbUpdateRecord import ApdbUpdateRecord
 from ..monitor import MonAgent
 from ..schema_model import ExtraDataTypes
 from ..timer import Timer
@@ -314,6 +315,6 @@ class ApdbCassandraReplica(ApdbReplica):
 
         return table_data
 
-    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+    def getTableUpdateChunks(self, chunks: Iterable[int]) -> Iterable[ApdbUpdateRecord]:
         # docstring is inherited from a base class
         raise NotImplementedError()

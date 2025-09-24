@@ -729,7 +729,13 @@ class ApdbSql(Apdb):
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
 
-        reassignTime = datetime.datetime.now(tz=datetime.UTC)
+        timestamp: float | datetime.datetime
+        if self._schema.has_mjd_timestamps:
+            timestamp_column = "ssObjectReassocTimeMjdTai"
+            timestamp = float(astropy.time.Time.now().tai.mjd)
+        else:
+            timestamp_column = "ssObjectReassocTime"
+            timestamp = datetime.datetime.now(tz=datetime.UTC)
 
         table = self._schema.get_table(ApdbTables.DiaSource)
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
@@ -744,7 +750,7 @@ class ApdbSql(Apdb):
                     "srcId": key,
                     "diaObjectId": 0,
                     "ssObjectId": value,
-                    "ssObjectReassocTime": reassignTime,
+                    timestamp_column: timestamp,
                 }
                 result = conn.execute(query, params)
                 if result.rowcount == 0:
