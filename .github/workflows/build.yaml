@@ -8,10 +8,20 @@ on:
 
 jobs:
   build_and_test:
+    # Cassandra tests take some time.
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+
+    services:
+      # Run cassandra from a docker image.
+      cassandra:
+        image: cassandra:4.1
+        ports:
+          - 9042:9042
+        options: --health-cmd "cqlsh --debug" --health-interval 10s --health-retries 12
 
     steps:
       - uses: actions/checkout@v4
@@ -31,12 +41,14 @@ jobs:
       - name: Update pip/wheel infrastructure
         shell: bash -l {0}
         run: |
-          mamba install -y -q pip wheel
+          conda install -y -q pip wheel
           pip install uv
 
+      # Need cassandra-driver from conda-forge where it has a patch for 3.13
       - name: Install dependencies
         shell: bash -l {0}
         run: |
+          conda install -y -q cassandra-driver
           uv pip install -r requirements.txt
 
       # We have two cores so we can speed up the testing with xdist
@@ -60,9 +72,28 @@ jobs:
       - name: Run tests
         shell: bash -l {0}
         run: |
-          pytest -r a -v -n 3 --cov=lsst.dax.apdb --cov=tests --cov-report=xml --cov-report=term --cov-branch
+          pytest -r a -v -n 3 \
+            --cov=lsst.dax.apdb --cov=tests --cov-report=xml --cov-report=term --cov-branch \
+            --junitxml=junit.xml -o junit_family=legacy
+
+      - name: Run tests with Cassandra
+        env:
+          DAX_APDB_TEST_CASSANDRA_CLUSTER: localhost
+        shell: bash -l {0}
+        run: |
+          pytest -r a -v -n 1 \
+            --cov=lsst.dax.apdb --cov=tests --cov-report=xml --cov-report=term --cov-branch --cov-append \
+            --junitxml=junit.xml -o junit_family=legacy \
+            tests/test_apdbCassandra.py tests/test_apdbCassandraAdmin.py
+
       - name: Upload coverage to codecov
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
           token: ${{ secrets.CODECOV_TOKEN }}
