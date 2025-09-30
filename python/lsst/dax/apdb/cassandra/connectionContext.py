@@ -160,6 +160,7 @@ class ConnectionContext:
             prefix=self.config.prefix,
             time_partition_tables=self.config.partitioning.time_partition_tables,
             enable_replica=self.config.enable_replica,
+            replica_skips_diaobjects=self.config.replica_skips_diaobjects,
             has_chunk_sub_partitions=self.has_chunk_sub_partitions,
             has_visit_detector_table=self.has_visit_detector_table,
         )
