@@ -32,7 +32,7 @@ from unittest.mock import patch
 import sqlalchemy
 
 import lsst.utils.tests
-from lsst.dax.apdb import Apdb, ApdbConfig, ApdbReplica, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbReplica, ApdbTables, ApdbUpdateRecord, ReplicaChunk
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.sql import ApdbSql, ApdbSqlConfig
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
@@ -77,6 +77,11 @@ class ApdbSQLTest(ApdbTest):
         assert isinstance(config, ApdbSqlConfig), "Only expect ApdbSqlConfig here"
         config.connection_config.connection_timeout = 60.0
         Apdb.from_config(config)
+
+    def store_update_records(self, apdb: Apdb, records: list[ApdbUpdateRecord], chunk: ReplicaChunk) -> None:
+        # Docstring inherited.
+        assert isinstance(apdb, ApdbSql), "Expecting ApdbSql instance"
+        apdb._storeUpdateRecords(records, chunk, store_chunk=True)
 
 
 class ApdbSQLiteTestCase(ApdbSQLTest, unittest.TestCase):

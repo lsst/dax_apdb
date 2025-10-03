@@ -131,10 +131,10 @@ class ApdbReassignDiaSourceRecord(ApdbUpdateRecord, update_type="reassign_diasou
     """ID of associated DIAObject record."""
 
     ssObjectId: int
-    """ID of SSObject to re-assing to."""
+    """ID of SSObject to re-associate to."""
 
     ssObjectReassocTimeMjdTai: float
-    """Time when DIASource was reassociated from DIAObject to SSObject."""
+    """Time when DIASource was re-associated from DIAObject to SSObject."""
 
     ra: float
     """DIASource ra, not required to be exact, but needs to be close to the

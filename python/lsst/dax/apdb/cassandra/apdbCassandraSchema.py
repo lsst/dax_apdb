@@ -107,6 +107,9 @@ class ExtraTables(enum.Enum):
     DiaForcedSourceChunks2 = "DiaForcedSourceChunks2"
     """Name of the table for DIAForcedSource chunk data."""
 
+    ApdbUpdateRecordChunks = "ApdbUpdateRecordChunks"
+    """Name of the table for ApdbUpdateRecord chunk data."""
+
     DiaSourceToPartition = "DiaSourceToPartition"
     """Maps diaSourceId to its partition values (pixel and time)."""
 
@@ -447,17 +450,51 @@ class ApdbCassandraSchema:
                 },
             )
 
+        # Table with replica chunk data for ApdbUpdateRecord.
+        columns = [
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_time_ns",
+                name="update_time_ns",
+                datatype=felis.datamodel.DataType.long,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_order",
+                name="update_order",
+                datatype=felis.datamodel.DataType.int,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_unique_id",
+                name="update_unique_id",
+                datatype=schema_model.ExtraDataTypes.UUID,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_payload",
+                name="update_payload",
+                datatype=felis.datamodel.DataType.string,
+                nullable=False,
+            ),
+        ]
+        extra_tables[ExtraTables.ApdbUpdateRecordChunks] = schema_model.Table(
+            id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}",
+            name=ExtraTables.ApdbUpdateRecordChunks.table_name(self._prefix),
+            columns=replica_chunk_columns + columns,
+            primary_key=columns[:3],
+            indexes=[],
+            constraints=[],
+            annotations={
+                "cassandra:partitioning_columns": [column.name for column in replica_chunk_columns],
+            },
+        )
+
         return extra_tables
 
     @property
     def replication_enabled(self) -> bool:
         """True when replication is enabled (`bool`)."""
         return self._enable_replica
-
-    @property
-    def has_chunk_sub_partitions(self) -> bool:
-        """True when chunk tables have sub-partitions (`bool`)."""
-        return self._has_chunk_sub_partitions
 
     def empty(self) -> bool:
         """Return True if database schema is empty.

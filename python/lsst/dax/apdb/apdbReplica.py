@@ -249,7 +249,7 @@ class ApdbReplica(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getTableUpdateChunks(self, chunks: Iterable[int]) -> Iterable[ApdbUpdateRecord]:
+    def getUpdateRecordChunks(self, chunks: Iterable[int]) -> Sequence[ApdbUpdateRecord]:
         """Return the list of record updates from given replica chunks.
 
         Parameters
@@ -259,7 +259,7 @@ class ApdbReplica(ABC):
 
         Returns
         -------
-        records : `~collections.apdb.Iterable` [`ApdbUpdateRecord`]
+        records : `~collections.abc.Sequence` [`ApdbUpdateRecord`]
             Collection of update records. Records will be sorted according
             their update time and update order.
         """

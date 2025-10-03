@@ -41,7 +41,7 @@ from typing import Any
 import astropy.time
 
 import lsst.utils.tests
-from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables
+from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables, ApdbUpdateRecord, ReplicaChunk
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
@@ -92,6 +92,11 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
     def getDiaObjects_table(self) -> ApdbTables:
         """Return type of table returned from getDiaObjects method."""
         return ApdbTables.DiaObjectLast
+
+    def store_update_records(self, apdb: Apdb, records: list[ApdbUpdateRecord], chunk: ReplicaChunk) -> None:
+        # Docstring inherited.
+        assert isinstance(apdb, ApdbCassandra), "Expecting ApdbCassandra instance"
+        apdb._storeUpdateRecords(records, chunk, store_chunk=True)
 
 
 class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):

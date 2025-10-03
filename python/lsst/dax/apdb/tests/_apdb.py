@@ -41,9 +41,12 @@ from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from .. import (
     Apdb,
     ApdbConfig,
+    ApdbReassignDiaSourceRecord,
     ApdbReplica,
     ApdbTableData,
     ApdbTables,
+    ApdbUpdateRecord,
+    ApdbWithdrawDiaSourceRecord,
     IncompatibleVersionError,
     ReplicaChunk,
     VersionTuple,
@@ -661,6 +664,75 @@ class ApdbTest(TestCaseMixin, ABC):
                 }
             )
         self.assert_catalog(res, len(sources) - 3, ApdbTables.DiaSource)
+
+    def test_storeUpdateRecord(self) -> None:
+        """Test _storeUpdateRecord() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        # Times are totally arbitrary.
+        update_time_ns1 = 2_000_000_000_000_000_000
+        update_time_ns2 = 2_000_000_001_000_000_000
+        records = [
+            ApdbReassignDiaSourceRecord(
+                update_time_ns=update_time_ns1,
+                update_order=0,
+                diaSourceId=1,
+                diaObjectId=321,
+                ssObjectId=1,
+                ssObjectReassocTimeMjdTai=60000.0,
+                ra=45.0,
+                dec=-45.0,
+            ),
+            ApdbWithdrawDiaSourceRecord(
+                update_time_ns=update_time_ns1,
+                update_order=1,
+                diaSourceId=123456,
+                diaObjectId=321,
+                timeWithdrawnMjdTai=61000.0,
+                ra=45.0,
+                dec=-45.0,
+            ),
+            ApdbReassignDiaSourceRecord(
+                update_time_ns=update_time_ns1,
+                update_order=3,
+                diaSourceId=2,
+                diaObjectId=3,
+                ssObjectId=3,
+                ssObjectReassocTimeMjdTai=60000.0,
+                ra=45.0,
+                dec=-45.0,
+            ),
+            ApdbWithdrawDiaSourceRecord(
+                update_time_ns=update_time_ns2,
+                update_order=0,
+                diaSourceId=123456,
+                diaObjectId=321,
+                timeWithdrawnMjdTai=61000.0,
+                ra=45.0,
+                dec=-45.0,
+            ),
+        ]
+
+        update_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+        chunk = ReplicaChunk.make_replica_chunk(update_time, 600)
+
+        if not self.enable_replica:
+            with self.assertRaises(TypeError):
+                self.store_update_records(apdb, records, chunk)
+        else:
+            self.store_update_records(apdb, records, chunk)
+
+            apdb_replica = ApdbReplica.from_config(config)
+            records_returned = apdb_replica.getUpdateRecordChunks([chunk.id])
+
+            # Input records are ordered, output will be ordered too.
+            self.assertEqual(records_returned, records)
+
+    @abstractmethod
+    def store_update_records(self, apdb: Apdb, records: list[ApdbUpdateRecord], chunk: ReplicaChunk) -> None:
+        """Store update records in database, must be overriden in subclass."""
+        raise NotImplementedError()
 
     def test_midpointMjdTai_src(self) -> None:
         """Test for time filtering of DiaSources."""
