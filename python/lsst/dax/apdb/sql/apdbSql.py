@@ -102,7 +102,7 @@ def _make_midpointMjdTai_start(visit_time: astropy.time.Time, months: int) -> fl
     """
     # TODO: Use of MJD must be consistent with the code in ap_association
     # (see DM-31996)
-    return float(visit_time.mjd - months * 30)
+    return float(visit_time.tai.mjd) - months * 30
 
 
 def _onSqlite3Connect(
@@ -566,40 +566,58 @@ class ApdbSql(Apdb):
         return self._fix_result_timestamps(objects)
 
     def getDiaSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
+        self,
+        region: Region,
+        object_ids: Iterable[int] | None,
+        visit_time: astropy.time.Time,
+        start_time: astropy.time.Time | None = None,
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
-        if self.config.read_sources_months == 0:
+        if start_time is None and self.config.read_sources_months == 0:
             _LOG.debug("Skip DiaSources fetching")
             return None
 
+        if start_time is None:
+            start_time_mjdTai = _make_midpointMjdTai_start(visit_time, self.config.read_sources_months)
+        else:
+            start_time_mjdTai = float(start_time.tai.mjd)
+        _LOG.debug("start_time_mjdTai = %.6f", start_time_mjdTai)
+
         if object_ids is None:
             # region-based select
-            return self._getDiaSourcesInRegion(region, visit_time)
+            return self._getDiaSourcesInRegion(region, start_time_mjdTai)
         else:
-            return self._getDiaSourcesByIDs(list(object_ids), visit_time)
+            return self._getDiaSourcesByIDs(list(object_ids), start_time_mjdTai)
 
     def getDiaForcedSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
+        self,
+        region: Region,
+        object_ids: Iterable[int] | None,
+        visit_time: astropy.time.Time,
+        start_time: astropy.time.Time | None = None,
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
-        if self.config.read_forced_sources_months == 0:
+        if start_time is None and self.config.read_forced_sources_months == 0:
             _LOG.debug("Skip DiaForceSources fetching")
             return None
 
         if object_ids is None:
-            # This implementation does not support region-based selection.
+            # This implementation does not support region-based selection. In
+            # the past DiaForcedSource schema did not have ra/dec columns (it
+            # had x/y columns). ra/dec were added at some point, so we could
+            # add pixelOd column to this table if/when needed.
             raise NotImplementedError("Region-based selection is not supported")
 
         # TODO: DateTime.MJD must be consistent with code in ap_association,
         # alternatively we can fill midpointMjdTai ourselves in store()
-        midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_forced_sources_months)
-        _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
+        if start_time is None:
+            start_time_mjdTai = _make_midpointMjdTai_start(visit_time, self.config.read_forced_sources_months)
+        else:
+            start_time_mjdTai = float(start_time.tai.mjd)
+        _LOG.debug("start_time_mjdTai = %.6f", start_time_mjdTai)
 
         with self._timer("select_time", tags={"table": "DiaForcedSource"}) as timer:
-            sources = self._getSourcesByIDs(
-                ApdbTables.DiaForcedSource, list(object_ids), midpointMjdTai_start
-            )
+            sources = self._getSourcesByIDs(ApdbTables.DiaForcedSource, list(object_ids), start_time_mjdTai)
             timer.add_values(row_count=len(sources))
 
         _LOG.debug("found %s DiaForcedSources", len(sources))
@@ -770,32 +788,27 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
         return ApdbSqlAdmin(self.pixelator)
 
-    def _getDiaSourcesInRegion(self, region: Region, visit_time: astropy.time.Time) -> pandas.DataFrame:
+    def _getDiaSourcesInRegion(self, region: Region, start_time_mjdTai: float) -> pandas.DataFrame:
         """Return catalog of DiaSource instances from given region.
 
         Parameters
         ----------
         region : `lsst.sphgeom.Region`
             Region to search for DIASources.
-        visit_time : `astropy.time.Time`
-            Time of the current visit.
+        start_time_mjdTai : `float`
+            Lower bound of time window for the query.
 
         Returns
         -------
         catalog : `pandas.DataFrame`
             Catalog containing DiaSource records.
         """
-        # TODO: DateTime.MJD must be consistent with code in ap_association,
-        # alternatively we can fill midpointMjdTai ourselves in store()
-        midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_sources_months)
-        _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
-
         table = self._schema.get_table(ApdbTables.DiaSource)
         columns = self._schema.get_apdb_columns(ApdbTables.DiaSource)
         query = sql.select(*columns)
 
         # build selection
-        time_filter = table.columns["midpointMjdTai"] > midpointMjdTai_start
+        time_filter = table.columns["midpointMjdTai"] > start_time_mjdTai
         where = sql.expression.and_(self._filterRegion(table, region), time_filter)
         query = query.where(where)
 
@@ -807,28 +820,23 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaSources", len(sources))
         return self._fix_result_timestamps(sources)
 
-    def _getDiaSourcesByIDs(self, object_ids: list[int], visit_time: astropy.time.Time) -> pandas.DataFrame:
+    def _getDiaSourcesByIDs(self, object_ids: list[int], start_time_mjdTai: float) -> pandas.DataFrame:
         """Return catalog of DiaSource instances given set of DiaObject IDs.
 
         Parameters
         ----------
         object_ids :
             Collection of DiaObject IDs
-        visit_time : `astropy.time.Time`
-            Time of the current visit.
+        start_time_mjdTai : `float`
+            Lower bound of time window for the query.
 
         Returns
         -------
         catalog : `pandas.DataFrame`
-            Catalog contaning DiaSource records.
+            Catalog containing DiaSource records.
         """
-        # TODO: DateTime.MJD must be consistent with code in ap_association,
-        # alternatively we can fill midpointMjdTai ourselves in store()
-        midpointMjdTai_start = _make_midpointMjdTai_start(visit_time, self.config.read_sources_months)
-        _LOG.debug("midpointMjdTai_start = %.6f", midpointMjdTai_start)
-
         with self._timer("select_time", tags={"table": "DiaSource"}) as timer:
-            sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, midpointMjdTai_start)
+            sources = self._getSourcesByIDs(ApdbTables.DiaSource, object_ids, start_time_mjdTai)
             timer.add_values(row_count=len(sources))
 
         _LOG.debug("found %s DiaSources", len(sources))

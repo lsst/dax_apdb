@@ -470,32 +470,48 @@ class ApdbCassandra(Apdb):
         return objects
 
     def getDiaSources(
-        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
+        self,
+        region: sphgeom.Region,
+        object_ids: Iterable[int] | None,
+        visit_time: astropy.time.Time,
+        start_time: astropy.time.Time | None = None,
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         context = self._context
         config = context.config
 
         months = config.read_sources_months
-        if months == 0:
+        if start_time is None and months == 0:
             return None
-        mjd_end = float(visit_time.mjd)
-        mjd_start = mjd_end - months * 30
+
+        mjd_end = float(visit_time.tai.mjd)
+        if start_time is None:
+            mjd_start = mjd_end - months * 30
+        else:
+            mjd_start = float(start_time.tai.mjd)
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaSource)
 
     def getDiaForcedSources(
-        self, region: sphgeom.Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
+        self,
+        region: sphgeom.Region,
+        object_ids: Iterable[int] | None,
+        visit_time: astropy.time.Time,
+        start_time: astropy.time.Time | None = None,
     ) -> pandas.DataFrame | None:
         # docstring is inherited from a base class
         context = self._context
         config = context.config
 
         months = config.read_forced_sources_months
-        if months == 0:
+        if start_time is None and months == 0:
             return None
-        mjd_end = float(visit_time.mjd)
-        mjd_start = mjd_end - months * 30
+
+        mjd_end = float(visit_time.tai.mjd)
+        if start_time is None:
+            mjd_start = mjd_end - months * 30
+        else:
+            mjd_start = float(start_time.tai.mjd)
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
@@ -530,8 +546,8 @@ class ApdbCassandra(Apdb):
 
         # Sources are partitioned on their midPointMjdTai. To avoid precision
         # issues add some fuzzines to visit time.
-        mjd_start = float(visit_time.mjd) - 1.0 / 24
-        mjd_end = float(visit_time.mjd) + 1.0 / 24
+        mjd_start = float(visit_time.tai.mjd) - 1.0 / 24
+        mjd_end = float(visit_time.tai.mjd) + 1.0 / 24
 
         statements: list[tuple] = []
         for table_type in ApdbTables.DiaSource, ApdbTables.DiaForcedSource:
@@ -641,7 +657,7 @@ class ApdbCassandra(Apdb):
 
         if self._schema.has_mjd_timestamps:
             reassign_time_column = "ssObjectReassocTimeMjdTai"
-            reassignTime = astropy.time.Time.now().tai.mjd
+            reassignTime = float(astropy.time.Time.now().tai.mjd)
         else:
             reassign_time_column = "ssObjectReassocTime"
             # Current time as milliseconds since epoch.
@@ -959,16 +975,17 @@ class ApdbCassandra(Apdb):
         if context.has_dia_object_last_to_partition:
             self._deleteMovingObjects(objs)
 
+        timestamp: float | datetime.datetime
         if self._schema.has_mjd_timestamps:
             validity_start_column = "validityStartMjdTai"
-            timestamp = visit_time.tai.mjd
+            timestamp = float(visit_time.tai.mjd)
         else:
             validity_start_column = "validityStart"
             timestamp = visit_time.datetime
 
         self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast)
 
-        extra_columns = {validity_start_column: timestamp}
+        extra_columns: dict[str, Any] = {validity_start_column: timestamp}
         visit_time_part = context.partitioner.time_partition(visit_time)
         time_part: int | None = visit_time_part
         if (time_partitions_range := context.time_partitions_range) is not None:

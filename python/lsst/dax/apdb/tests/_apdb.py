@@ -674,6 +674,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time0 = astropy.time.Time("2021-12-26T23:59:59", format="isot", scale="tai")
         visit_time1 = astropy.time.Time("2021-12-27T00:00:01", format="isot", scale="tai")
         visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
+        one_sec = astropy.time.TimeDelta(1.0, format="sec")
 
         objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
@@ -699,6 +700,17 @@ class ApdbTest(TestCaseMixin, ABC):
         res = apdb.getDiaSources(region, oids, visit_time2)
         self.assert_catalog(res, 0, ApdbTables.DiaSource)
 
+        # Use explicit start time argument instead of 12 month window, visit
+        # time does not matter in this case, set it to before all data.
+        res = apdb.getDiaSources(region, oids, src_time1 - one_sec, src_time1 - one_sec)
+        self.assert_catalog(res, 200, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSources(region, oids, src_time1 - one_sec, src_time2 - one_sec)
+        self.assert_catalog(res, 100, ApdbTables.DiaSource)
+
+        res = apdb.getDiaSources(region, oids, src_time1 - one_sec, src_time2 + one_sec)
+        self.assert_catalog(res, 0, ApdbTables.DiaSource)
+
     def test_midpointMjdTai_fsrc(self) -> None:
         """Test for time filtering of DiaForcedSources."""
         config = self.make_instance()
@@ -710,6 +722,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time0 = astropy.time.Time("2021-12-26T23:59:59", format="isot", scale="tai")
         visit_time1 = astropy.time.Time("2021-12-27T00:00:01", format="isot", scale="tai")
         visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
+        one_sec = astropy.time.TimeDelta(1.0, format="sec")
 
         objects = makeObjectCatalog(region, 100, visit_time0)
         oids = list(objects["diaObjectId"])
@@ -733,6 +746,17 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # reading at later time of last save should only read a subset
         res = apdb.getDiaForcedSources(region, oids, visit_time2)
+        self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
+
+        # Use explicit start time argument instead of 12 month window, visit
+        # time does not matter in this case, set it to before all data.
+        res = apdb.getDiaForcedSources(region, oids, src_time1 - one_sec, src_time1 - one_sec)
+        self.assert_catalog(res, 200, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSources(region, oids, src_time1 - one_sec, src_time2 - one_sec)
+        self.assert_catalog(res, 100, ApdbTables.DiaForcedSource)
+
+        res = apdb.getDiaForcedSources(region, oids, src_time1 - one_sec, src_time2 + one_sec)
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
     def test_metadata(self) -> None:
