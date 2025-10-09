@@ -141,7 +141,11 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
+        self,
+        region: Region,
+        object_ids: Iterable[int] | None,
+        visit_time: astropy.time.Time,
+        start_time: astropy.time.Time | None = None,
     ) -> pandas.DataFrame | None:
         """Return catalog of DiaSource instances from a given region.
 
@@ -155,13 +159,19 @@ class Apdb(ABC):
             list is empty then empty catalog is returned with a correct
             schema.
         visit_time : `astropy.time.Time`
-            Time of the current visit.
+            Time of the current visit. If APDB contains records later than this
+            time they may also be returned.
+        start_time : `astropy.time.Time`, optional
+            Lower bound of time window for the query. If not specified then
+            it is calculated using ``visit_time`` and
+            ``read_forced_sources_months`` configuration parameter.
 
         Returns
         -------
         catalog : `pandas.DataFrame`, or `None`
             Catalog containing DiaSource records. `None` is returned if
-            ``read_sources_months`` configuration parameter is set to 0.
+            ``start_time`` is not specified and ``read_sources_months``
+            configuration parameter is set to 0.
 
         Notes
         -----
@@ -177,7 +187,11 @@ class Apdb(ABC):
 
     @abstractmethod
     def getDiaForcedSources(
-        self, region: Region, object_ids: Iterable[int] | None, visit_time: astropy.time.Time
+        self,
+        region: Region,
+        object_ids: Iterable[int] | None,
+        visit_time: astropy.time.Time,
+        start_time: astropy.time.Time | None = None,
     ) -> pandas.DataFrame | None:
         """Return catalog of DiaForcedSource instances from a given region.
 
@@ -189,15 +203,21 @@ class Apdb(ABC):
             List of DiaObject IDs to further constrain the set of returned
             sources. If list is empty then empty catalog is returned with a
             correct schema. If `None` then returned sources are not
-            constrained. Some implementations may not support latter case.
+            constrained.
         visit_time : `astropy.time.Time`
-            Time of the current visit.
+            Time of the current visit. If APDB contains records later than this
+            time they may also be returned.
+        start_time : `astropy.time.Time`, optional
+            Lower bound of time window for the query. If not specified then
+            it is calculated using ``visit_time`` and
+            ``read_forced_sources_months`` configuration parameter.
 
         Returns
         -------
         catalog : `pandas.DataFrame`, or `None`
-            Catalog containing DiaSource records. `None` is returned if
-            ``read_forced_sources_months`` configuration parameter is set to 0.
+            Catalog containing DiaForcedSource records. `None` is returned if
+            ``start_time`` is not specified and ``read_forced_sources_months``
+            configuration parameter is set to 0.
 
         Raises
         ------
