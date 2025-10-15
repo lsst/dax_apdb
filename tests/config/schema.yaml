@@ -319,6 +319,11 @@ tables:
     nullable: false
     description: Unique id.
     ivoa:ucd: meta.id;src
+  - name: validityStartMjdTai
+    "@id": "#DiaObjectLast.validityStartMjdTai"
+    datatype: double
+    nullable: false
+    description: Time when validity of this diaObject starts.
   - name: ra
     "@id": "#DiaObjectLast.ra"
     datatype: double

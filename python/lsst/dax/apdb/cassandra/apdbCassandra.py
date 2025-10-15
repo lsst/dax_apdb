@@ -82,7 +82,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 1, 0)
+VERSION = VersionTuple(1, 2, 0)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -983,9 +983,14 @@ class ApdbCassandra(Apdb):
             validity_start_column = "validityStart"
             timestamp = visit_time.datetime
 
-        self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast)
+        # DiaObjectLast did not have this column in the past.
+        extra_columns: dict[str, Any] = {}
+        if context.schema.check_column(ApdbTables.DiaObjectLast, validity_start_column):
+            extra_columns[validity_start_column] = timestamp
 
-        extra_columns: dict[str, Any] = {validity_start_column: timestamp}
+        self._storeObjectsPandas(objs, ApdbTables.DiaObjectLast, extra_columns=extra_columns)
+
+        extra_columns[validity_start_column] = timestamp
         visit_time_part = context.partitioner.time_partition(visit_time)
         time_part: int | None = visit_time_part
         if (time_partitions_range := context.time_partitions_range) is not None:

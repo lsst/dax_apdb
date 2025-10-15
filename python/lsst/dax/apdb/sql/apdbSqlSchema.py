@@ -285,6 +285,30 @@ class ApdbSqlSchema(ApdbSchema):
         except LookupError:
             raise ValueError(f"Table type {table_enum} does not exist in the schema") from None
 
+    def check_column(self, table_enum: ApdbTables | ExtraTables, column: str) -> bool:
+        """Check for the existence of the column in a given table, checking is
+        done against database, not APDB schema.
+
+        Parameters
+        ----------
+        table_enum : `ApdbTables` or `ExtraTables`
+            Table to check for a column.
+        column : `str`
+            Name of the column to check.
+
+        Returns
+        -------
+        exists : `bool`
+            True if column exists, False otherwise.
+        """
+        inspector = sqlalchemy.inspect(self._engine)
+        table_name = table_enum.table_name(self._prefix)
+        columns = inspector.get_columns(table_name, schema=self._metadata.schema)
+        for col in columns:
+            if col["name"] == column:
+                return True
+        return False
+
     def get_apdb_columns(self, table_enum: ApdbTables | ExtraTables) -> list[sqlalchemy.schema.Column]:
         """Return list of columns defined for a table in APDB schema.
 

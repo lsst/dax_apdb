@@ -533,6 +533,43 @@ class ApdbCassandraSchema:
             # Do not check that they exist, we know that they should.
             return {table_enum: [table_enum.table_name(self._prefix)] for table_enum in args}
 
+    def check_column(self, table_enum: ApdbTables | ExtraTables, column: str) -> bool:
+        """Check for the existence of the column in a given table.
+
+        Parameters
+        ----------
+        table_enum : `ApdbTables` or `ExtraTables`
+            Table to check for a column.
+        column : `str`
+            Name of the column to check.
+
+        Returns
+        -------
+        exists : `bool`
+            True if column exists, False otherwise.
+        """
+        if self._time_partition_tables and table_enum in self._time_partitioned_tables:
+            query = (
+                "SELECT table_name FROM system_schema.columns WHERE keyspace_name = %s AND column_name = %s "
+                "ALLOW FILTERING"
+            )
+            result = self._session.execute(query, (self._keyspace, column))
+            base_name = table_enum.table_name(self._prefix)
+            for row in result.all():
+                table_name = row[0]
+                if table_name.startswith(f"{base_name}_"):
+                    return True
+            return False
+        else:
+            table_name = table_enum.table_name(self._prefix)
+            query = (
+                "SELECT column_name FROM system_schema.columns "
+                "WHERE keyspace_name = %s AND table_name = %s AND column_name = %s"
+            )
+            result = self._session.execute(query, (self._keyspace, table_name, column))
+            row = result.one()
+            return row is not None
+
     def tableName(self, table_name: ApdbTables | ExtraTables, time_partition: int | None = None) -> str:
         """Return Cassandra table name for APDB table.
 

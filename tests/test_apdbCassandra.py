@@ -134,6 +134,12 @@ class ApdbCassandraTestCaseDatetimeReplica(ApdbCassandraTestCaseReplica):
 
     use_mjd = False
 
+    def setUp(self) -> None:
+        super().setUp()
+        # Schema for datetime case is also missing a validityTime column in
+        # DiaObjectLast table.
+        self.table_column_count[ApdbTables.DiaObjectLast] = 4
+
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         if "schema_file" in kwargs:
             return super().make_instance(**kwargs)
