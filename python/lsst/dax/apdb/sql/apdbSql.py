@@ -70,7 +70,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 1, 0)
+VERSION = VersionTuple(1, 2, 0)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -969,6 +969,9 @@ class ApdbSql(Apdb):
             # Insert and replace all records in LAST table.
             table = self._schema.get_table(ApdbTables.DiaObjectLast)
 
+            # DiaObjectLast did not have this column in the past.
+            use_validity_start = self._schema.check_column(ApdbTables.DiaObjectLast, validity_start_column)
+
             # Drop the previous objects (pandas cannot upsert).
             query = table.delete().where(table.columns["diaObjectId"].in_(ids))
 
@@ -979,8 +982,19 @@ class ApdbSql(Apdb):
 
             # DiaObjectLast is a subset of DiaObject, strip missing columns
             last_column_names = [column.name for column in table.columns]
+            if validity_start_column in last_column_names and validity_start_column not in objs.columns:
+                last_column_names.remove(validity_start_column)
             last_objs = objs[last_column_names]
             last_objs = _coerce_uint64(last_objs)
+
+            # Fill validityStart, only when it is in the schema.
+            if use_validity_start:
+                if validity_start_column in last_objs:
+                    last_objs[validity_start_column] = timestamp
+                else:
+                    extra_column = pandas.Series([timestamp] * len(last_objs), name=validity_start_column)
+                    last_objs.set_index(extra_column.index, inplace=True)
+                    last_objs = pandas.concat([last_objs, extra_column], axis="columns")
 
             with self._timer("insert_time", tags={"table": "DiaObjectLast"}) as timer:
                 last_objs.to_sql(

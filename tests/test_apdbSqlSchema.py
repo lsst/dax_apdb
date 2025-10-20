@@ -46,7 +46,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
         ApdbTables.DiaObject: 7,
-        ApdbTables.DiaObjectLast: 4,
+        ApdbTables.DiaObjectLast: 5,
         ApdbTables.DiaSource: 12,
         ApdbTables.DiaForcedSource: 8,
         ApdbTables.DiaObject_To_Object_Match: 3,
