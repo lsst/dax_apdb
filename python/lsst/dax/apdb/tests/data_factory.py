@@ -190,6 +190,9 @@ def makeSourceCatalog(
     """
     nrows = len(objects)
     midpointMjdTai = visit_time.mjd
+    centroid_flag: list[bool | None] = [True] * nrows
+    if nrows > 1:
+        centroid_flag[-1] = None
     df = pandas.DataFrame(
         {
             "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
@@ -200,7 +203,7 @@ def makeSourceCatalog(
             "ra": objects["ra"],
             "dec": objects["dec"],
             "midpointMjdTai": numpy.full(nrows, midpointMjdTai, dtype=numpy.float64),
-            "flags": numpy.full(nrows, 0, dtype=numpy.int64),
+            "centroid_flag": pandas.Series(centroid_flag, dtype="boolean"),
             "ssObjectId": pandas.NA,
             _makeTimestampColumn("time_processed", use_mjd): makeTimestampNow(use_mjd),
         }
