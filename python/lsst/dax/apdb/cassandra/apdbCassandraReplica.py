@@ -24,7 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbCassandraReplica"]
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
 import astropy.time
@@ -32,6 +32,7 @@ import felis.datamodel
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
+from ..apdbUpdateRecord import ApdbUpdateRecord
 from ..monitor import MonAgent
 from ..schema_model import ExtraDataTypes
 from ..timer import Timer
@@ -50,7 +51,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 1, 0)
+VERSION = VersionTuple(1, 1, 1)
 """Version for the code controlling replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -89,6 +90,11 @@ class ApdbCassandraReplica(ApdbReplica):
     def hasChunkSubPartitions(cls, version: VersionTuple) -> bool:
         """Return True if replica chunk tables have sub-partitions."""
         return version >= VersionTuple(1, 1, 0)
+
+    @classmethod
+    def hasUpdateRecordChunks(cls, version: VersionTuple) -> bool:
+        """Return True if ApdbUpdateRecordChunks should exists."""
+        return version >= VersionTuple(1, 1, 1)
 
     def getReplicaChunks(self) -> list[ReplicaChunk] | None:
         # docstring is inherited from a base class
@@ -144,7 +150,7 @@ class ApdbCassandraReplica(ApdbReplica):
         chunk_table_params: list[tuple] = []
         for chunk in chunks:
             repl_table_params.append((partition, chunk))
-            if context.schema.has_chunk_sub_partitions:
+            if context.has_chunk_sub_partitions:
                 for subchunk in range(config.replica_sub_chunk_count):
                     chunk_table_params.append((chunk, subchunk))
             else:
@@ -165,11 +171,13 @@ class ApdbCassandraReplica(ApdbReplica):
             timer.add_values(row_count=len(queries))
 
         # Also remove those chunk_ids from Dia*Chunks tables.
-        tables = list(ExtraTables.replica_chunk_tables(context.schema.has_chunk_sub_partitions).values())
+        tables = list(ExtraTables.replica_chunk_tables(context.has_chunk_sub_partitions).values())
+        if context.has_update_record_chunks_table:
+            tables.append(ExtraTables.ApdbUpdateRecordChunks)
         for table in tables:
             table_name = context.schema.tableName(table)
             query = f'DELETE FROM "{config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
-            if context.schema.has_chunk_sub_partitions:
+            if context.has_chunk_sub_partitions:
                 query += " AND apdb_replica_subchunk = ?"
             statement = context.preparer.prepare(query)
 
@@ -195,7 +203,7 @@ class ApdbCassandraReplica(ApdbReplica):
         # chunk table (e.g. DiaObjectChunks or DiaObjectChunks2). Chunk table
         # has a column which will be set to true for new table.
         has_chunk_sub_partitions: dict[int, bool] = {}
-        if context.schema.has_chunk_sub_partitions:
+        if context.has_chunk_sub_partitions:
             table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
             chunks_str = ",".join(str(chunk_id) for chunk_id in chunks)
             query = (
@@ -214,12 +222,12 @@ class ApdbCassandraReplica(ApdbReplica):
             has_chunk_sub_partitions = dict.fromkeys(chunks, False)
 
         # Check what kind of tables we want to query, if chunk list is empty
-        # then use tbales which should exist in the schema.
+        # then use tables which should exist in the schema.
         if has_chunk_sub_partitions:
             have_subchunks = any(has_chunk_sub_partitions.values())
             have_non_subchunks = not all(has_chunk_sub_partitions.values())
         else:
-            have_subchunks = context.schema.has_chunk_sub_partitions
+            have_subchunks = context.has_chunk_sub_partitions
             have_non_subchunks = not have_subchunks
 
         # NOTE: if an existing database is migrated and has both types of chunk
@@ -314,6 +322,48 @@ class ApdbCassandraReplica(ApdbReplica):
 
         return table_data
 
-    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+    def getUpdateRecordChunks(self, chunks: Iterable[int]) -> Sequence[ApdbUpdateRecord]:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+        context = self._apdb._context
+        config = context.config
+
+        if not context.schema.replication_enabled:
+            raise ValueError("APDB is not configured for replication")
+
+        table_name = context.schema.tableName(ExtraTables.ApdbUpdateRecordChunks)
+
+        records = []
+        if context.has_chunk_sub_partitions:
+            subchunks = ",".join(str(val) for val in range(config.replica_sub_chunk_count))
+            query = (
+                f'SELECT * FROM "{config.keyspace}"."{table_name}" '
+                f"WHERE apdb_replica_chunk = %s AND apdb_replica_subchunk IN ({subchunks})"
+            )
+
+            with self._timer("select_update_record_time", tags={"table": table_name}) as timer:
+                for chunk in chunks:
+                    result = context.session.execute(query, [chunk])
+                    for row in result:
+                        records.append(
+                            ApdbUpdateRecord.from_json(
+                                row.update_time_ns, row.update_order, row.update_payload
+                            )
+                        )
+                timer.add_values(row_count=len(records))
+
+        else:
+            chunks_str = ",".join(str(val) for val in chunks)
+            query = (
+                f'SELECT * FROM "{config.keyspace}"."{table_name}" WHERE apdb_replica_chunk IN ({chunks_str})'
+            )
+
+            with self._timer("select_update_record_time", tags={"table": table_name}) as timer:
+                result = context.session.execute(query)
+                for row in result:
+                    records.append(
+                        ApdbUpdateRecord.from_json(row.update_time_ns, row.update_order, row.update_payload)
+                    )
+                timer.add_values(row_count=len(records))
+
+        records.sort()
+        return records

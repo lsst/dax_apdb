@@ -132,9 +132,13 @@ class ConnectionContext:
         # Since replica version 1.1.0 we use finer partitioning for replica
         # chunk tables.
         self.has_chunk_sub_partitions = False
+        self.has_update_record_chunks_table = False
         if self.config.enable_replica:
             assert self.db_versions.replica_version is not None, "Replica version must be defined"
             self.has_chunk_sub_partitions = ApdbCassandraReplica.hasChunkSubPartitions(
+                self.db_versions.replica_version
+            )
+            self.has_update_record_chunks_table = ApdbCassandraReplica.hasUpdateRecordChunks(
                 self.db_versions.replica_version
             )
 

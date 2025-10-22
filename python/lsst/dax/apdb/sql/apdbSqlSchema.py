@@ -60,6 +60,9 @@ class ExtraTables(enum.Enum):
     DiaForcedSourceChunks = "DiaForcedSourceChunks"
     """Name of the table for DIAForcedSource chunk data."""
 
+    ApdbUpdateRecordChunks = "ApdbUpdateRecordChunks"
+    """Name of the table for ApdbUpdateRecord chunk data."""
+
     def table_name(self, prefix: str = "") -> str:
         """Return full table name."""
         return prefix + self.value
@@ -421,6 +424,49 @@ class ApdbSqlSchema(ApdbSchema):
                 constraints=constraints,
             )
             tables[table_enum] = table
+
+        # ApdbUpdateRecordChunks table.
+        table_name = ExtraTables.ApdbUpdateRecordChunks.table_name(self._prefix)
+        columns = [
+            schema_model.Column(
+                name="apdb_replica_chunk",
+                id=f"#{table_name}.apdb_replica_chunk",
+                datatype=felis.datamodel.DataType.long,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_time_ns",
+                name="update_time_ns",
+                datatype=felis.datamodel.DataType.long,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_order",
+                name="update_order",
+                datatype=felis.datamodel.DataType.int,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_unique_id",
+                name="update_unique_id",
+                datatype=schema_model.ExtraDataTypes.UUID,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id=f"#{ExtraTables.ApdbUpdateRecordChunks.value}.update_payload",
+                name="update_payload",
+                datatype=felis.datamodel.DataType.string,
+                nullable=False,
+            ),
+        ]
+        tables[ExtraTables.ApdbUpdateRecordChunks] = schema_model.Table(
+            name=table_name,
+            id=f"#{table_name}",
+            columns=columns,
+            primary_key=columns[:4],
+            indexes=[],
+            constraints=[],
+        )
 
         return tables
 

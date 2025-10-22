@@ -26,6 +26,7 @@ __all__ = ["ApdbCassandra"]
 import datetime
 import logging
 import random
+import uuid
 import warnings
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Set
@@ -77,6 +78,7 @@ from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
     from ..apdbMetadata import ApdbMetadata
+    from ..apdbUpdateRecord import ApdbUpdateRecord
 
 _LOG = logging.getLogger(__name__)
 
@@ -629,7 +631,7 @@ class ApdbCassandra(Apdb):
         replica_chunk: ReplicaChunk | None = None
         if context.schema.replication_enabled:
             replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, config.replica_chunk_seconds)
-            self._storeReplicaChunk(replica_chunk, visit_time)
+            self._storeReplicaChunk(replica_chunk)
 
         # fill region partition column for DiaObjects
         objects = self._add_apdb_part(objects)
@@ -844,7 +846,7 @@ class ApdbCassandra(Apdb):
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
 
-    def _storeReplicaChunk(self, replica_chunk: ReplicaChunk, visit_time: astropy.time.Time) -> None:
+    def _storeReplicaChunk(self, replica_chunk: ReplicaChunk) -> None:
         context = self._context
         config = context.config
 
@@ -1260,6 +1262,73 @@ class ApdbCassandra(Apdb):
         with self._timer("insert_time", tags={"table": table_name.name}) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(records), num_batches=len(queries))
+
+    def _storeUpdateRecords(
+        self, records: Iterable[ApdbUpdateRecord], chunk: ReplicaChunk, *, store_chunk: bool = False
+    ) -> None:
+        """Store ApdbUpdateRecords in the replica table for those records.
+
+        Parameters
+        ----------
+        records : `list` [`ApdbUpdateRecord`]
+            Records to store.
+        chunk : `ReplicaChunk`
+            Replica chunk for these records.
+        store_chunk : `bool`
+            If True then also store replica chunk.
+
+        Raises
+        ------
+        TypeError
+            Raised if replication is not enabled for this instance.
+        """
+        context = self._context
+        config = context.config
+
+        if not context.schema.replication_enabled:
+            raise TypeError("Replication is not enabled for this APDB instance.")
+
+        if store_chunk:
+            self._storeReplicaChunk(chunk)
+
+        apdb_replica_chunk = chunk.id
+        # Do not use unique_if from ReplicaChunk as it could be reused in
+        # multiple calls to this method.
+        update_unique_id = uuid.uuid4()
+
+        rows = []
+        for record in records:
+            rows.append(
+                [
+                    apdb_replica_chunk,
+                    record.update_time_ns,
+                    record.update_order,
+                    update_unique_id,
+                    record.to_json(),
+                ]
+            )
+        columns = [
+            "apdb_replica_chunk",
+            "update_time_ns",
+            "update_order",
+            "update_unique_id",
+            "update_payload",
+        ]
+        if context.has_chunk_sub_partitions:
+            subchunk = random.randrange(config.replica_sub_chunk_count)
+            for row in rows:
+                row.append(subchunk)
+            columns.append("apdb_replica_subchunk")
+
+        table_name = context.schema.tableName(ExtraTables.ApdbUpdateRecordChunks)
+        placeholders = ", ".join(["%s"] * len(columns))
+        columns_str = ", ".join(columns)
+        query = f'INSERT INTO "{self._keyspace}"."{table_name}" ({columns_str}) VALUES ({placeholders})'
+        queries = [(query, row) for row in rows]
+
+        with self._timer("store_update_record") as timer:
+            execute_concurrent(context.session, queries, execution_profile="write")
+            timer.add_values(row_count=len(queries))
 
     def _add_apdb_part(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Calculate spatial partition for each record and add it to a

@@ -28,6 +28,7 @@ __all__ = ["ApdbSql"]
 import datetime
 import logging
 import urllib.parse
+import uuid
 import warnings
 from collections.abc import Iterable, Mapping, MutableMapping
 from contextlib import closing
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     import sqlite3
 
     from ..apdbMetadata import ApdbMetadata
+    from ..apdbUpdateRecord import ApdbUpdateRecord
 
 _LOG = logging.getLogger(__name__)
 
@@ -679,7 +681,7 @@ class ApdbSql(Apdb):
             replica_chunk: ReplicaChunk | None = None
             if self._schema.replication_enabled:
                 replica_chunk = ReplicaChunk.make_replica_chunk(visit_time, self.config.replica_chunk_seconds)
-                self._storeReplicaChunk(replica_chunk, visit_time, connection)
+                self._storeReplicaChunk(replica_chunk, connection)
 
             # fill pixelId column for DiaObjects
             objects = self._add_spatial_index(objects)
@@ -729,7 +731,13 @@ class ApdbSql(Apdb):
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
 
-        reassignTime = datetime.datetime.now(tz=datetime.UTC)
+        timestamp: float | datetime.datetime
+        if self._schema.has_mjd_timestamps:
+            timestamp_column = "ssObjectReassocTimeMjdTai"
+            timestamp = float(astropy.time.Time.now().tai.mjd)
+        else:
+            timestamp_column = "ssObjectReassocTime"
+            timestamp = datetime.datetime.now(tz=datetime.UTC)
 
         table = self._schema.get_table(ApdbTables.DiaSource)
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
@@ -744,7 +752,7 @@ class ApdbSql(Apdb):
                     "srcId": key,
                     "diaObjectId": 0,
                     "ssObjectId": value,
-                    "ssObjectReassocTime": reassignTime,
+                    timestamp_column: timestamp,
                 }
                 result = conn.execute(query, params)
                 if result.rowcount == 0:
@@ -904,13 +912,12 @@ class ApdbSql(Apdb):
     def _storeReplicaChunk(
         self,
         replica_chunk: ReplicaChunk,
-        visit_time: astropy.time.Time,
         connection: sqlalchemy.engine.Connection,
     ) -> None:
         # `visit_time.datetime` returns naive datetime, even though all astropy
-        # times are in UTC. Add UTC timezone to timestampt so that database
+        # times are in UTC. Add UTC timezone to timestamp so that database
         # can store a correct value.
-        dt = datetime.datetime.fromtimestamp(visit_time.unix_tai, tz=datetime.UTC)
+        dt = datetime.datetime.fromtimestamp(replica_chunk.last_update_time.unix_tai, tz=datetime.UTC)
 
         table = self._schema.get_table(ExtraTables.ApdbReplicaChunks)
 
@@ -1136,9 +1143,75 @@ class ApdbSql(Apdb):
             sources.to_sql(table.name, connection, if_exists="append", index=False, schema=table.schema)
             timer.add_values(row_count=len(sources))
         if replica_stmt is not None:
-            with self._timer("insert_time", tags={"table": replica_table_name}):
+            with self._timer("insert_time", tags={"table": replica_table_name}) as timer:
                 connection.execute(replica_stmt, replica_data)
                 timer.add_values(row_count=len(replica_data))
+
+    def _storeUpdateRecords(
+        self,
+        records: Iterable[ApdbUpdateRecord],
+        chunk: ReplicaChunk,
+        *,
+        store_chunk: bool = False,
+        connection: sqlalchemy.engine.Connection | None = None,
+    ) -> None:
+        """Store ApdbUpdateRecords in the replica table for those records.
+
+        Parameters
+        ----------
+        records : `list` [`ApdbUpdateRecord`]
+            Records to store.
+        chunk : `ReplicaChunk`
+            Replica chunk for these records.
+        store_chunk : `bool`
+            If True then also store replica chunk.
+        connection : `sqlalchemy.engine.Connection`
+            SQLALchemy connection to use, if `None` the new connection will be
+            made. `None` is useful for tests only, regular use will call this
+            method in the same transaction that saves other types of records.
+
+        Raises
+        ------
+        TypeError
+            Raised if replication is not enabled for this instance.
+        """
+        if not self._schema.replication_enabled:
+            raise TypeError("Replication is not enabled for this APDB instance.")
+
+        apdb_replica_chunk = chunk.id
+        # Do not use unique_if from ReplicaChunk as it could be reused in
+        # multiple calls to this method.
+        update_unique_id = uuid.uuid4()
+
+        record_dicts = []
+        for record in records:
+            record_dicts.append(
+                {
+                    "apdb_replica_chunk": apdb_replica_chunk,
+                    "update_time_ns": record.update_time_ns,
+                    "update_order": record.update_order,
+                    "update_unique_id": update_unique_id,
+                    "update_payload": record.to_json(),
+                }
+            )
+
+        if not record_dicts:
+            return
+
+        table = self._schema.get_table(ExtraTables.ApdbUpdateRecordChunks)
+
+        def _do_store(connection: sqlalchemy.engine.Connection) -> None:
+            if store_chunk:
+                self._storeReplicaChunk(chunk, connection)
+            with self._timer("insert_time", tags={"table": table.name}) as timer:
+                connection.execute(table.insert(), record_dicts)
+                timer.add_values(row_count=len(record_dicts))
+
+        if connection is None:
+            with self._engine.begin() as connection:
+                _do_store(connection)
+        else:
+            _do_store(connection)
 
     def _htm_indices(self, region: Region) -> list[tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.

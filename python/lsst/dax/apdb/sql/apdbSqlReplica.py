@@ -36,6 +36,7 @@ from sqlalchemy import sql
 
 from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
+from ..apdbUpdateRecord import ApdbUpdateRecord
 from ..monitor import MonAgent
 from ..schema_model import ExtraDataTypes
 from ..timer import Timer
@@ -197,6 +198,20 @@ class ApdbSqlReplica(ApdbReplica):
                 timer.add_values(row_count=len(table_data.rows()))
                 return table_data
 
-    def getTableUpdateChunks(self, table: ApdbTables, chunks: Iterable[int]) -> ApdbTableData:
+    def getUpdateRecordChunks(self, chunks: Iterable[int]) -> Sequence[ApdbUpdateRecord]:
         # docstring is inherited from a base class
-        raise NotImplementedError()
+        table = self._schema.get_table(ExtraTables.ApdbUpdateRecordChunks)
+        query = table.select().where(table.columns["apdb_replica_chunk"].in_(chunks))
+
+        records = []
+        with self._timer("select_update_record_time", tags={"table": table.name}) as timer:
+            with self._engine.begin() as conn:
+                result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
+                for row in result:
+                    records.append(
+                        ApdbUpdateRecord.from_json(row.update_time_ns, row.update_order, row.update_payload)
+                    )
+                timer.add_values(row_count=len(records))
+
+        records.sort()
+        return records
