@@ -1056,11 +1056,12 @@ class ApdbSql(Apdb):
         if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
             replica_data = objs[pk_names].to_dict("records")
-            for row in replica_data:
-                row["apdb_replica_chunk"] = replica_chunk.id
-            replica_table = self._schema.get_table(ExtraTables.DiaObjectChunks)
-            replica_table_name = replica_table.name
-            replica_stmt = replica_table.insert()
+            if replica_data:
+                for row in replica_data:
+                    row["apdb_replica_chunk"] = replica_chunk.id
+                replica_table = self._schema.get_table(ExtraTables.DiaObjectChunks)
+                replica_table_name = replica_table.name
+                replica_stmt = replica_table.insert()
 
         # insert new versions
         with self._timer("insert_time", tags={"table": table.name}) as timer:
@@ -1093,11 +1094,12 @@ class ApdbSql(Apdb):
         if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
             replica_data = sources[pk_names].to_dict("records")
-            for row in replica_data:
-                row["apdb_replica_chunk"] = replica_chunk.id
-            replica_table = self._schema.get_table(ExtraTables.DiaSourceChunks)
-            replica_table_name = replica_table.name
-            replica_stmt = replica_table.insert()
+            if replica_data:
+                for row in replica_data:
+                    row["apdb_replica_chunk"] = replica_chunk.id
+                replica_table = self._schema.get_table(ExtraTables.DiaSourceChunks)
+                replica_table_name = replica_table.name
+                replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
         with self._timer("insert_time", tags={"table": table.name}) as timer:
@@ -1131,11 +1133,12 @@ class ApdbSql(Apdb):
         if replica_chunk is not None:
             pk_names = [column.name for column in table.primary_key]
             replica_data = sources[pk_names].to_dict("records")
-            for row in replica_data:
-                row["apdb_replica_chunk"] = replica_chunk.id
-            replica_table = self._schema.get_table(ExtraTables.DiaForcedSourceChunks)
-            replica_table_name = replica_table.name
-            replica_stmt = replica_table.insert()
+            if replica_data:
+                for row in replica_data:
+                    row["apdb_replica_chunk"] = replica_chunk.id
+                replica_table = self._schema.get_table(ExtraTables.DiaForcedSourceChunks)
+                replica_table_name = replica_table.name
+                replica_stmt = replica_table.insert()
 
         # everything to be done in single transaction
         with self._timer("insert_time", tags={"table": table.name}) as timer:

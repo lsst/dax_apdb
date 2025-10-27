@@ -270,6 +270,19 @@ class ApdbCassandraSchema:
                     for name in add_columns
                 ]
 
+            if table is ApdbTables.DiaObjectLast:
+                # In the past DiaObjectLast table did not have validityStart.
+                validity_start_column = "validityStartMjdTai"
+                try:
+                    if not self.check_column(ApdbTables.DiaObjectLast, validity_start_column):
+                        for column in apdb_table_def.columns:
+                            if column.name == validity_start_column:
+                                apdb_table_def.columns.remove(column)
+                                break
+                except LookupError:
+                    # Table has not been created yet.
+                    pass
+
             annotations = dict(apdb_table_def.annotations)
             annotations["cassandra:apdb_column_names"] = [column.name for column in apdb_table_def.columns]
             if part_columns:
@@ -584,6 +597,11 @@ class ApdbCassandraSchema:
         -------
         exists : `bool`
             True if column exists, False otherwise.
+
+        Raises
+        ------
+        LookupError
+            Raised if table does not exist.
         """
         if self._time_partition_tables and table_enum in self._time_partitioned_tables:
             query = (
@@ -596,16 +614,25 @@ class ApdbCassandraSchema:
                 table_name = row[0]
                 if table_name.startswith(f"{base_name}_"):
                     return True
+            # Check that there is any table with matching name.
+            assert isinstance(table_enum, ApdbTables), "Can only be ApdbTables"
+            tables = self.existing_tables(table_enum)
+            if not tables[table_enum]:
+                raise LookupError(f"Table {base_name} does not exist.")
             return False
         else:
             table_name = table_enum.table_name(self._prefix)
             query = (
-                "SELECT column_name FROM system_schema.columns "
-                "WHERE keyspace_name = %s AND table_name = %s AND column_name = %s"
+                "SELECT column_name FROM system_schema.columns WHERE keyspace_name = %s AND table_name = %s"
             )
-            result = self._session.execute(query, (self._keyspace, table_name, column))
-            row = result.one()
-            return row is not None
+            result = self._session.execute(query, (self._keyspace, table_name))
+            rows = list(result)
+            if not rows:
+                raise LookupError(f"Table {table_name} does not exist.")
+            for row in rows:
+                if row.column_name == column:
+                    return True
+            return False
 
     def tableName(self, table_name: ApdbTables | ExtraTables, time_partition: int | None = None) -> str:
         """Return Cassandra table name for APDB table.
