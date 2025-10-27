@@ -200,7 +200,14 @@ class ApdbSqlReplica(ApdbReplica):
 
     def getUpdateRecordChunks(self, chunks: Iterable[int]) -> Sequence[ApdbUpdateRecord]:
         # docstring is inherited from a base class
-        table = self._schema.get_table(ExtraTables.ApdbUpdateRecordChunks)
+        if not self._schema.replication_enabled:
+            raise ValueError("APDB is not configured for replication")
+
+        try:
+            table = self._schema.get_table(ExtraTables.ApdbUpdateRecordChunks)
+        except ValueError:
+            # Table does not exist yet.
+            return []
         query = table.select().where(table.columns["apdb_replica_chunk"].in_(chunks))
 
         records = []

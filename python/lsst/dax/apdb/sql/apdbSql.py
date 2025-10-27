@@ -1201,6 +1201,7 @@ class ApdbSql(Apdb):
         if not record_dicts:
             return
 
+        # TODO: Need to check that table exists.
         table = self._schema.get_table(ExtraTables.ApdbUpdateRecordChunks)
 
         def _do_store(connection: sqlalchemy.engine.Connection) -> None:
