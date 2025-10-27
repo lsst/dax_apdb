@@ -363,6 +363,20 @@ class ApdbSqlSchema(ApdbSchema):
                 # We do not support SSSource table yet.
                 continue
             table = self.tableSchemas[table_enum]
+
+            if table_enum is ApdbTables.DiaObjectLast:
+                # In the past DiaObjectLast table did not have validityStart.
+                validity_start_column = "validityStartMjdTai"
+                try:
+                    if not self.check_column(ApdbTables.DiaObjectLast, validity_start_column):
+                        for column in table.columns:
+                            if column.name == validity_start_column:
+                                table.columns.remove(column)
+                                break
+                except sqlalchemy.exc.NoSuchTableError:
+                    # Table does not exist yet, will be created later.
+                    pass
+
             tables[table_enum] = table
 
         return tables
