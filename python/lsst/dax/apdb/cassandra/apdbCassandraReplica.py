@@ -330,6 +330,10 @@ class ApdbCassandraReplica(ApdbReplica):
         if not context.schema.replication_enabled:
             raise ValueError("APDB is not configured for replication")
 
+        if not context.has_update_record_chunks_table:
+            # Table does not exist yet.
+            return []
+
         table_name = context.schema.tableName(ExtraTables.ApdbUpdateRecordChunks)
 
         records = []
