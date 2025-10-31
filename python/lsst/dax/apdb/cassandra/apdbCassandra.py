@@ -970,6 +970,15 @@ class ApdbCassandra(Apdb):
                 extra_columns["apdb_replica_subchunk"] = random.randrange(config.replica_sub_chunk_count)
             self._storeObjectsPandas(objs, table, extra_columns=extra_columns)
 
+        # Store copy of the records in dedup table.
+        if context.has_dedup_table:
+            table = ExtraTables.DiaObjectDedup
+            extra_columns = {
+                "dedup_part": random.randrange(config.partitioning.num_part_dedup),
+                validity_start_column: timestamp,
+            }
+            self._storeObjectsPandas(objs, table, extra_columns=extra_columns)
+
     def _storeDiaSources(
         self,
         table_name: ApdbTables,
