@@ -336,9 +336,10 @@ class ApdbCassandraSchema:
             )
 
         # DiaObjectDedup table contains a subset of columns of DiaObject, the
-        # table is used for deduplication, it is partitioned on some reandom
-        # key.
-        dedup_columns = {"diaObjectId", "validityStartMjdTai", "ra", "dec", "nDiaSources"}
+        # table is used for deduplication, it is partitioned on some random
+        # key. This column list defines non-PK columns in this table, PK
+        # columns from DiaObject are the same as in DiaObject.
+        dedup_column_names = {"ra", "dec", "nDiaSources"}
         columns = [
             schema_model.Column(
                 id="#dedup_part",
@@ -348,14 +349,21 @@ class ApdbCassandraSchema:
             )
         ]
         primary_keys = []
+        found_column_names = []
         # Coly column definitions from DiaObject.
         dia_object_table = apdb_tables[ApdbTables.DiaObject]
         for column in dia_object_table.columns:
-            if column.name in dedup_columns:
+            if column in dia_object_table.primary_key or column.name in dedup_column_names:
                 cloned_column = dataclasses.replace(column, table=None)
                 columns.append(cloned_column)
+                found_column_names.append(column.name)
                 if column in dia_object_table.primary_key:
                     primary_keys.append(cloned_column)
+
+        # Check that we found all expected columns.
+        missing_columns = dedup_column_names - set(found_column_names)
+        if missing_columns:
+            raise LookupError(f"Expected columns not found in DiaObject table: {missing_columns}")
 
         extra_tables[ExtraTables.DiaObjectDedup] = schema_model.Table(
             id="#" + ExtraTables.DiaObjectDedup.value,
@@ -364,7 +372,10 @@ class ApdbCassandraSchema:
             primary_key=primary_keys,
             indexes=[],
             constraints=[],
-            annotations={"cassandra:partitioning_columns": ["dedup_part"]},
+            annotations={
+                "cassandra:partitioning_columns": ["dedup_part"],
+                "cassandra:apdb_column_names": found_column_names,
+            },
         )
 
         # This table maps DiaSource ID to its partitions in DiaSource table and

@@ -493,6 +493,42 @@ class ApdbTest(TestCaseMixin, ABC):
         # Verify that returned time is sensible.
         self.assertTrue(all(time_before <= dt <= time_after for dt in res[time_processed_column]))
 
+    def test_getDiaObjectsForDedup(self) -> None:
+        """Test getDiaObjectsForDedup() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        visit_time = self.visit_time
+
+        region1 = self.make_region((1.0, 1.0, -1.0))
+        region2 = self.make_region((-1.0, 1.0, -1.0))
+        region3 = self.make_region((-1.0, -1.0, -1.0))
+        nobj = 100
+        objects1 = makeObjectCatalog(region1, nobj, visit_time)
+        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
+        objects3 = makeObjectCatalog(region3, nobj, visit_time, start_id=nobj * 4)
+
+        visits = [
+            (astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:10:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:20:00", format="isot", scale="tai"), objects3),
+        ]
+
+        for visit_time, objects in visits:
+            apdb.store(visit_time, objects)
+
+        catalog = apdb.getDiaObjectsForDedup(visits[0][0])
+        self.assertEqual(len(catalog), 300)
+
+        catalog = apdb.getDiaObjectsForDedup(visits[1][0])
+        self.assertEqual(len(catalog), 200)
+
+        catalog = apdb.getDiaObjectsForDedup(visits[2][0])
+        self.assertEqual(len(catalog), 100)
+
+        time = astropy.time.Time("2021-01-01T00:30:00", format="isot", scale="tai")
+        catalog = apdb.getDiaObjectsForDedup(time)
+        self.assertEqual(len(catalog), 0)
+
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
         # don't care about sources.

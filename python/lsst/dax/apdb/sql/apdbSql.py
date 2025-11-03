@@ -635,6 +635,46 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
+    def getDiaObjectsForDedup(self, since: astropy.time.Time) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+
+        if self._schema.has_mjd_timestamps:
+            validity_start_column = "validityStartMjdTai"
+            timestamp = float(since.tai.mjd)
+        else:
+            validity_start_column = "validityStart"
+            timestamp = since.datetime
+
+        # decide what columns we need
+        if self.config.dia_object_index == "last_object_table":
+            table_enum = ApdbTables.DiaObjectLast
+        else:
+            table_enum = ApdbTables.DiaObject
+        table = self._schema.get_table(table_enum)
+
+        if not self.config.dia_object_columns_for_dedup:
+            columns = self._schema.get_apdb_columns(table_enum)
+        else:
+            column_names = list(self.config.dia_object_columns_for_dedup)
+            if validity_start_column not in column_names:
+                column_names.insert(0, validity_start_column)
+            if "diaObjectId" not in column_names:
+                column_names.insert(0, "diaObjectId")
+            columns = [table.columns[col] for col in column_names]
+
+        query = sql.select(*columns)
+
+        # build selection
+        query = query.where(table.columns[validity_start_column] >= timestamp)
+
+        # execute select
+        with self._timer("select_time", tags={"table": "DiaObject"}) as timer:
+            with self._engine.begin() as conn:
+                objects = pandas.read_sql_query(query, conn)
+            timer.add_values(row_count=len(objects))
+        _LOG.debug("found %s DiaObjects", len(objects))
+        return self._fix_result_timestamps(objects)
+
     def containsVisitDetector(
         self,
         visit: int,
