@@ -348,15 +348,6 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def dailyJob(self) -> None:
-        """Implement daily activities like cleanup/vacuum.
-
-        What should be done during daily activities is determined by
-        specific implementation.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
     def countUnassociatedObjects(self) -> int:
         """Return the number of DiaObjects that have only one DiaSource
         associated with them.

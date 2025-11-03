@@ -764,10 +764,6 @@ class ApdbSql(Apdb):
                 missing = ",".join(str(item) for item in missing_ids)
                 raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
 
-    def dailyJob(self) -> None:
-        # docstring is inherited from a base class
-        pass
-
     def countUnassociatedObjects(self) -> int:
         # docstring is inherited from a base class
 
