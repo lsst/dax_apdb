@@ -221,6 +221,15 @@ class SessionFactory:
             row_factory=pandas_dataframe_factory,
             load_balancing_policy=loadBalancePolicy,
         )
+        # Profile to use with select_concurrent to return pandas data frame,
+        # this also has very long timeout, to be be use for querying
+        # DiaObjectDedup table that can return a lot of data.
+        read_pandas_multi_dedup_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
+            request_timeout=3600.0,
+            row_factory=pandas_dataframe_factory,
+            load_balancing_policy=loadBalancePolicy,
+        )
         # Profile to use with select_concurrent to return raw data (columns and
         # rows)
         read_raw_multi_profile = ExecutionProfile(
@@ -243,6 +252,7 @@ class SessionFactory:
             "read_pandas": read_pandas_profile,
             "read_raw": read_raw_profile,
             "read_pandas_multi": read_pandas_multi_profile,
+            "read_pandas_multi_dedup": read_pandas_multi_dedup_profile,
             "read_raw_multi": read_raw_multi_profile,
             "write": write_profile,
             EXEC_PROFILE_DEFAULT: default_profile,

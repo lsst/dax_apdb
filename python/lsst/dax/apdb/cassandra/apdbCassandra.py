@@ -484,6 +484,52 @@ class ApdbCassandra(Apdb):
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
+    def getDiaObjectsForDedup(self, since: astropy.time.Time) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        if not context.has_dedup_table:
+            raise TypeError("DiaObjectDedup table does not exist in this APDB instance.")
+
+        column_names = context.schema.apdbColumnNames(ExtraTables.DiaObjectDedup)
+        what = ",".join(quote_id(column) for column in column_names)
+
+        if self._schema.has_mjd_timestamps:
+            validity_start_column = "validityStartMjdTai"
+            timestamp = float(since.tai.mjd)
+        else:
+            validity_start_column = "validityStart"
+            timestamp = since.datetime
+
+        table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
+        query = (
+            f'SELECT {what} FROM "{self._keyspace}"."{table_name}" '
+            f'WHERE dedup_part = ? AND "{validity_start_column}" >= ? '
+            "ALLOW FILTERING"
+        )
+        statement = context.preparer.prepare(query)
+
+        num_part = config.partitioning.num_part_dedup
+        statements = []
+        for dedup_part in range(num_part):
+            statements.append((statement, (dedup_part, timestamp)))
+
+        with self._timer("select_time", tags={"table": "DiaObjectDedup"}) as timer:
+            objects = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi_dedup",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(objects))
+
+        _LOG.debug("found %s DiaObjectDedup records", objects.shape[0])
+        return objects
+
     def containsVisitDetector(
         self,
         visit: int,
