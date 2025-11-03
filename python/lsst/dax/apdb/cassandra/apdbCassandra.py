@@ -729,10 +729,6 @@ class ApdbCassandra(Apdb):
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(source_count=len(idMap))
 
-    def dailyJob(self) -> None:
-        # docstring is inherited from a base class
-        pass
-
     def countUnassociatedObjects(self) -> int:
         # docstring is inherited from a base class
 
