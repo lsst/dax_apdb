@@ -134,6 +134,14 @@ class ApdbSqlConfig(ApdbConfig):
         description="List of columns to read from DiaObject, by default read all columns",
     )
 
+    dia_object_columns_for_dedup: list[str] = Field(
+        default=["ra", "dec", "nDiaSources"],
+        description=(
+            "Columns to read from DiaObject for deduplication, empty list means all columns. "
+            "'diaObjectId' and 'validityStart[MjdTai]' are always added to this list. "
+        ),
+    )
+
     prefix: str = Field(
         default="",
         description="Prefix to add to table names and index names.",

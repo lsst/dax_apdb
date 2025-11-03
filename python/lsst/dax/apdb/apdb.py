@@ -238,6 +238,28 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def getDiaObjectsForDedup(self, since: astropy.time.Time) -> pandas.DataFrame:
+        """Return catalog of DiaObject stored in APDB since specified time.
+
+        This method should be used by deduplication algorithm to retrieve
+        DiaObject records added to APDB since previous deduplication (typically
+        during previous night). Returned catalog will have only a small subset
+        of DiaObject attributes required by deduplication algorithm.
+
+        Parameters
+        ----------
+        since : `astropy.time.Time`
+            Starting search time (time of previous deduplication).
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaObject records, only a subset of attributes
+            will be returned.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def containsVisitDetector(
         self,
         visit: int,
