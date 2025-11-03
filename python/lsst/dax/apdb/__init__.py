@@ -27,6 +27,7 @@ from .apdbSchema import ApdbTables
 from .apdbUpdateRecord import *
 from .cassandra import ApdbCassandra, ApdbCassandraConfig
 from .config import *
+from .recordIds import *
 from .sql import ApdbSql, ApdbSqlConfig
 from .version import *
 from .versionTuple import *
