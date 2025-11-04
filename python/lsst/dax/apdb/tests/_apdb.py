@@ -338,7 +338,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # make catalog with Objects
-        catalog = makeObjectCatalog(region, 100, visit_time)
+        catalog = makeObjectCatalog(region, 100)
 
         # store catalog
         apdb.store(visit_time, catalog)
@@ -356,7 +356,7 @@ class ApdbTest(TestCaseMixin, ABC):
         region = self.make_region()
         visit_time = self.visit_time
         # make catalog with no Objects
-        catalog = makeObjectCatalog(region, 0, visit_time)
+        catalog = makeObjectCatalog(region, 0)
 
         with self.assertLogs("lsst.dax.apdb", level="DEBUG") as cm:
             apdb.store(visit_time, catalog)
@@ -380,11 +380,11 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # Store one object at two different positions.
         visit_time1 = self.visit_time
-        catalog1 = makeObjectCatalog(lonlat1, 1, visit_time1)
+        catalog1 = makeObjectCatalog(lonlat1, 1)
         apdb.store(visit_time1, catalog1)
 
         visit_time2 = visit_time1 + astropy.time.TimeDelta(120.0, format="sec")
-        catalog1 = makeObjectCatalog(lonlat2, 1, visit_time2)
+        catalog1 = makeObjectCatalog(lonlat2, 1)
         apdb.store(visit_time2, catalog1)
 
         # Make region covering both points.
@@ -405,7 +405,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
 
@@ -441,7 +441,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         catalog = makeForcedSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
 
@@ -473,7 +473,7 @@ class ApdbTest(TestCaseMixin, ABC):
         # Cassandra has a millisecond precision, so subtract 1ms to allow for
         # truncated returned values.
         time_before = makeTimestampNow(self.use_mjd, -1)
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         catalog = makeForcedSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
         time_after = makeTimestampNow(self.use_mjd)
@@ -503,9 +503,9 @@ class ApdbTest(TestCaseMixin, ABC):
         region2 = self.make_region((-1.0, 1.0, -1.0))
         region3 = self.make_region((-1.0, -1.0, -1.0))
         nobj = 100
-        objects1 = makeObjectCatalog(region1, nobj, visit_time)
-        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
-        objects3 = makeObjectCatalog(region3, nobj, visit_time, start_id=nobj * 4)
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj * 2)
+        objects3 = makeObjectCatalog(region3, nobj, start_id=nobj * 4)
 
         visits = [
             (astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai"), objects1),
@@ -540,8 +540,8 @@ class ApdbTest(TestCaseMixin, ABC):
         region1 = self.make_region((1.0, 1.0, -1.0))
         region2 = self.make_region((-1.0, -1.0, -1.0))
         nobj = 100
-        objects1 = makeObjectCatalog(region1, nobj, visit_time)
-        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj * 2)
 
         # With the default 10 minutes replica chunk window we should have 4
         # records.
@@ -657,7 +657,7 @@ class ApdbTest(TestCaseMixin, ABC):
 
         region = self.make_region()
         visit_time = self.visit_time
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
         apdb.store(visit_time, objects, sources)
@@ -762,7 +762,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
         one_sec = astropy.time.TimeDelta(1.0, format="sec")
 
-        objects = makeObjectCatalog(region, 100, visit_time0)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, src_time1, 0, use_mjd=self.use_mjd)
         apdb.store(src_time1, objects, sources)
@@ -810,7 +810,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
         one_sec = astropy.time.TimeDelta(1.0, format="sec")
 
-        objects = makeObjectCatalog(region, 100, visit_time0)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeForcedSourceCatalog(objects, src_time1, 1, use_mjd=self.use_mjd)
         apdb.store(src_time1, objects, forced_sources=sources)
@@ -947,7 +947,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         sources = makeSourceCatalog(objects, visit_time)
         fsources = makeForcedSourceCatalog(objects, visit_time)
         apdb.store(visit_time, objects, sources, fsources)

@@ -126,13 +126,13 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
 
         # Visit time is beyond time_partition_end.
         visit_time = astropy.time.Time("2022-01-01", format="isot", scale="tai")
-        catalog = makeObjectCatalog(region, 100, visit_time)
+        catalog = makeObjectCatalog(region, 100)
         with self.assertRaisesRegex(ValueError, "time partitions that do not yet exist"):
             apdb.store(visit_time, catalog)
 
         # Writing to last partition makes a warning.
         visit_time = astropy.time.Time("2021-06-01", format="isot", scale="tai")
-        catalog = makeObjectCatalog(region, 100, visit_time)
+        catalog = makeObjectCatalog(region, 100)
         with self.assertWarnsRegex(UserWarning, "Writing into the last temporal partition"):
             apdb.store(visit_time, catalog)
 
