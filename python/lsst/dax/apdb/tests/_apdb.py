@@ -48,6 +48,7 @@ from .. import (
     ApdbTables,
     ApdbUpdateRecord,
     ApdbWithdrawDiaSourceRecord,
+    DiaObjectId,
     IncompatibleVersionError,
     ReplicaChunk,
     VersionTuple,
@@ -497,7 +498,6 @@ class ApdbTest(TestCaseMixin, ABC):
         """Test getDiaObjectsForDedup() method."""
         config = self.make_instance()
         apdb = Apdb.from_config(config)
-        visit_time = self.visit_time
 
         region1 = self.make_region((1.0, 1.0, -1.0))
         region2 = self.make_region((-1.0, 1.0, -1.0))
@@ -528,6 +528,48 @@ class ApdbTest(TestCaseMixin, ABC):
         time = astropy.time.Time("2021-01-01T00:30:00", format="isot", scale="tai")
         catalog = apdb.getDiaObjectsForDedup(time)
         self.assertEqual(len(catalog), 0)
+
+    def test_getDiaSourcesForDiaObjects(self) -> None:
+        """Test getDiaSourcesForDiaObjects() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region1 = self.make_region((1.0, 1.0, -1.0))
+        region2 = self.make_region((-1.0, 1.0, -1.0))
+        region3 = self.make_region((-1.0, -1.0, -1.0))
+        nobj = 100
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj * 2)
+        objects3 = makeObjectCatalog(region3, nobj, start_id=nobj * 4)
+
+        visits = [
+            (astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:10:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:20:00", format="isot", scale="tai"), objects3),
+        ]
+
+        start_id = 1_000_000
+        for visit_time, objects in visits:
+            sources = makeSourceCatalog(objects, visit_time, start_id=start_id, use_mjd=self.use_mjd)
+            apdb.store(visit_time, objects, sources)
+            start_id += 1_000_000
+
+        # Take a small number of objects from different regions.
+        object_ids = [
+            DiaObjectId.from_named_tuple(next(objects1.itertuples())),
+            DiaObjectId.from_named_tuple(next(objects2.itertuples())),
+            DiaObjectId.from_named_tuple(next(objects3.itertuples())),
+        ]
+
+        catalog = apdb.getDiaSourcesForDiaObjects(object_ids, visits[0][0])
+        self.assertEqual(len(catalog), 3)
+        self.assertEqual(set(catalog["diaObjectId"]), {1, 200, 400})
+        self.assertEqual(set(catalog["diaSourceId"]), {1_000_000, 2_000_000, 3_000_000})
+
+        catalog = apdb.getDiaSourcesForDiaObjects(object_ids, visits[2][0])
+        self.assertEqual(len(catalog), 1)
+        self.assertEqual(set(catalog["diaObjectId"]), {400})
+        self.assertEqual(set(catalog["diaSourceId"]), {3_000_000})
 
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""

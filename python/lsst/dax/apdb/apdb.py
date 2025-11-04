@@ -36,6 +36,7 @@ from lsst.sphgeom import Region
 from .apdbSchema import ApdbSchema, ApdbTables
 from .config import ApdbConfig
 from .factory import make_apdb
+from .recordIds import DiaObjectId
 from .schema_model import Table
 
 if TYPE_CHECKING:
@@ -256,6 +257,40 @@ class Apdb(ABC):
         catalog : `pandas.DataFrame`
             Catalog containing DiaObject records, only a subset of attributes
             will be returned.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getDiaSourcesForDiaObjects(
+        self, objects: list[DiaObjectId], start_time: astropy.time.Time, max_dist_arcsec: float = 1.0
+    ) -> pandas.DataFrame:
+        """Return catalog of DiaSources associated with given DiaObjects.
+
+        Parameters
+        ----------
+        objects : `list` [`DiaObjectId`]
+            DiaObjects associated with returned DiaSources.
+        start_time : `astropy.time.Time`
+            Lower bound for ``midpointMjdTai`` for returned DiaSources.
+        max_dist_arcsec : `float`
+            Maximum expected distance in arcsec between DiaSource and
+            DiaObject. This parameter is used to optimize spatial queries in
+            cases when DiaObject is located near the partition boundary. If the
+            distance from DiaObject to the boundary is smaller than
+            ``max_dist_arcsec``, then the neighbor partition will be included
+            in search too.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaSource records associated to given
+            DiaObjects.
+
+        Notes
+        -----
+        Primary purpose of this method is to support deduplication algorithm.
+        Its implementation is likely to be very slow and inefficient, it should
+        not be used for regular queries.
         """
         raise NotImplementedError()
 

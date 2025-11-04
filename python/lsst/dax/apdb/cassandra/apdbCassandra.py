@@ -57,6 +57,7 @@ from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbSchema, ApdbTables
 from ..monitor import MonAgent
+from ..recordIds import DiaObjectId
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import VersionTuple
@@ -529,6 +530,83 @@ class ApdbCassandra(Apdb):
 
         _LOG.debug("found %s DiaObjectDedup records", objects.shape[0])
         return objects
+
+    def getDiaSourcesForDiaObjects(
+        self, objects: list[DiaObjectId], start_time: astropy.time.Time, max_dist_arcsec: float = 1.0
+    ) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        # Which tables to query and temporal constraints.
+        end_time = astropy.time.Time.now()
+        tables, temporal_where = context.partitioner.temporal_where(
+            ApdbTables.DiaSource,
+            start_time,
+            end_time,
+            for_prepare=False,
+            partitons_range=context.time_partitions_range,
+            query_per_time_part=False,
+        )
+        if not tables:
+            warnings.warn(
+                f"Query time range ({start_time.isot} - {end_time.isot}) does not overlap database "
+                "time partitions."
+            )
+
+        # Group DiaObjects by partition.
+        partitioner = context.partitioner
+        partitioned_object_ids: dict[int, list[int]] = defaultdict(list)
+        for obj_id in objects:
+            # Make a small circle with center at DiaSource position.
+            lon_lat = sphgeom.LonLat.fromDegrees(obj_id.ra, obj_id.dec)
+            center = sphgeom.UnitVector3d(lon_lat)
+            region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(max_dist_arcsec / 3600.0))
+
+            pixel_ranges = partitioner.pixelization.envelope(region)
+            for lower, upper in pixel_ranges:
+                for pixel in range(lower, upper + 1):
+                    partitioned_object_ids[pixel].append(obj_id.diaObjectId)
+
+        # Columns to return.
+        column_names = context.schema.apdbColumnNames(ApdbTables.DiaSource)
+        what = ",".join(quote_id(column) for column in column_names)
+
+        # Make a bunch of queries.
+        statements = []
+        suffix = "ALLOW FILTERING"
+        for apdb_part, diaObjectIds in partitioned_object_ids.items():
+            spatial_where = [(f"apdb_part = {apdb_part}", ())]
+            for table in tables:
+                prefix = f'SELECT {what} FROM "{self._keyspace}"."{table}"'
+                for id_chunk in chunk_iterable(diaObjectIds, 10_000):
+                    chunk_str = ",".join(str(diaObjectId) for diaObjectId in id_chunk)
+                    id_where = (f'"diaObjectId" IN ({chunk_str})', ())
+                    statements += list(
+                        self._combine_where(prefix, spatial_where, temporal_where, id_where, suffix=suffix)
+                    )
+
+        _LOG.debug("getDiaSourcesForDiaObjects #queries: %s", len(statements))
+
+        with self._timer("select_time", tags={"table": "DiaSource"}) as timer:
+            catalog = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count_from_db=len(catalog))
+
+            # precise filtering on midpointMjdTai
+            catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] >= start_time.tai.mjd])
+
+            timer.add_values(row_count=len(catalog))
+
+        _LOG.debug("found %d DiaSources", len(catalog))
+        return catalog
 
     def containsVisitDetector(
         self,
