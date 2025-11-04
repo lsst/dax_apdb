@@ -53,6 +53,7 @@ from ..apdbReplica import ReplicaChunk
 from ..apdbSchema import ApdbSchema, ApdbTables
 from ..config import ApdbConfig
 from ..monitor import MonAgent
+from ..recordIds import DiaObjectId
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
@@ -675,6 +676,13 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaObjects", len(objects))
         return self._fix_result_timestamps(objects)
 
+    def getDiaSourcesForDiaObjects(
+        self, objects: list[DiaObjectId], start_time: astropy.time.Time, max_dist_arcsec: float = 1.0
+    ) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        object_ids = {object_id.diaObjectId for object_id in objects}
+        return self._getDiaSourcesByIDs(list(object_ids), float(start_time.tai.mjd))
+
     def containsVisitDetector(
         self,
         visit: int,
@@ -898,7 +906,7 @@ class ApdbSql(Apdb):
                 query = query.where(
                     sql.expression.and_(
                         table.columns["diaObjectId"].in_(int_ids),
-                        table.columns["midpointMjdTai"] > midpointMjdTai_start,
+                        table.columns["midpointMjdTai"] >= midpointMjdTai_start,
                     )
                 )
 
