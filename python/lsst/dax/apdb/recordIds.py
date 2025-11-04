@@ -48,6 +48,24 @@ class DiaObjectId:
     close to the value in database record.
     """
 
+    @classmethod
+    def from_named_tuple(cls, named_tuple: Any) -> DiaObjectId:
+        """Construct DiaObjectId from a named tuple.
+
+        Parameters
+        ----------
+        named_tuple :
+            Named tuple which includes the same attributes as this class, e.g.
+            a tuple returned from ``pandas.DataFrame.itertuples()``. Any
+            additional attributes are ignored.
+
+        Returns
+        -------
+        object_id : `DiaObjectId`
+            Instance of this class.
+        """
+        return cls(diaObjectId=named_tuple.diaObjectId, ra=named_tuple.ra, dec=named_tuple.dec)
+
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, DiaObjectId):
             return self.diaObjectId == other.diaObjectId
@@ -83,6 +101,29 @@ class DiaSourceId:
     """DIASource midpointMjdTai, not required to be exact, but needs to be
     close to the value in database record.
     """
+
+    @classmethod
+    def from_named_tuple(cls, named_tuple: Any) -> DiaSourceId:
+        """Construct DiaSourceId from a named tuple.
+
+        Parameters
+        ----------
+        named_tuple :
+            Named tuple which includes the same attributes as this class, e.g.
+            a tuple returned from ``pandas.DataFrame.itertuples()``. Any
+            additional attributes are ignored.
+
+        Returns
+        -------
+        object_id : `DiaSourceId`
+            Instance of this class.
+        """
+        return cls(
+            diaSourceId=named_tuple.diaObjectId,
+            ra=named_tuple.ra,
+            dec=named_tuple.dec,
+            midpointMjdTai=named_tuple.midpointMjdTai,
+        )
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, DiaSourceId):
@@ -125,6 +166,31 @@ class DiaForcedSourceId:
     """DIAForcedSource midpointMjdTai, not required to be exact, but needs to
     be close to the value in database record.
     """
+
+    @classmethod
+    def from_named_tuple(cls, named_tuple: Any) -> DiaForcedSourceId:
+        """Construct DiaForcedSourceId from a named tuple.
+
+        Parameters
+        ----------
+        named_tuple :
+            Named tuple which includes the same attributes as this class, e.g.
+            a tuple returned from ``pandas.DataFrame.itertuples()``. Any
+            additional attributes are ignored.
+
+        Returns
+        -------
+        object_id : `DiaForcedSourceId`
+            Instance of this class.
+        """
+        return cls(
+            diaObjectId=named_tuple.diaObjectId,
+            visit=named_tuple.visit,
+            detector=named_tuple.detector,
+            ra=named_tuple.ra,
+            dec=named_tuple.dec,
+            midpointMjdTai=named_tuple.midpointMjdTai,
+        )
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, DiaForcedSourceId):
