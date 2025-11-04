@@ -64,7 +64,7 @@ def _genPointsInRegion(region: Region, count: int) -> Iterator[LonLat]:
 
 
 def makeObjectCatalog(
-    region: Region | LonLat, count: int, visit_time: astropy.time.Time, *, start_id: int = 1, **kwargs: Any
+    region: Region | LonLat, count: int, *, start_id: int = 1, **kwargs: Any
 ) -> pandas.DataFrame:
     """Make a catalog containing a bunch of DiaObjects inside a region.
 
@@ -74,8 +74,6 @@ def makeObjectCatalog(
         Spherical region or spherical coordinate.
     count : `int`
         Number of records to generate.
-    visit_time : `astropy.time.Time`
-        Time of the visit.
     start_id : `int`
         Starting diaObjectId.
     **kwargs : `Any`
