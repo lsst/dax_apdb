@@ -56,6 +56,7 @@ from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbSchema, ApdbTables
+from ..apdbUpdateRecord import ApdbCloseDiaObjectValidityRecord
 from ..monitor import MonAgent
 from ..recordIds import DiaObjectId
 from ..schema_model import Table
@@ -555,18 +556,9 @@ class ApdbCassandra(Apdb):
             )
 
         # Group DiaObjects by partition.
-        partitioner = context.partitioner
-        partitioned_object_ids: dict[int, list[int]] = defaultdict(list)
-        for obj_id in objects:
-            # Make a small circle with center at DiaSource position.
-            lon_lat = sphgeom.LonLat.fromDegrees(obj_id.ra, obj_id.dec)
-            center = sphgeom.UnitVector3d(lon_lat)
-            region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(max_dist_arcsec / 3600.0))
-
-            pixel_ranges = partitioner.pixelization.envelope(region)
-            for lower, upper in pixel_ranges:
-                for pixel in range(lower, upper + 1):
-                    partitioned_object_ids[pixel].append(obj_id.diaObjectId)
+        partitioned_object_ids = self._group_dia_objects_by_partition(
+            context.partitioner, objects, max_dist_arcsec
+        )
 
         # Columns to return.
         column_names = context.schema.apdbColumnNames(ApdbTables.DiaSource)
@@ -721,6 +713,95 @@ class ApdbCassandra(Apdb):
         if forced_sources is not None and len(forced_sources) > 0:
             forced_sources = self._add_apdb_part(forced_sources)
             self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk)
+
+    def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        pad_arcsec = 1.0
+        partitioned_object_ids = self._group_dia_objects_by_partition(
+            context.partitioner, objects, pad_arcsec
+        )
+
+        # Check that all objects exist.
+        table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
+        statements: list[tuple] = []
+        for apdb_part, diaObjectIds in partitioned_object_ids.items():
+            id_str = ",".join(str(diaObjectId) for diaObjectId in diaObjectIds)
+            query = (
+                f'SELECT apdb_part, "diaObjectId" FROM "{self._keyspace}"."{table_name}" '
+                f'WHERE apdb_part = %s AND "diaObjectId" IN ({id_str})'
+            )
+            statement = cassandra.query.SimpleStatement(query)
+            statements.append((statement, (apdb_part,)))
+
+        with self._timer("select_time", tags={"table": table_name, "method": "setValidityEnd"}) as timer:
+            records = cast(
+                list[tuple[int, int]],
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_tuples",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(objects))
+
+        requested_ids = {obj.diaObjectId for obj in objects}
+        found_ids = {rec[1] for rec in records}
+        if extra_ids := (found_ids - requested_ids):
+            raise LookupError(f"Consistency error - found duplicate records for object IDs: {extra_ids}")
+        if missing_ids := (requested_ids - found_ids):
+            raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+
+        # Group by partitions again.
+        grouped_object_ids: dict[int, list[int]] = defaultdict(list)
+        for apdb_part, diaObjectId in records:
+            grouped_object_ids[apdb_part].append(diaObjectId)
+
+        # Remove all matching rows from DiaObjectLast.
+        statements = []
+        for apdb_part, diaObjectIds in grouped_object_ids.items():
+            id_str = ",".join(str(diaObjectId) for diaObjectId in diaObjectIds)
+            query = (
+                f'DELETE FROM "{self._keyspace}"."{table_name}" '
+                f'WHERE apdb_part = %s AND "diaObjectId" IN ({id_str})'
+            )
+            statement = cassandra.query.SimpleStatement(query)
+            statements.append((statement, (apdb_part,)))
+
+        # Also remove from DiaObjectLastToPartition.
+        reverse_table_name = context.schema.tableName(ExtraTables.DiaObjectLastToPartition)
+        id_str = ",".join(str(diaObjectId) for _, diaObjectId in records)
+        query = f'DELETE FROM "{self._keyspace}"."{reverse_table_name}" WHERE "diaObjectId" IN ({id_str})'
+        statement = cassandra.query.SimpleStatement(query)
+        statements.append((statement, ()))
+
+        with self._timer("delete_time", tags={"table": table_name, "method": "setValidityEnd"}) as timer:
+            execute_concurrent(context.session, statements, execution_profile="write")
+            timer.add_values(row_count=len(records))
+
+        # If repication is enabled then send all updates.
+        if context.schema.replication_enabled:
+            current_time = self._current_time()
+            current_time_ns = int(current_time.unix_tai * 1e9)
+            replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
+
+            update_records = [
+                ApdbCloseDiaObjectValidityRecord(
+                    diaObjectId=obj.diaObjectId,
+                    ra=obj.ra,
+                    dec=obj.dec,
+                    update_time_ns=current_time_ns,
+                    update_order=index,
+                    validityEndMjdTai=float(validityEnd.tai.mjd),
+                    nDiaSources=None,
+                )
+                for index, obj in enumerate(objects)
+            ]
+
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
@@ -1554,3 +1635,36 @@ class ApdbCassandra(Apdb):
             row_size += 4 * len(context.schema.getColumnMap(table))
             batch_size = min(batch_size, (config.batch_size_limit // row_size) + 1)
         return batch_size
+
+    def _group_dia_objects_by_partition(
+        self, partitioner: Partitioner, objects: list[DiaObjectId], pad_arcsec: float
+    ) -> Mapping[int, list[int]]:
+        """Group DiaObjects by partition.
+
+        Parameters
+        ----------
+        partitioner : `Partitioner`
+            Objects which knows how to partition things.
+        objects : `list` [`DiaObjectId`]
+            Collection of objects to partition.
+        pad_arcsec : `float`
+            Additional padding around object position.
+
+        Returns
+        -------
+        grouped_objects
+            Mapping of spatial patition ID to list ob object IDs that it
+            contains. Some objects may belong to more than one partition.
+        """
+        partitioned_object_ids: dict[int, list[int]] = defaultdict(list)
+        for obj_id in objects:
+            # Make a small circle with center at DiaSource position.
+            lon_lat = sphgeom.LonLat.fromDegrees(obj_id.ra, obj_id.dec)
+            center = sphgeom.UnitVector3d(lon_lat)
+            region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
+
+            pixel_ranges = partitioner.pixelization.envelope(region)
+            for lower, upper in pixel_ranges:
+                for pixel in range(lower, upper + 1):
+                    partitioned_object_ids[pixel].append(obj_id.diaObjectId)
+        return partitioned_object_ids

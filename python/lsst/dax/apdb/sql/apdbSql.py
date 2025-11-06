@@ -51,6 +51,7 @@ from ..apdb import Apdb
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
 from ..apdbSchema import ApdbSchema, ApdbTables
+from ..apdbUpdateRecord import ApdbCloseDiaObjectValidityRecord
 from ..config import ApdbConfig
 from ..monitor import MonAgent
 from ..recordIds import DiaObjectId
@@ -738,6 +739,78 @@ class ApdbSql(Apdb):
 
             if forced_sources is not None:
                 self._storeDiaForcedSources(forced_sources, replica_chunk, connection)
+
+    def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
+        # docstring is inherited from a base class
+
+        requested_ids = {obj.diaObjectId for obj in objects}
+
+        validityEnd_value: float | datetime.datetime
+        if self._schema.has_mjd_timestamps:
+            validity_end_column = "validityEndMjdTai"
+            validityEnd_value = float(validityEnd.tai.mjd)
+        else:
+            validity_end_column = "validityEnd"
+            validityEnd_value = validityEnd.datetime.astimezone(datetime.UTC)
+
+        # Find all matching DiaObjects with validityEnd = NULL.
+        table = self._schema.get_table(ApdbTables.DiaObject)
+        query = sql.select(table.columns["diaObjectId"]).where(
+            sqlalchemy.and_(
+                table.columns["diaObjectId"].in_(sorted(requested_ids)),
+                table.columns[validity_end_column].is_(None),
+            )
+        )
+
+        with self._engine.begin() as conn:
+            result = conn.execute(query)
+            found_ids = set(result.scalars())
+
+            # Check that we found all that is requested.
+            if missing_ids := (requested_ids - found_ids):
+                raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+
+            values = {validity_end_column: validityEnd_value}
+            update = (
+                table.update()
+                .where(
+                    sqlalchemy.and_(
+                        table.columns["diaObjectId"].in_(sorted(requested_ids)),
+                        table.columns[validity_end_column].is_(None),
+                    )
+                )
+                .values(**values)
+            )
+            conn.execute(update)
+
+            # Also drop them from DiaObjectLast.
+            if self.config.dia_object_index == "last_object_table":
+                last_table = self._schema.get_table(ApdbTables.DiaObjectLast)
+                delete = last_table.delete().where(
+                    last_table.columns["diaObjectId"].in_(sorted(requested_ids))
+                )
+                conn.execute(delete)
+
+        # If repication is enabled then send all updates.
+        if self._schema.replication_enabled:
+            current_time = self._current_time()
+            current_time_ns = int(current_time.unix_tai * 1e9)
+            replica_chunk = ReplicaChunk.make_replica_chunk(current_time, self.config.replica_chunk_seconds)
+
+            update_records = [
+                ApdbCloseDiaObjectValidityRecord(
+                    diaObjectId=obj.diaObjectId,
+                    ra=obj.ra,
+                    dec=obj.dec,
+                    update_time_ns=current_time_ns,
+                    update_order=index,
+                    validityEndMjdTai=float(validityEnd.tai.mjd),
+                    nDiaSources=None,
+                )
+                for index, obj in enumerate(objects)
+            ]
+
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
