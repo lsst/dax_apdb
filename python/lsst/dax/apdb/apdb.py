@@ -366,6 +366,26 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
+        """Close validity interval for specified DiaObjects.
+
+        Parameters
+        ----------
+        objects : `list` [`DiaObjectId`]
+            DiaObjects which will have their validityEnd updated, if their
+            current validityEnd is NULL.
+        validityEnd : `astropy.time.Time`
+            Value for validityEnd.
+
+        Raises
+        ------
+        LookupError
+            Raised if some of the specified DiaObjects could not be found in
+            the database.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         """Associate DiaSources with SSObjects, dis-associating them
         from DiaObjects.
