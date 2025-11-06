@@ -578,6 +578,47 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertEqual(set(catalog["diaObjectId"]), {400})
         self.assertEqual(set(catalog["diaSourceId"]), {3_000_000})
 
+    def test_setValidityEnd(self) -> None:
+        """Store DiaObjects and truncate validity for some."""
+        # don't care about sources.
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        region = self.make_region()
+        visit_time = self.visit_time
+
+        # make catalog with Objects
+        catalog = makeObjectCatalog(region, 100)
+
+        # store catalog
+        apdb.store(visit_time, catalog)
+
+        # read it back and check sizes
+        res = apdb.getDiaObjects(region)
+        self.assert_catalog(res, 100, self.getDiaObjects_table())
+
+        # Select first 10 objects.
+        object_ids = [DiaObjectId.from_named_tuple(row) for row in catalog.iloc[:10].itertuples()]
+        apdb.setValidityEnd(object_ids, self.processing_time)
+
+        res = apdb.getDiaObjects(region)
+        self.assert_catalog(res, 90, self.getDiaObjects_table())
+
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            # Check that there are 10 update records in replica tables.
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            self.assertEqual(len(update_records), 10)
+
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
         # don't care about sources.

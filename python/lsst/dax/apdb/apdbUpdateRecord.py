@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from .apdb import ApdbTables
+from .recordIds import DiaObjectId
 
 
 @dataclass(kw_only=True)
@@ -207,11 +208,8 @@ class ApdbWithdrawDiaForcedSourceRecord(ApdbUpdateRecord, update_type="withdraw_
 
 
 @dataclass(kw_only=True)
-class ApdbCloseDiaObjectValidityRecord(ApdbUpdateRecord, update_type="close_diaobject_validity"):
+class ApdbCloseDiaObjectValidityRecord(ApdbUpdateRecord, DiaObjectId, update_type="close_diaobject_validity"):
     """Record representing closing of the validity interval of DIAObject."""
-
-    diaObjectId: int
-    """ID of DIAObject."""
 
     validityEndMjdTai: float
     """Time to set validityEnd to."""
@@ -219,16 +217,6 @@ class ApdbCloseDiaObjectValidityRecord(ApdbUpdateRecord, update_type="close_diao
     nDiaSources: int | None
     """New value for nDiaSources column for updated record, or None if
     nDiaSources does not change.
-    """
-
-    ra: float
-    """DIAObject ra, not required to be exact, but needs to be close to the
-    database record.
-    """
-
-    dec: float
-    """DIAObject dec, not required to be exact, but needs to be close to the
-    database record.
     """
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaObject
