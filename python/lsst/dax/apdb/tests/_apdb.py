@@ -57,7 +57,8 @@ from .data_factory import (
     makeForcedSourceCatalog,
     makeObjectCatalog,
     makeSourceCatalog,
-    makeTimestampNow,
+    makeTimestamp,
+    makeTimestampColumn,
 )
 from .utils import TestCaseMixin
 
@@ -130,6 +131,8 @@ class ApdbTest(TestCaseMixin, ABC):
     """
 
     visit_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+
+    processing_time = astropy.time.Time("2021-01-01T12:00:00", format="isot", scale="tai")
 
     fsrc_requires_id_list = False
     """Should be set to True if getDiaForcedSources requires object IDs"""
@@ -473,11 +476,13 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # Cassandra has a millisecond precision, so subtract 1ms to allow for
         # truncated returned values.
-        time_before = makeTimestampNow(self.use_mjd, -1)
+        time_before = makeTimestamp(self.processing_time, self.use_mjd, -1)
         objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
-        catalog = makeForcedSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
-        time_after = makeTimestampNow(self.use_mjd)
+        catalog = makeForcedSourceCatalog(
+            objects, visit_time, processing_time=self.processing_time, use_mjd=self.use_mjd
+        )
+        time_after = makeTimestamp(self.processing_time, self.use_mjd)
 
         apdb.store(visit_time, objects, forced_sources=catalog)
 
@@ -486,7 +491,7 @@ class ApdbTest(TestCaseMixin, ABC):
         assert res is not None
         self.assert_catalog(res, len(catalog), ApdbTables.DiaForcedSource)
 
-        time_processed_column = "timeProcessedMjdTai" if self.use_mjd else "time_processed"
+        time_processed_column = makeTimestampColumn("time_processed", self.use_mjd)
         self.assertIn(time_processed_column, res.dtypes)
         dtype = res.dtypes[time_processed_column]
         timestamp_type_name = "float64" if self.use_mjd else "datetime64[ns]"
@@ -533,6 +538,8 @@ class ApdbTest(TestCaseMixin, ABC):
         """Test getDiaSourcesForDiaObjects() method."""
         config = self.make_instance()
         apdb = Apdb.from_config(config)
+        # Monkey-patch APDB instance to set current time.
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
 
         region1 = self.make_region((1.0, 1.0, -1.0))
         region2 = self.make_region((-1.0, 1.0, -1.0))

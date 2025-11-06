@@ -539,7 +539,7 @@ class ApdbCassandra(Apdb):
         config = context.config
 
         # Which tables to query and temporal constraints.
-        end_time = astropy.time.Time.now()
+        end_time = self._current_time()
         tables, temporal_where = context.partitioner.temporal_where(
             ApdbTables.DiaSource,
             start_time,
@@ -727,13 +727,14 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
+        now = self._current_time()
         if self.schema.has_mjd_timestamps:
             reassign_time_column = "ssObjectReassocTimeMjdTai"
-            reassignTime = float(astropy.time.Time.now().tai.mjd)
+            reassignTime = float(now.tai.mjd)
         else:
             reassign_time_column = "ssObjectReassocTime"
             # Current time as milliseconds since epoch.
-            reassignTime = int(datetime.datetime.now(tz=datetime.UTC).timestamp() * 1000)
+            reassignTime = int(now.datetime.astimezone(tz=datetime.UTC).timestamp() * 1000)
 
         # To update a record we need to know its exact primary key (including
         # partition key) so we start by querying for diaSourceId to find the
