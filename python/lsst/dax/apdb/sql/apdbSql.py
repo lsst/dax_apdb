@@ -743,12 +743,13 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
 
         timestamp: float | datetime.datetime
+        now = self._current_time()
         if self.schema.has_mjd_timestamps:
             timestamp_column = "ssObjectReassocTimeMjdTai"
-            timestamp = float(astropy.time.Time.now().tai.mjd)
+            timestamp = float(now.tai.mjd)
         else:
             timestamp_column = "ssObjectReassocTime"
-            timestamp = datetime.datetime.now(tz=datetime.UTC)
+            timestamp = now.datetime.astimezone(tz=datetime.UTC)
 
         table = self._schema.get_table(ApdbTables.DiaSource)
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))

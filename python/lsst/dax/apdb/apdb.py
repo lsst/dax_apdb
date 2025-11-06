@@ -417,3 +417,19 @@ class Apdb(ABC):
     def admin(self) -> ApdbAdmin:
         """Object providing adminitrative interface for APDB (`ApdbAdmin`)."""
         raise NotImplementedError()
+
+    def _current_time(self) -> astropy.time.Time:
+        """Return current system time.
+
+        Returns
+        -------
+        current_time : `astropy.time.Time`
+            Current time.
+
+        Notes
+        -----
+        This method exists primarily for testing purposes, it can be
+        monkey-patched in unit tests to return something else than current
+        system time, if necessary.
+        """
+        return astropy.time.Time.now()
