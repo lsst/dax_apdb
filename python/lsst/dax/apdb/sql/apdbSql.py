@@ -560,10 +560,7 @@ class ApdbSql(Apdb):
         # build selection
         query = query.where(self._filterRegion(table, region))
 
-        if self.schema.has_mjd_timestamps:
-            validity_end_column = "validityEndMjdTai"
-        else:
-            validity_end_column = "validityEnd"
+        validity_end_column = self._timestamp_column_name("validityEnd")
 
         # select latest version of objects
         if self.config.dia_object_index != "last_object_table":
@@ -640,12 +637,8 @@ class ApdbSql(Apdb):
     def getDiaObjectsForDedup(self, since: astropy.time.Time) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
-        if self._schema.has_mjd_timestamps:
-            validity_start_column = "validityStartMjdTai"
-            timestamp = float(since.tai.mjd)
-        else:
-            validity_start_column = "validityStart"
-            timestamp = since.datetime
+        validity_start_column = self._timestamp_column_name("validityStart")
+        timestamp = self._timestamp_column_value(since)
 
         # decide what columns we need
         if self.config.dia_object_index == "last_object_table":
@@ -745,13 +738,8 @@ class ApdbSql(Apdb):
 
         requested_ids = {obj.diaObjectId for obj in objects}
 
-        validityEnd_value: float | datetime.datetime
-        if self._schema.has_mjd_timestamps:
-            validity_end_column = "validityEndMjdTai"
-            validityEnd_value = float(validityEnd.tai.mjd)
-        else:
-            validity_end_column = "validityEnd"
-            validityEnd_value = validityEnd.datetime.astimezone(datetime.UTC)
+        validity_end_column = self._timestamp_column_name("validityEnd")
+        validityEnd_value = self._timestamp_column_value(validityEnd)
 
         # Find all matching DiaObjects with validityEnd = NULL.
         table = self._schema.get_table(ApdbTables.DiaObject)
@@ -817,12 +805,8 @@ class ApdbSql(Apdb):
 
         timestamp: float | datetime.datetime
         now = self._current_time()
-        if self.schema.has_mjd_timestamps:
-            timestamp_column = "ssObjectReassocTimeMjdTai"
-            timestamp = float(now.tai.mjd)
-        else:
-            timestamp_column = "ssObjectReassocTime"
-            timestamp = now.datetime.astimezone(tz=datetime.UTC)
+        timestamp_column = self._timestamp_column_name("ssObjectReassocTime")
+        timestamp = self._timestamp_column_value(now)
 
         table = self._schema.get_table(ApdbTables.DiaSource)
         query = table.update().where(table.columns["diaSourceId"] == sql.bindparam("srcId"))
@@ -852,14 +836,18 @@ class ApdbSql(Apdb):
         # Retrieve the DiaObject table.
         table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaObject)
 
-        if self.schema.has_mjd_timestamps:
-            validity_end_column = "validityEndMjdTai"
-        else:
-            validity_end_column = "validityEnd"
-
         # Construct the sql statement.
-        stmt = sql.select(func.count()).select_from(table).where(table.c.nDiaSources == 1)
-        stmt = stmt.where(table.columns[validity_end_column] == None)  # noqa: E711
+        validity_end_column = self._timestamp_column_name("validityEnd")
+        stmt = (
+            sql.select(func.count())
+            .select_from(table)
+            .where(
+                sqlalchemy.and_(
+                    table.columns["nDiaSources"] == 1,
+                    table.columns[validity_end_column].is_(None),
+                )
+            )
+        )
 
         # Return the count.
         with self._engine.begin() as conn:
@@ -1048,14 +1036,9 @@ class ApdbSql(Apdb):
         ids = sorted(int(oid) for oid in objs["diaObjectId"])
         _LOG.debug("first object ID: %d", ids[0])
 
-        if self.schema.has_mjd_timestamps:
-            validity_start_column = "validityStartMjdTai"
-            validity_end_column = "validityEndMjdTai"
-            timestamp = float(visit_time.tai.mjd)
-        else:
-            validity_start_column = "validityStart"
-            validity_end_column = "validityEnd"
-            timestamp = visit_time.datetime
+        validity_start_column = self._timestamp_column_name("validityStart")
+        validity_end_column = self._timestamp_column_name("validityEnd")
+        timestamp = self._timestamp_column_value(visit_time)
 
         # everything to be done in single transaction
         if self.config.dia_object_index == "last_object_table":
@@ -1404,3 +1387,14 @@ class ApdbSql(Apdb):
             # tz_convert(None) will convert to UTC and drop timezone.
             df[column] = df[column].dt.tz_convert(None)
         return df
+
+    def _timestamp_column_name(self, column: str) -> str:
+        """Return column name before/after schema migration to MJD TAI."""
+        return self._schema.timestamp_column_name(column)
+
+    def _timestamp_column_value(self, time: astropy.time.Time) -> float | datetime.datetime:
+        """Return column value before/after schema migration to MJD TAI."""
+        if self._schema.has_mjd_timestamps:
+            return float(time.tai.mjd)
+        else:
+            return time.datetime.astimezone(tz=datetime.UTC)

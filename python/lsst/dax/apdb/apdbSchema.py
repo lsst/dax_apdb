@@ -242,3 +242,26 @@ class ApdbSchema:
         raise LookupError(
             "Could not find validityStart or validityStartMjdTai column in DiaObject table schema."
         )
+
+    def timestamp_column_name(self, column: str) -> str:
+        """Return column name before/after schema migration to MJD TAI.
+
+        Parameters
+        ----------
+        column : `str`
+            Column name before MJD TAI schema migration.
+
+        Returns
+        -------
+        column : `str`
+            Column name in current schema.
+        """
+        if self.has_mjd_timestamps:
+            if column == "time_processed":
+                return "timeProcessedMjdTai"
+            elif column == "time_withdrawn":
+                return "timeWithdrawnMjdTai"
+            else:
+                return f"{column}MjdTai"
+        else:
+            return column

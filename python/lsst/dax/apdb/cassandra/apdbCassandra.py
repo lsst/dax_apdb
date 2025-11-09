@@ -421,21 +421,17 @@ class ApdbCassandra(Apdb):
             statements.append((statement, params))
         _LOG.debug("getDiaObjects: #queries: %s", len(statements))
 
-        with _MON.context_tags({"table": "DiaObject"}):
-            _MON.add_record(
-                "select_query_stats", values={"num_sp_part": num_sp_part, "num_queries": len(statements)}
+        with self._timer("select_time", tags={"table": "DiaObject", "method": "getDiaObjects"}) as timer:
+            objects = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi",
+                    config.connection_config.read_concurrency,
+                ),
             )
-            with self._timer("select_time") as timer:
-                objects = cast(
-                    pandas.DataFrame,
-                    select_concurrent(
-                        context.session,
-                        statements,
-                        "read_pandas_multi",
-                        config.connection_config.read_concurrency,
-                    ),
-                )
-                timer.add_values(row_count=len(objects))
+            timer.add_values(row_count=len(objects), num_sp_part=num_sp_part, num_queries=len(statements))
 
         _LOG.debug("found %s DiaObjects", objects.shape[0])
         return objects
@@ -497,12 +493,8 @@ class ApdbCassandra(Apdb):
         column_names = context.schema.apdbColumnNames(ExtraTables.DiaObjectDedup)
         what = ",".join(quote_id(column) for column in column_names)
 
-        if self._schema.has_mjd_timestamps:
-            validity_start_column = "validityStartMjdTai"
-            timestamp = float(since.tai.mjd)
-        else:
-            validity_start_column = "validityStart"
-            timestamp = since.datetime
+        validity_start_column = self._timestamp_column_name("validityStart")
+        timestamp = self._timestamp_column_value(since)
 
         table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
         query = (
@@ -517,7 +509,9 @@ class ApdbCassandra(Apdb):
         for dedup_part in range(num_part):
             statements.append((statement, (dedup_part, timestamp)))
 
-        with self._timer("select_time", tags={"table": "DiaObjectDedup"}) as timer:
+        with self._timer(
+            "select_time", tags={"table": "DiaObjectDedup", "method": "getDiaObjectsForDedup"}
+        ) as timer:
             objects = cast(
                 pandas.DataFrame,
                 select_concurrent(
@@ -527,7 +521,7 @@ class ApdbCassandra(Apdb):
                     config.connection_config.read_concurrency,
                 ),
             )
-            timer.add_values(row_count=len(objects))
+            timer.add_values(row_count=len(objects), num_queries=num_part)
 
         _LOG.debug("found %s DiaObjectDedup records", objects.shape[0])
         return objects
@@ -580,7 +574,9 @@ class ApdbCassandra(Apdb):
 
         _LOG.debug("getDiaSourcesForDiaObjects #queries: %s", len(statements))
 
-        with self._timer("select_time", tags={"table": "DiaSource"}) as timer:
+        with self._timer(
+            "select_time", tags={"table": "DiaSource", "method": "getDiaSourcesForDiaObjects"}
+        ) as timer:
             catalog = cast(
                 pandas.DataFrame,
                 select_concurrent(
@@ -590,7 +586,7 @@ class ApdbCassandra(Apdb):
                     config.connection_config.read_concurrency,
                 ),
             )
-            timer.add_values(row_count_from_db=len(catalog))
+            timer.add_values(row_count_from_db=len(catalog), num_queries=len(statements))
 
             # precise filtering on midpointMjdTai
             catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] >= start_time.tai.mjd])
@@ -617,7 +613,7 @@ class ApdbCassandra(Apdb):
             query = (
                 f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" WHERE visit = %s AND detector = %s'
             )
-            with self._timer("contains_visit_detector_time"):
+            with self._timer("contains_visit_detector_time", tags={"table": table_name}):
                 result = context.session.execute(query, (visit, detector))
                 return bool(result.one()[0])
 
@@ -647,7 +643,7 @@ class ApdbCassandra(Apdb):
                     self._combine_where(prefix, sp_where, temporal_where, visit_detector_where, suffix)
                 )
 
-        with self._timer("contains_visit_detector_time"):
+        with self._timer("contains_visit_detector_time", tags={"table": "DiaSource"}):
             result = cast(
                 list[tuple[int] | None],
                 select_concurrent(
@@ -809,13 +805,8 @@ class ApdbCassandra(Apdb):
         config = context.config
 
         now = self._current_time()
-        if self.schema.has_mjd_timestamps:
-            reassign_time_column = "ssObjectReassocTimeMjdTai"
-            reassignTime = float(now.tai.mjd)
-        else:
-            reassign_time_column = "ssObjectReassocTime"
-            # Current time as milliseconds since epoch.
-            reassignTime = int(now.datetime.astimezone(tz=datetime.UTC).timestamp() * 1000)
+        reassign_time_column = self._timestamp_column_name("ssObjectReassocTime")
+        reassignTime = self._timestamp_column_value(now)
 
         # To update a record we need to know its exact primary key (including
         # partition key) so we start by querying for diaSourceId to find the
@@ -971,30 +962,28 @@ class ApdbCassandra(Apdb):
             statements += list(self._combine_where(prefix, sp_where, temporal_where))
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
-        with _MON.context_tags({"table": table_name.name}):
-            _MON.add_record(
-                "select_query_stats", values={"num_sp_part": num_sp_part, "num_queries": len(statements)}
+        with self._timer("select_time", tags={"table": table_name.name, "method": "_getSources"}) as timer:
+            catalog = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi",
+                    config.connection_config.read_concurrency,
+                ),
             )
-            with self._timer("select_time") as timer:
-                catalog = cast(
-                    pandas.DataFrame,
-                    select_concurrent(
-                        context.session,
-                        statements,
-                        "read_pandas_multi",
-                        config.connection_config.read_concurrency,
-                    ),
-                )
-                timer.add_values(row_count_from_db=len(catalog))
+            timer.add_values(
+                row_count_from_db=len(catalog), num_sp_part=num_sp_part, num_queries=len(statements)
+            )
 
-                # filter by given object IDs
-                if len(object_id_set) > 0:
-                    catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
+            # filter by given object IDs
+            if len(object_id_set) > 0:
+                catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
 
-                # precise filtering on midpointMjdTai
-                catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] > mjd_start])
+            # precise filtering on midpointMjdTai
+            catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] > mjd_start])
 
-                timer.add_values(row_count=len(catalog))
+            timer.add_values(row_count=len(catalog))
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
@@ -1045,7 +1034,7 @@ class ApdbCassandra(Apdb):
             queries.append((query, ()))
             object_count += len(id_chunk_list)
 
-        with self._timer("query_object_last_partitions") as timer:
+        with self._timer("query_object_last_partitions", tags={"table": table_name}) as timer:
             data = cast(
                 ApdbTableData,
                 select_concurrent(
@@ -1089,7 +1078,7 @@ class ApdbCassandra(Apdb):
             queries = []
             for oid, (old_part, _) in moved_oids.items():
                 queries.append((statement, (old_part, oid)))
-            with self._timer("delete_object_last") as timer:
+            with self._timer("delete_object_last", tags={"table": table_name}) as timer:
                 execute_concurrent(context.session, queries, execution_profile="write")
                 timer.add_values(row_count=len(moved_oids))
 
@@ -1102,7 +1091,7 @@ class ApdbCassandra(Apdb):
         for oid, new_part in new_partitions.items():
             queries.append((statement, (oid, new_part)))
 
-        with self._timer("update_object_last_partition") as timer:
+        with self._timer("update_object_last_partition", tags={"table": table_name}) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(queries))
 
@@ -1130,13 +1119,8 @@ class ApdbCassandra(Apdb):
         if context.has_dia_object_last_to_partition:
             self._deleteMovingObjects(objs)
 
-        timestamp: float | datetime.datetime
-        if self.schema.has_mjd_timestamps:
-            validity_start_column = "validityStartMjdTai"
-            timestamp = float(visit_time.tai.mjd)
-        else:
-            validity_start_column = "validityStart"
-            timestamp = visit_time.datetime
+        validity_start_column = self._timestamp_column_name("validityStart")
+        timestamp = self._timestamp_column_value(visit_time)
 
         # DiaObjectLast did not have this column in the past.
         extra_columns: dict[str, Any] = {}
@@ -1421,7 +1405,9 @@ class ApdbCassandra(Apdb):
                     assert batch.routing_key is not None and batch.keyspace is not None
 
         _LOG.debug("%s: will store %d records", context.schema.tableName(table_name), records.shape[0])
-        with self._timer("insert_time", tags={"table": table_name.name}) as timer:
+        with self._timer(
+            "insert_time", tags={"table": table_name.name, "method": "_storeObjectsPandas"}
+        ) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(records), num_batches=len(queries))
 
@@ -1488,7 +1474,7 @@ class ApdbCassandra(Apdb):
         query = f'INSERT INTO "{self._keyspace}"."{table_name}" ({columns_str}) VALUES ({placeholders})'
         queries = [(query, row) for row in rows]
 
-        with self._timer("store_update_record") as timer:
+        with self._timer("store_update_record", tags={"table": table_name}) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(queries))
 
@@ -1668,3 +1654,14 @@ class ApdbCassandra(Apdb):
                 for pixel in range(lower, upper + 1):
                     partitioned_object_ids[pixel].append(obj_id.diaObjectId)
         return partitioned_object_ids
+
+    def _timestamp_column_name(self, column: str) -> str:
+        """Return column name before/after schema migration to MJD TAI."""
+        return self._schema.timestamp_column_name(column)
+
+    def _timestamp_column_value(self, time: astropy.time.Time) -> float | int:
+        """Return column value before/after schema migration to MJD TAI."""
+        if self._schema.has_mjd_timestamps:
+            return float(time.tai.mjd)
+        else:
+            return int(time.datetime.astimezone(tz=datetime.UTC).timestamp() * 1000)
