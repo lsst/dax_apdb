@@ -24,7 +24,8 @@ import unittest
 
 from lsst.dax.apdb.apdbUpdateRecord import (
     ApdbCloseDiaObjectValidityRecord,
-    ApdbReassignDiaSourceRecord,
+    ApdbReassignDiaSourceToDiaObjectRecord,
+    ApdbReassignDiaSourceToSSObjectRecord,
     ApdbUpdateNDiaSourcesRecord,
     ApdbUpdateRecord,
     ApdbWithdrawDiaForcedSourceRecord,
@@ -38,17 +39,47 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
     update_time_ns1 = 2_000_000_000_000_000_000
     update_time_ns2 = 2_000_000_001_000_000_000
 
-    def test_reassign_diasource(self) -> None:
-        """Test round-tripping ApdbReassignDiaSourceRecord class."""
-        record = ApdbReassignDiaSourceRecord(
+    def test_reassign_diasource_to_ssobject(self) -> None:
+        """Test round-tripping ApdbReassignDiaSourceToSSObjectRecord class."""
+        record = ApdbReassignDiaSourceToSSObjectRecord(
             update_time_ns=self.update_time_ns1,
             update_order=0,
             diaSourceId=123456,
-            diaObjectId=321,
             ssObjectId=1,
             ssObjectReassocTimeMjdTai=60000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=59999.0,
+        )
+        record_json = record.to_json()
+        record_dict = json.loads(record_json)
+        self.assertEqual(
+            record_dict,
+            {
+                "diaSourceId": 123456,
+                "ssObjectId": 1,
+                "ssObjectReassocTimeMjdTai": 60000.0,
+                "ra": 45.0,
+                "dec": -45.0,
+                "midpointMjdTai": 59999.0,
+                "update_type": "reassign_diasource_to_ssobject",
+            },
+        )
+
+        record2 = ApdbUpdateRecord.from_json(self.update_time_ns1, 0, record_json)
+        self.assertIsInstance(record2, ApdbReassignDiaSourceToSSObjectRecord)
+        self.assertEqual(record2, record)
+
+    def test_reassign_diasource_to_diaobject(self) -> None:
+        """Test round-tripping ApdbReassignDiaSourceToDiaObjectRecord class."""
+        record = ApdbReassignDiaSourceToDiaObjectRecord(
+            update_time_ns=self.update_time_ns1,
+            update_order=0,
+            diaSourceId=123456,
+            diaObjectId=321,
+            ra=45.0,
+            dec=-45.0,
+            midpointMjdTai=59999.0,
         )
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -57,16 +88,15 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             {
                 "diaSourceId": 123456,
                 "diaObjectId": 321,
-                "ssObjectId": 1,
-                "ssObjectReassocTimeMjdTai": 60000.0,
                 "ra": 45.0,
                 "dec": -45.0,
-                "update_type": "reassign_diasource",
+                "midpointMjdTai": 59999.0,
+                "update_type": "reassign_diasource_to_diaobject",
             },
         )
 
         record2 = ApdbUpdateRecord.from_json(self.update_time_ns1, 0, record_json)
-        self.assertIsInstance(record2, ApdbReassignDiaSourceRecord)
+        self.assertIsInstance(record2, ApdbReassignDiaSourceToDiaObjectRecord)
         self.assertEqual(record2, record)
 
     def test_close_diaobject_validity(self) -> None:
@@ -131,10 +161,10 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             update_time_ns=self.update_time_ns1,
             update_order=0,
             diaSourceId=123456,
-            diaObjectId=321,
             timeWithdrawnMjdTai=61000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=60000.0,
         )
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -142,10 +172,10 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             record_dict,
             {
                 "diaSourceId": 123456,
-                "diaObjectId": 321,
                 "timeWithdrawnMjdTai": 61000.0,
                 "ra": 45.0,
                 "dec": -45.0,
+                "midpointMjdTai": 60000.0,
                 "update_type": "withdraw_diasource",
             },
         )
@@ -165,6 +195,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             timeWithdrawnMjdTai=61000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=60000.0,
         )
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -177,6 +208,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
                 "timeWithdrawnMjdTai": 61000.0,
                 "ra": 45.0,
                 "dec": -45.0,
+                "midpointMjdTai": 60000.0,
                 "update_type": "withdraw_diaforcedsource",
             },
         )
@@ -187,43 +219,43 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
 
     def test_ordering(self) -> None:
         """Test ordering of records."""
-        record1 = ApdbReassignDiaSourceRecord(
+        record1 = ApdbReassignDiaSourceToSSObjectRecord(
             update_time_ns=self.update_time_ns1,
             update_order=0,
             diaSourceId=1,
-            diaObjectId=321,
             ssObjectId=1,
             ssObjectReassocTimeMjdTai=60000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=60000.0,
         )
         record2 = ApdbWithdrawDiaSourceRecord(
             update_time_ns=self.update_time_ns1,
             update_order=1,
             diaSourceId=123456,
-            diaObjectId=321,
             timeWithdrawnMjdTai=61000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=60000.0,
         )
-        record3 = ApdbReassignDiaSourceRecord(
+        record3 = ApdbReassignDiaSourceToSSObjectRecord(
             update_time_ns=self.update_time_ns1,
             update_order=3,
             diaSourceId=2,
-            diaObjectId=3,
             ssObjectId=3,
             ssObjectReassocTimeMjdTai=60000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=60000.0,
         )
         record4 = ApdbWithdrawDiaSourceRecord(
             update_time_ns=self.update_time_ns2,
             update_order=0,
             diaSourceId=123456,
-            diaObjectId=321,
             timeWithdrawnMjdTai=61000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=60000.0,
         )
         record5 = ApdbWithdrawDiaForcedSourceRecord(
             update_time_ns=self.update_time_ns2,
@@ -234,6 +266,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             timeWithdrawnMjdTai=61000.0,
             ra=45.0,
             dec=-45.0,
+            midpointMjdTai=60000.0,
         )
 
         unordered = [record5, record3, record1, record4, record2]
