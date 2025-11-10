@@ -42,7 +42,7 @@ from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from .. import (
     Apdb,
     ApdbConfig,
-    ApdbReassignDiaSourceRecord,
+    ApdbReassignDiaSourceToSSObjectRecord,
     ApdbReplica,
     ApdbTableData,
     ApdbTables,
@@ -778,43 +778,43 @@ class ApdbTest(TestCaseMixin, ABC):
         update_time_ns1 = 2_000_000_000_000_000_000
         update_time_ns2 = 2_000_000_001_000_000_000
         records = [
-            ApdbReassignDiaSourceRecord(
+            ApdbReassignDiaSourceToSSObjectRecord(
                 update_time_ns=update_time_ns1,
                 update_order=0,
                 diaSourceId=1,
-                diaObjectId=321,
                 ssObjectId=1,
                 ssObjectReassocTimeMjdTai=60000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
             ApdbWithdrawDiaSourceRecord(
                 update_time_ns=update_time_ns1,
                 update_order=1,
                 diaSourceId=123456,
-                diaObjectId=321,
                 timeWithdrawnMjdTai=61000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
-            ApdbReassignDiaSourceRecord(
+            ApdbReassignDiaSourceToSSObjectRecord(
                 update_time_ns=update_time_ns1,
                 update_order=3,
                 diaSourceId=2,
-                diaObjectId=3,
                 ssObjectId=3,
                 ssObjectReassocTimeMjdTai=60000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
             ApdbWithdrawDiaSourceRecord(
                 update_time_ns=update_time_ns2,
                 update_order=0,
                 diaSourceId=123456,
-                diaObjectId=321,
                 timeWithdrawnMjdTai=61000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
         ]
 
