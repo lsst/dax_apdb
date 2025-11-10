@@ -23,7 +23,8 @@ from __future__ import annotations
 
 __all__ = [
     "ApdbCloseDiaObjectValidityRecord",
-    "ApdbReassignDiaSourceRecord",
+    "ApdbReassignDiaSourceToDiaObjectRecord",
+    "ApdbReassignDiaSourceToSSObjectRecord",
     "ApdbUpdateNDiaSourcesRecord",
     "ApdbUpdateRecord",
     "ApdbWithdrawDiaForcedSourceRecord",
@@ -38,7 +39,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from .apdb import ApdbTables
-from .recordIds import DiaObjectId
+from .recordIds import DiaForcedSourceId, DiaObjectId, DiaSourceId
 
 
 @dataclass(kw_only=True)
@@ -122,14 +123,24 @@ class ApdbUpdateRecord(ABC):
 
 
 @dataclass(kw_only=True)
-class ApdbReassignDiaSourceRecord(ApdbUpdateRecord, update_type="reassign_diasource"):
-    """Update record representing re-assignment of DIASource to SSObject."""
-
-    diaSourceId: int
-    """ID of DIASource record."""
+class ApdbReassignDiaSourceToDiaObjectRecord(
+    ApdbUpdateRecord, DiaSourceId, update_type="reassign_diasource_to_diaobject"
+):
+    """Update record representing re-assignment of DIASource to a different
+    DIAObject.
+    """
 
     diaObjectId: int
-    """ID of associated DIAObject record."""
+    """ID of a new associated DIAObject record."""
+
+    apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaSource
+
+
+@dataclass(kw_only=True)
+class ApdbReassignDiaSourceToSSObjectRecord(
+    ApdbUpdateRecord, DiaSourceId, update_type="reassign_diasource_to_ssobject"
+):
+    """Update record representing re-assignment of DIASource to SSObject."""
 
     ssObjectId: int
     """ID of SSObject to re-associate to."""
@@ -137,72 +148,27 @@ class ApdbReassignDiaSourceRecord(ApdbUpdateRecord, update_type="reassign_diasou
     ssObjectReassocTimeMjdTai: float
     """Time when DIASource was re-associated from DIAObject to SSObject."""
 
-    ra: float
-    """DIASource ra, not required to be exact, but needs to be close to the
-    database record.
-    """
-
-    dec: float
-    """DIASource dec, not required to be exact, but needs to be close to the
-    database record.
-    """
-
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaSource
 
 
 @dataclass(kw_only=True)
-class ApdbWithdrawDiaSourceRecord(ApdbUpdateRecord, update_type="withdraw_diasource"):
+class ApdbWithdrawDiaSourceRecord(ApdbUpdateRecord, DiaSourceId, update_type="withdraw_diasource"):
     """Update record representing withdrawal of DIASource."""
 
-    diaSourceId: int
-    """ID of DIASource record."""
-
-    diaObjectId: int | None
-    """ID of associated DIAObject record or None if it is associated to
-    SSObject.
-    """
-
     timeWithdrawnMjdTai: float
     """Time when this record was marked invalid."""
-
-    ra: float
-    """DIASource ra, not required to be exact, but needs to be close to the
-    database record.
-    """
-
-    dec: float
-    """DIASource dec, not required to be exact, but needs to be close to the
-    database record.
-    """
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaSource
 
 
 @dataclass(kw_only=True)
-class ApdbWithdrawDiaForcedSourceRecord(ApdbUpdateRecord, update_type="withdraw_diaforcedsource"):
+class ApdbWithdrawDiaForcedSourceRecord(
+    ApdbUpdateRecord, DiaForcedSourceId, update_type="withdraw_diaforcedsource"
+):
     """Update record representing withdrawal of DIAForcedSource."""
-
-    diaObjectId: int
-    """ID of DIAObject for withdrawn DIAForcedSource."""
-
-    visit: int
-    """Visit ID of DIAForcedSource."""
-
-    detector: int
-    """Detector ID of DIAForcedSource."""
 
     timeWithdrawnMjdTai: float
     """Time when this record was marked invalid."""
-
-    ra: float
-    """DIAForcedSource ra, not required to be exact, but needs to be close to
-    the database record.
-    """
-
-    dec: float
-    """DIAForcedSource dec, not required to be exact, but needs to be close to
-    the database record.
-    """
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaForcedSource
 
@@ -223,25 +189,12 @@ class ApdbCloseDiaObjectValidityRecord(ApdbUpdateRecord, DiaObjectId, update_typ
 
 
 @dataclass(kw_only=True)
-class ApdbUpdateNDiaSourcesRecord(ApdbUpdateRecord, update_type="update_n_dia_sources"):
+class ApdbUpdateNDiaSourcesRecord(ApdbUpdateRecord, DiaObjectId, update_type="update_n_dia_sources"):
     """Record representing change in the number of associated sources of
     DIAObject.
     """
 
-    diaObjectId: int
-    """ID of DIAObject."""
-
     nDiaSources: int
     """New value for nDiaSources column for updated record."""
-
-    ra: float
-    """DIAObject ra, not required to be exact, but needs to be close to the
-    database record.
-    """
-
-    dec: float
-    """DIAObject dec, not required to be exact, but needs to be close to the
-    database record.
-    """
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaObject
