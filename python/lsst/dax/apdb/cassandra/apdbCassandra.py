@@ -28,7 +28,7 @@ import logging
 import random
 import uuid
 import warnings
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
 
@@ -56,9 +56,13 @@ from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbSchema, ApdbTables
-from ..apdbUpdateRecord import ApdbCloseDiaObjectValidityRecord
+from ..apdbUpdateRecord import (
+    ApdbCloseDiaObjectValidityRecord,
+    ApdbReassignDiaSourceToDiaObjectRecord,
+    ApdbUpdateNDiaSourcesRecord,
+)
 from ..monitor import MonAgent
-from ..recordIds import DiaObjectId
+from ..recordIds import DiaObjectId, DiaSourceId
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import VersionTuple
@@ -626,7 +630,7 @@ class ApdbCassandra(Apdb):
         visit_detector_where = ("visit = ? AND detector = ?", (visit, detector))
 
         # Sources are partitioned on their midPointMjdTai. To avoid precision
-        # issues add some fuzzines to visit time.
+        # issues add some fuzziness to visit time.
         mjd_start = float(visit_time.tai.mjd) - 1.0 / 24
         mjd_end = float(visit_time.tai.mjd) + 1.0 / 24
 
@@ -709,6 +713,142 @@ class ApdbCassandra(Apdb):
         if forced_sources is not None and len(forced_sources) > 0:
             forced_sources = self._add_apdb_part(forced_sources)
             self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk)
+
+    def reassignDiaSourcesToDiaObjects(
+        self,
+        idMap: Mapping[DiaSourceId, int],
+        *,
+        increment_nDiaSources: bool = True,
+        decrement_nDiaSources: bool = True,
+    ) -> None:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        source_ids = {source_id.diaSourceId for source_id in idMap}
+
+        # Find all DiaSources.
+        found_sources = self._get_diasource_data(
+            idMap, "apdb_part", "diaObjectId", "ra", "dec", "midpointMjdTai"
+        )
+
+        if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
+            raise LookupError(f"Some source IDs were not found in DiaSource table: {missing_ids}")
+
+        found_sources_by_id = {row.diaSourceId: row for row in found_sources}
+
+        # Make sure that all DiaObjects exist, we also want to know
+        # nDiaSources count for current and new records because we want to
+        # send updated values to replica.
+        current_object_ids = {
+            DiaObjectId(diaObjectId=row.diaObjectId, ra=row.ra, dec=row.dec) for row in found_sources
+        }
+        # Assume that DiaSource ra/dec are very close to re-assigned objects.
+        new_object_ids = {
+            DiaObjectId(diaObjectId=diaObjectId, ra=source_id.ra, dec=source_id.dec)
+            for source_id, diaObjectId in idMap.items()
+        }
+        all_object_ids = new_object_ids | current_object_ids
+        found_objects = self._get_diaobject_data(all_object_ids, "apdb_part", "ra", "dec", "nDiaSources")
+
+        if missing_ids := (
+            {row.diaObjectId for row in all_object_ids} - {row.diaObjectId for row in found_objects}
+        ):
+            raise LookupError(f"Some object IDs were not found in DiaObjectLast table: {missing_ids}")
+
+        update_records: list[ApdbUpdateRecord] = []
+        update_order = 0
+        current_time = self._current_time()
+        current_time_ns = int(current_time.unix_tai * 1e9)
+
+        # Update DiaSources.
+        table_name = context.schema.tableName(ApdbTables.DiaSource)
+        statements: list[tuple] = []
+        for source_id, diaObjectId in idMap.items():
+            source_row = found_sources_by_id[source_id.diaSourceId]
+            apdb_part = source_row.apdb_part
+            time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
+
+            if config.partitioning.time_partition_tables:
+                statement = context.preparer.prepare(
+                    f'UPDATE "{self._keyspace}"."{table_name}_{time_part}" SET "diaObjectId" = ? '
+                    'WHERE apdb_part = ? AND "diaSourceId" = ?'
+                )
+                statements.append((statement, (diaObjectId, apdb_part, source_id.diaSourceId)))
+            else:
+                statement = context.preparer.prepare(
+                    f'UPDATE "{self._keyspace}"."{table_name}" SET "diaObjectId" = ? '
+                    'WHERE apdb_part = ? AND apdb_time_part = ? AND "diaSourceId" = ?'
+                )
+                statements.append((statement, (diaObjectId, apdb_part, time_part, source_id.diaSourceId)))
+
+            if context.schema.replication_enabled:
+                update_records.append(
+                    ApdbReassignDiaSourceToDiaObjectRecord(
+                        diaSourceId=source_id.diaSourceId,
+                        ra=source_id.ra,
+                        dec=source_id.dec,
+                        midpointMjdTai=source_id.midpointMjdTai,
+                        diaObjectId=diaObjectId,
+                        update_time_ns=current_time_ns,
+                        update_order=update_order,
+                    )
+                )
+                update_order += 1
+
+        with self._timer(
+            "update_time", tags={"table": table_name, "method": "reassignDiaSourcesToDiaObjects"}
+        ) as timer:
+            execute_concurrent(context.session, statements, execution_profile="write")
+            timer.add_values(num_queries=len(statements))
+
+        # Update nDiaSources in DiaObjectLast. We do not update DiaObject table
+        # here because it may not even exist. PPDB updates DiaObject from
+        # update records.
+        if increment_nDiaSources or decrement_nDiaSources:
+            table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
+            statement = context.preparer.prepare(
+                f'UPDATE "{self._keyspace}"."{table_name}" SET "nDiaSources" = ? '
+                'WHERE apdb_part = ? AND "diaObjectId" = ?'
+            )
+            statements = []
+
+            # Calculate increments/decrements for all affected DiaObjects.
+            increments: Counter = Counter()
+            if increment_nDiaSources:
+                increments.update(idMap.values())
+            if decrement_nDiaSources:
+                increments.subtract(row.diaObjectId for row in found_sources)
+
+            for row in found_objects:
+                if increments.get(row.diaObjectId):
+                    nDiaSources = row.nDiaSources + increments[row.diaObjectId]
+                    statements.append((statement, (nDiaSources, row.apdb_part, row.diaObjectId)))
+
+                    # Also send updated values to replica.
+                    if context.schema.replication_enabled:
+                        update_records.append(
+                            ApdbUpdateNDiaSourcesRecord(
+                                diaObjectId=row.diaObjectId,
+                                ra=row.ra,
+                                dec=row.dec,
+                                nDiaSources=nDiaSources,
+                                update_time_ns=current_time_ns,
+                                update_order=update_order,
+                            )
+                        )
+                        update_order += 1
+
+            if statements:
+                with self._timer(
+                    "update_time", tags={"table": table_name, "method": "reassignDiaSourcesToDiaObjects"}
+                ) as timer:
+                    execute_concurrent(context.session, statements, execution_profile="write")
+                    timer.add_values(num_queries=len(statements))
+
+        if update_records:
+            replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
 
     def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
         # docstring is inherited from a base class
@@ -1644,15 +1784,9 @@ class ApdbCassandra(Apdb):
         """
         partitioned_object_ids: dict[int, list[int]] = defaultdict(list)
         for obj_id in objects:
-            # Make a small circle with center at DiaSource position.
-            lon_lat = sphgeom.LonLat.fromDegrees(obj_id.ra, obj_id.dec)
-            center = sphgeom.UnitVector3d(lon_lat)
-            region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
-
-            pixel_ranges = partitioner.pixelization.envelope(region)
-            for lower, upper in pixel_ranges:
-                for pixel in range(lower, upper + 1):
-                    partitioned_object_ids[pixel].append(obj_id.diaObjectId)
+            partitions = partitioner.pixelization.circle_pixels(obj_id.ra, obj_id.dec, pad_arcsec)
+            for pixel in partitions:
+                partitioned_object_ids[pixel].append(obj_id.diaObjectId)
         return partitioned_object_ids
 
     def _timestamp_column_name(self, column: str) -> str:
@@ -1665,3 +1799,100 @@ class ApdbCassandra(Apdb):
             return float(time.tai.mjd)
         else:
             return int(time.datetime.astimezone(tz=datetime.UTC).timestamp() * 1000)
+
+    def _get_diasource_data(self, source_ids: Iterable[DiaSourceId], *columns: str) -> list:
+        """Select records from DiaSource table by diaSourceId and return all
+        records as a list of named tuples.
+        """
+        context = self._context
+        config = context.config
+        partitioner = context.partitioner
+
+        columns = ("diaSourceId",) + columns
+        what = ",".join(quote_id(column) for column in columns)
+
+        # Allow some uncertainty for coordinates and time when calculating
+        # partitions.
+        statements: list[tuple] = []
+        pad_arcsec = 1.0
+        pad_time_day = 10 / (24 * 3600)
+        for source_id in source_ids:
+            center = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(source_id.ra, source_id.dec))
+            region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
+            spatial_where, _ = partitioner.spatial_where(region, for_prepare=True)
+
+            tables, temporal_where = partitioner.temporal_where(
+                ApdbTables.DiaSource,
+                source_id.midpointMjdTai - pad_time_day,
+                source_id.midpointMjdTai + pad_time_day,
+                for_prepare=True,
+                partitons_range=context.time_partitions_range,
+                query_per_time_part=True,
+            )
+
+            id_where = ('"diaSourceId" = ?', (source_id.diaSourceId,))
+
+            for table in tables:
+                prefix = f'SELECT {what} FROM "{self._keyspace}"."{table}"'
+                statements += list(self._combine_where(prefix, spatial_where, temporal_where, id_where))
+
+        with self._timer(
+            "select_time", tags={"table": "DiaSource", "method": "_get_diasource_data"}
+        ) as timer:
+            result = cast(
+                list[tuple],
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_named_tuples",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(result), num_queries=len(statements))
+
+        return result
+
+    def _get_diaobject_data(self, object_ids: Iterable[DiaObjectId], *columns: str) -> list:
+        """Select records from DiaObjectLast table by diaObjectId and return
+        all records as a list of named tuples.
+        """
+        context = self._context
+        config = context.config
+        partitioner = context.partitioner
+
+        table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
+        columns = ("diaObjectId",) + columns
+        what = ",".join(quote_id(column) for column in columns)
+
+        # Allow some uncertainty for coordinates when calculating partitions.
+        pad_arcsec = 1.0
+        ids_by_partition = defaultdict(list)
+        for object_id in object_ids:
+            pixels = partitioner.pixelization.circle_pixels(object_id.ra, object_id.dec, pad_arcsec)
+            for pixel in pixels:
+                ids_by_partition[pixel].append(object_id.diaObjectId)
+
+        statements: list[tuple] = []
+        for apdb_part, diaObjectIds in ids_by_partition.items():
+            ids_str = ",".join(str(diaObjectId) for diaObjectId in diaObjectIds)
+            statement = cassandra.query.SimpleStatement(
+                f'SELECT {what} FROM "{self._keyspace}"."{table_name}" '
+                f'WHERE apdb_part = %s AND "diaObjectId" IN ({ids_str})'
+            )
+            statements.append((statement, (apdb_part,)))
+
+        with self._timer(
+            "select_time", tags={"table": "DiaObjectLast", "method": "_get_diaobject_data"}
+        ) as timer:
+            result = cast(
+                list[tuple],
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_named_tuples",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(result), num_queries=len(statements))
+
+        return result
