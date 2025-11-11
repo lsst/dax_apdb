@@ -93,6 +93,9 @@ class ApdbSQLTest(ApdbTest):
         assert isinstance(apdb, ApdbSql), "Expecting ApdbSql instance"
         apdb._storeUpdateRecords(records, chunk, store_chunk=True)
 
+    def _count_after_reset_dedup(self, count_before: int) -> int:
+        return count_before
+
 
 class ApdbSQLiteTestCase(ApdbSQLTest, unittest.TestCase):
     """A test case for ApdbSql class using SQLite backend."""

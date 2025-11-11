@@ -698,6 +698,51 @@ class ApdbTest(TestCaseMixin, ABC):
             update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
             self.assertEqual(len(update_records), 10)
 
+    def test_resetDedup(self) -> None:
+        """Test resetDedup method."""
+        # don't care about sources.
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region = self.make_region()
+
+        # make catalog with Objects
+        objects = makeObjectCatalog(region, 100)
+
+        visit_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+        dedup_time1 = astropy.time.Time("2021-01-01T12:00:00", format="isot", scale="tai")
+        visit_time2 = astropy.time.Time("2021-01-02T00:00:00", format="isot", scale="tai")
+        dedup_time2 = astropy.time.Time("2021-01-02T12:00:00", format="isot", scale="tai")
+
+        # store catalog
+        apdb.store(visit_time1, objects)
+
+        catalog = apdb.getDiaObjectsForDedup(visit_time1)
+        self.assertEqual(len(catalog), 100)
+
+        apdb.resetDedup(dedup_time1)
+
+        catalog = apdb.getDiaObjectsForDedup(visit_time1)
+        self.assertEqual(len(catalog), self._count_after_reset_dedup(100))
+
+        apdb.store(visit_time2, objects)
+
+        catalog = apdb.getDiaObjectsForDedup(dedup_time1)
+        self.assertEqual(len(catalog), 100)
+
+        apdb.resetDedup(dedup_time2)
+
+        catalog = apdb.getDiaObjectsForDedup(dedup_time1)
+        self.assertEqual(len(catalog), self._count_after_reset_dedup(100))
+
+    def _count_after_reset_dedup(self, count_before: int) -> int:
+        """Return the number of rows that will be returned by
+        getDiaObjectsForDedup() after resetDedup() was called. For SQL backend
+        deduplication data comes from a regular table, and it is not removed
+        by resetDedup().
+        """
+        raise NotImplementedError()
+
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
         # don't care about sources.

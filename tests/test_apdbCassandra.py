@@ -108,6 +108,9 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
         assert isinstance(apdb, ApdbCassandra), "Expecting ApdbCassandra instance"
         apdb._storeUpdateRecords(records, chunk, store_chunk=True)
 
+    def _count_after_reset_dedup(self, count_before: int) -> int:
+        return 0
+
 
 class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     """A test case for ApdbCassandra class with per-month tables."""

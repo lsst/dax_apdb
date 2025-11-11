@@ -26,6 +26,7 @@ from __future__ import annotations
 __all__ = ["ApdbSql"]
 
 import datetime
+import json
 import logging
 import urllib.parse
 import uuid
@@ -146,6 +147,9 @@ class ApdbSql(Apdb):
     """Name of the metadata key to store replica code version number."""
 
     metadataConfigKey = "config:apdb-sql.json"
+    """Name of the metadata key to store code version number."""
+
+    metadataDedupKey = "status:deduplication.json"
     """Name of the metadata key to store code version number."""
 
     _frozen_parameters = (
@@ -908,6 +912,17 @@ class ApdbSql(Apdb):
             ]
 
             self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
+    def resetDedup(self, dedup_time: astropy.time.Time | None = None) -> None:
+        # docstring is inherited from a base class
+
+        # SQL backend does not have separate dedup tables, nothing to delete,
+        # only save last dedup time in metadata.
+        if dedup_time is None:
+            dedup_time = self._current_time()
+        data = {"dedup_time_iso_tai": dedup_time.tai.to_value("iso")}
+        data_json = json.dumps(data)
+        self._metadata.set(self.metadataDedupKey, data_json, force=True)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
