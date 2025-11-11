@@ -195,7 +195,7 @@ def makeSourceCatalog(
     if processing_time is None:
         processing_time = visit_time
     nrows = len(objects)
-    midpointMjdTai = visit_time.mjd
+    midpointMjdTai = visit_time.tai.mjd
     centroid_flag: list[bool | None] = [True] * nrows
     if nrows > 1:
         centroid_flag[-1] = None
