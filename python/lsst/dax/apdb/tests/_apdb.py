@@ -49,6 +49,7 @@ from .. import (
     ApdbUpdateRecord,
     ApdbWithdrawDiaSourceRecord,
     DiaObjectId,
+    DiaSourceId,
     IncompatibleVersionError,
     ReplicaChunk,
     VersionTuple,
@@ -577,6 +578,84 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertEqual(len(catalog), 1)
         self.assertEqual(set(catalog["diaObjectId"]), {400})
         self.assertEqual(set(catalog["diaSourceId"]), {3_000_000})
+
+    def test_reassignDiaSourcesToDiaObjects(self) -> None:
+        """Test reassignDiaSourcesToDiaObjects() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        visit_time = self.visit_time
+        lonlat1 = LonLat.fromDegrees(0.0, 0.0)
+        lonlat2 = LonLat.fromDegrees(180.0, 0.0)
+        # regons around lonlat1/2
+        region1 = self.make_region(xyz=(1.0, 0.0, 0.0))
+        region2 = self.make_region(xyz=(-1.0, 0.0, 0.0))
+
+        # Store 3 objects and sources at the same position in each region.
+        objects = makeObjectCatalog(lonlat1, 3, start_id=100)
+        sources = makeSourceCatalog(objects, visit_time, start_id=1000, use_mjd=self.use_mjd)
+        apdb.store(visit_time, objects, sources)
+
+        objects = makeObjectCatalog(lonlat2, 3, start_id=200)
+        sources = makeSourceCatalog(objects, visit_time, start_id=2000, use_mjd=self.use_mjd)
+        apdb.store(visit_time, objects, sources)
+
+        # check that everything as we think it is.
+        objects = apdb.getDiaObjects(region1)
+        self.assertEqual(set(objects["diaObjectId"]), {100, 101, 102})
+        self.assertEqual(list(objects["nDiaSources"]), [1, 1, 1])
+        sources = apdb.getDiaSources(region1, [100, 101, 102], visit_time)
+        assert sources is not None
+        self.assertEqual(set(sources["diaSourceId"]), {1000, 1001, 1002})
+        self.assertEqual(set(sources["diaObjectId"]), {100, 101, 102})
+
+        # Reassign sources in region1 and increment/decrement nDiaSources.
+        midpointMjdTai = visit_time.tai.mjd
+        reassign = {
+            DiaSourceId(diaSourceId=1001, ra=0.0, dec=0.0, midpointMjdTai=midpointMjdTai): 100,
+            DiaSourceId(diaSourceId=1002, ra=0.0, dec=0.0, midpointMjdTai=midpointMjdTai): 100,
+        }
+        apdb.reassignDiaSourcesToDiaObjects(reassign)
+
+        objects = apdb.getDiaObjects(region1)
+        self.assertEqual(set(objects["nDiaSources"]), {0, 3})
+        sources = apdb.getDiaSources(region1, [100], visit_time)
+        assert sources is not None
+        self.assertEqual(set(sources["diaSourceId"]), {1000, 1001, 1002})
+        self.assertEqual(set(sources["diaObjectId"]), {100})
+
+        # Reassign but do not increment/decrement nDiaSources.
+        reassign = {
+            DiaSourceId(diaSourceId=2001, ra=180.0, dec=0.0, midpointMjdTai=midpointMjdTai): 200,
+            DiaSourceId(diaSourceId=2002, ra=180.0, dec=0.0, midpointMjdTai=midpointMjdTai): 200,
+        }
+        apdb.reassignDiaSourcesToDiaObjects(
+            reassign, increment_nDiaSources=False, decrement_nDiaSources=False
+        )
+
+        objects = apdb.getDiaObjects(region2)
+        self.assertEqual(set(objects["nDiaSources"]), {1})
+        sources = apdb.getDiaSources(region2, [200], visit_time)
+        assert sources is not None
+        self.assertEqual(set(sources["diaSourceId"]), {2000, 2001, 2002})
+        self.assertEqual(set(sources["diaObjectId"]), {200})
+
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            # Two reassignments for region1, three increments/decrements for
+            # that region, plus two reassignments for region2 without
+            # increments/decrements.
+            self.assertEqual(len(update_records), 2 + 3 + 2)
 
     def test_setValidityEnd(self) -> None:
         """Store DiaObjects and truncate validity for some."""

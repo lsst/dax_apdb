@@ -202,6 +202,12 @@ class SessionFactory:
             row_factory=cassandra.query.tuple_factory,
             load_balancing_policy=loadBalancePolicy,
         )
+        read_named_tuples_profile = ExecutionProfile(
+            consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
+            request_timeout=config.connection_config.read_timeout,
+            row_factory=cassandra.query.named_tuple_factory,
+            load_balancing_policy=loadBalancePolicy,
+        )
         read_pandas_profile = ExecutionProfile(
             consistency_level=getattr(cassandra.ConsistencyLevel, config.connection_config.read_consistency),
             request_timeout=config.connection_config.read_timeout,
@@ -249,6 +255,7 @@ class SessionFactory:
         )
         return {
             "read_tuples": read_tuples_profile,
+            "read_named_tuples": read_named_tuples_profile,
             "read_pandas": read_pandas_profile,
             "read_raw": read_raw_profile,
             "read_pandas_multi": read_pandas_multi_profile,

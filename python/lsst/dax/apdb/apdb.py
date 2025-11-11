@@ -36,7 +36,7 @@ from lsst.sphgeom import Region
 from .apdbSchema import ApdbSchema, ApdbTables
 from .config import ApdbConfig
 from .factory import make_apdb
-from .recordIds import DiaObjectId
+from .recordIds import DiaObjectId, DiaSourceId
 from .schema_model import Table
 
 if TYPE_CHECKING:
@@ -366,6 +366,40 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def reassignDiaSourcesToDiaObjects(
+        self,
+        idMap: Mapping[DiaSourceId, int],
+        *,
+        increment_nDiaSources: bool = True,
+        decrement_nDiaSources: bool = True,
+    ) -> None:
+        """Re-assign DiaSources from one DiaObject to another, typically
+        during deduplication.
+
+        Parameters
+        ----------
+        idMap : `~collections.abc.Mapping` [`DiaSourceId`, `int`]
+            Mapping from DiaSource to their new ``diaObjectId``.
+        increment_nDiaSources : `bool`, optional
+            If `True` then increment the value of ``nDiaSources`` in DiaObjects
+            that DiaSources are reassigned to.
+        decrement_nDiaSources : `bool`, optional
+            If `True` then decrement the value of ``nDiaSources`` in DiaObjects
+            that DiaSources are reassigned from.
+
+        Raises
+        ------
+        LookupError
+            Raised if some of DiaSources or DiaObjects are not found.
+
+        Notes
+        -----
+        DiaSources initially could be associated with SSObjects. This method
+        needs to be called before `setValidityEnd`.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
         """Close validity interval for specified DiaObjects.
 
@@ -382,6 +416,10 @@ class Apdb(ABC):
         LookupError
             Raised if some of the specified DiaObjects could not be found in
             the database.
+
+        Notes
+        -----
+        This method has to be called after `reassignDiaSourcesToDiaObjects`.
         """
         raise NotImplementedError()
 
