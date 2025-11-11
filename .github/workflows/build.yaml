@@ -56,7 +56,7 @@ jobs:
         shell: bash -l {0}
         run: |
           uv pip install \
-            pytest pytest-xdist pytest-cov
+            pytest!=9.0.0 pytest-xdist pytest-cov
 
       - name: List installed packages
         shell: bash -l {0}
