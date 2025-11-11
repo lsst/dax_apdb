@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbCassandra"]
 
 import datetime
+import json
 import logging
 import random
 import uuid
@@ -938,6 +939,42 @@ class ApdbCassandra(Apdb):
             ]
 
             self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
+    def resetDedup(self, dedup_time: astropy.time.Time | None = None) -> None:
+        # docstring is inherited from a base class
+        context = self._context
+
+        if not context.has_dedup_table:
+            raise TypeError("DiaObjectDedup table does not exist in this APDB instance.")
+
+        if dedup_time is None:
+            dedup_time = self._current_time()
+
+        validity_start_column = self._timestamp_column_name("validityStart")
+
+        # Find latest timestamp in deduplication table.
+        table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
+        query = f'SELECT MAX("{validity_start_column}") FROM "{self._keyspace}"."{table_name}"'
+        result = context.session.execute(query, execution_profile="read_tuples")
+        max_value = result.one()[0]
+        if self._schema.has_mjd_timestamps:
+            max_validity_start = astropy.time.Time(max_value, format="mjd", scale="tai")
+        else:
+            max_validity_start = astropy.time.Time(max_value, format="datetime", scale="tai")
+
+        # If max time is lower than dedup time we can do TRUNCATE.
+        if dedup_time >= max_validity_start:
+            query = f'TRUNCATE TABLE "{self._keyspace}"."{table_name}"'
+            context.session.execute(query, execution_profile="write")
+        else:
+            dedup_time_value = self._timestamp_column_value(dedup_time)
+            query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE "{validity_start_column}" < %s'
+            context.session.execute(query, (dedup_time_value,), execution_profile="write")
+
+        # Store dedup time.
+        data = {"dedup_time_iso_tai": dedup_time.tai.to_value("iso")}
+        data_json = json.dumps(data)
+        context.metadata.set(context.metadataDedupKey, data_json, force=True)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class

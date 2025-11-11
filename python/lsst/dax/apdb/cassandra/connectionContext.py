@@ -93,6 +93,9 @@ class ConnectionContext:
     metadataConfigKey = "config:apdb-cassandra.json"
     """Name of the metadata key to store frozen part of the configuration."""
 
+    metadataDedupKey = "status:deduplication.json"
+    """Name of the metadata key to store code version number."""
+
     frozen_parameters = (
         "enable_replica",
         "ra_dec_columns",

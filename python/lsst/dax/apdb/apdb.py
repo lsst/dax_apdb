@@ -424,6 +424,19 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def resetDedup(self, dedup_time: astropy.time.Time | None = None) -> None:
+        """Delete deduplication-related data and remember deduplication time.
+        Deduplication data generated before ``dedup_time`` will be erased.
+
+        Parameters
+        ----------
+        dedup_time : `astropy.time.Time`, optional
+            Time of the last deduplication, current time is used if not
+            provided.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         """Associate DiaSources with SSObjects, dis-associating them
         from DiaObjects.
