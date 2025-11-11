@@ -487,7 +487,7 @@ class ApdbCassandra(Apdb):
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
-    def getDiaObjectsForDedup(self, since: astropy.time.Time) -> pandas.DataFrame:
+    def getDiaObjectsForDedup(self, since: astropy.time.Time | None = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
         context = self._context
         config = context.config
@@ -495,24 +495,33 @@ class ApdbCassandra(Apdb):
         if not context.has_dedup_table:
             raise TypeError("DiaObjectDedup table does not exist in this APDB instance.")
 
+        if since is None:
+            # Read last deduplication time from metadata.
+            dedup_str = context.metadata.get(context.metadataDedupKey)
+            if dedup_str is not None:
+                dedup_state = json.loads(dedup_str)
+                dedup_time_str = dedup_state["dedup_time_iso_tai"]
+                since = astropy.time.Time(dedup_time_str, format="iso", scale="tai")
+
         column_names = context.schema.apdbColumnNames(ExtraTables.DiaObjectDedup)
         what = ",".join(quote_id(column) for column in column_names)
 
         validity_start_column = self._timestamp_column_name("validityStart")
-        timestamp = self._timestamp_column_value(since)
+        timestamp = None if since is None else self._timestamp_column_value(since)
 
         table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
-        query = (
-            f'SELECT {what} FROM "{self._keyspace}"."{table_name}" '
-            f'WHERE dedup_part = ? AND "{validity_start_column}" >= ? '
-            "ALLOW FILTERING"
-        )
-        statement = context.preparer.prepare(query)
+        query = f'SELECT {what} FROM "{self._keyspace}"."{table_name}" WHERE dedup_part = %s'
+        if since is not None:
+            query += f' AND "{validity_start_column}" >= %s'
+        query += " ALLOW FILTERING"
+
+        statement = cassandra.query.SimpleStatement(query)
 
         num_part = config.partitioning.num_part_dedup
         statements = []
         for dedup_part in range(num_part):
-            statements.append((statement, (dedup_part, timestamp)))
+            params = (dedup_part,) if timestamp is None else (dedup_part, timestamp)
+            statements.append((statement, params))
 
         with self._timer(
             "select_time", tags={"table": "DiaObjectDedup", "method": "getDiaObjectsForDedup"}

@@ -239,7 +239,7 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getDiaObjectsForDedup(self, since: astropy.time.Time) -> pandas.DataFrame:
+    def getDiaObjectsForDedup(self, since: astropy.time.Time | None = None) -> pandas.DataFrame:
         """Return catalog of DiaObject stored in APDB since specified time.
 
         This method should be used by deduplication algorithm to retrieve
@@ -249,8 +249,10 @@ class Apdb(ABC):
 
         Parameters
         ----------
-        since : `astropy.time.Time`
-            Starting search time (time of previous deduplication).
+        since : `astropy.time.Time`, optional
+            Starting search time (time of previous deduplication). If not
+            provided the time of the last deduplication stored in metadata
+            by `resetDedup` method is used.
 
         Returns
         -------
