@@ -522,6 +522,9 @@ class ApdbTest(TestCaseMixin, ABC):
         for visit_time, objects in visits:
             apdb.store(visit_time, objects)
 
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 300)
+
         catalog = apdb.getDiaObjectsForDedup(visits[0][0])
         self.assertEqual(len(catalog), 300)
 
@@ -717,6 +720,9 @@ class ApdbTest(TestCaseMixin, ABC):
         # store catalog
         apdb.store(visit_time1, objects)
 
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 100)
+
         catalog = apdb.getDiaObjectsForDedup(visit_time1)
         self.assertEqual(len(catalog), 100)
 
@@ -727,6 +733,9 @@ class ApdbTest(TestCaseMixin, ABC):
 
         apdb.store(visit_time2, objects)
 
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 100)
+
         catalog = apdb.getDiaObjectsForDedup(dedup_time1)
         self.assertEqual(len(catalog), 100)
 
@@ -734,6 +743,9 @@ class ApdbTest(TestCaseMixin, ABC):
 
         catalog = apdb.getDiaObjectsForDedup(dedup_time1)
         self.assertEqual(len(catalog), self._count_after_reset_dedup(100))
+
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 0)
 
     def _count_after_reset_dedup(self, count_before: int) -> int:
         """Return the number of rows that will be returned by

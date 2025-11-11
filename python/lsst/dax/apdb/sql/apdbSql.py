@@ -644,11 +644,18 @@ class ApdbSql(Apdb):
         _LOG.debug("found %s DiaForcedSources", len(sources))
         return sources
 
-    def getDiaObjectsForDedup(self, since: astropy.time.Time) -> pandas.DataFrame:
+    def getDiaObjectsForDedup(self, since: astropy.time.Time | None = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
 
+        if since is None:
+            # Read last deduplication time from metadata.
+            dedup_str = self._metadata.get(self.metadataDedupKey)
+            if dedup_str is not None:
+                dedup_state = json.loads(dedup_str)
+                dedup_time_str = dedup_state["dedup_time_iso_tai"]
+                since = astropy.time.Time(dedup_time_str, format="iso", scale="tai")
+
         validity_start_column = self._timestamp_column_name("validityStart")
-        timestamp = self._timestamp_column_value(since)
 
         # decide what columns we need
         if self.config.dia_object_index == "last_object_table":
@@ -670,7 +677,9 @@ class ApdbSql(Apdb):
         query = sql.select(*columns)
 
         # build selection
-        query = query.where(table.columns[validity_start_column] >= timestamp)
+        if since is not None:
+            timestamp = self._timestamp_column_value(since)
+            query = query.where(table.columns[validity_start_column] >= timestamp)
 
         # execute select
         with self._timer("select_time", tags={"table": "DiaObject"}) as timer:
