@@ -152,8 +152,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
-        ApdbTables.DiaObject: 7,
-        ApdbTables.DiaObjectLast: 5,
+        ApdbTables.DiaObject: 8,
+        ApdbTables.DiaObjectLast: 6,
         ApdbTables.DiaSource: 12,
         ApdbTables.DiaForcedSource: 8,
         ApdbTables.SSObject: 3,
