@@ -34,7 +34,7 @@ from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
 
 
 class Partitioner:
-    """Logic for temporal and spacial partitiong of APDB tables.
+    """Logic for temporal and spatial partitioning of APDB tables.
 
     Parameters
     ----------
@@ -92,7 +92,7 @@ class Partitioner:
         return partition
 
     def partition_period(self, time_partition: int) -> tuple[astropy.time.Time, astropy.time.Time]:
-        """Return time period for specified taime partition.
+        """Return time period for specified time partition.
 
         Parameters
         ----------
