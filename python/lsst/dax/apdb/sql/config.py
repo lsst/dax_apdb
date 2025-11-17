@@ -135,7 +135,7 @@ class ApdbSqlConfig(ApdbConfig):
     )
 
     dia_object_columns_for_dedup: list[str] = Field(
-        default=["ra", "dec", "nDiaSources"],
+        default=["ra", "dec", "nDiaSources", "firstDiaSourceMjdTai"],
         description=(
             "Columns to read from DiaObject for deduplication, empty list means all columns. "
             "'diaObjectId' and 'validityStart[MjdTai]' are always added to this list. "
