@@ -339,7 +339,7 @@ class ApdbCassandraSchema:
         # table is used for deduplication, it is partitioned on some random
         # key. This column list defines non-PK columns in this table, PK
         # columns from DiaObject are the same as in DiaObject.
-        dedup_column_names = {"ra", "dec", "nDiaSources"}
+        dedup_column_names = {"ra", "dec", "nDiaSources", "firstDiaSourceMjdTai"}
         columns = [
             schema_model.Column(
                 id="#dedup_part",
