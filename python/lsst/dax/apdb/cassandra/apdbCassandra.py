@@ -84,7 +84,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 2, 0)
+VERSION = VersionTuple(1, 2, 1)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -576,22 +576,6 @@ class ApdbCassandra(Apdb):
             )
         return bool(result)
 
-    def getSSObjects(self) -> pandas.DataFrame:
-        # docstring is inherited from a base class
-        context = self._context
-
-        tableName = context.schema.tableName(ApdbTables.SSObject)
-        query = f'SELECT * from "{self._keyspace}"."{tableName}"'
-
-        objects = None
-        with self._timer("select_time", tags={"table": "SSObject"}) as timer:
-            result = context.session.execute(query, execution_profile="read_pandas")
-            objects = result._current_rows
-            timer.add_values(row_count=len(objects))
-
-        _LOG.debug("found %s SSObjects", objects.shape[0])
-        return objects
-
     def store(
         self,
         visit_time: astropy.time.Time,
@@ -646,11 +630,6 @@ class ApdbCassandra(Apdb):
         if forced_sources is not None and len(forced_sources) > 0:
             forced_sources = self._add_apdb_part(forced_sources)
             self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk)
-
-    def storeSSObjects(self, objects: pandas.DataFrame) -> None:
-        # docstring is inherited from a base class
-        objects = self._fix_input_timestamps(objects)
-        self._storeObjectsPandas(objects, ApdbTables.SSObject)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class

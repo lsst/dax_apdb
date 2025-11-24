@@ -55,7 +55,6 @@ from .data_factory import (
     makeForcedSourceCatalog,
     makeObjectCatalog,
     makeSourceCatalog,
-    makeSSObjectCatalog,
     makeTimestampNow,
 )
 from .utils import TestCaseMixin
@@ -608,30 +607,6 @@ class ApdbTest(TestCaseMixin, ABC):
 
             _check_chunks(replica_chunks, 600)
 
-    def test_storeSSObjects(self) -> None:
-        """Store and retrieve SSObjects."""
-        # don't care about sources.
-        config = self.make_instance()
-        apdb = Apdb.from_config(config)
-
-        # make catalog with SSObjects
-        catalog = makeSSObjectCatalog(100, flags=1)
-
-        # store catalog
-        apdb.storeSSObjects(catalog)
-
-        # read it back and check sizes
-        res = apdb.getSSObjects()
-        self.assert_catalog(res, len(catalog), ApdbTables.SSObject)
-
-        # check that override works, make catalog with SSObjects, ID = 51-150
-        catalog = makeSSObjectCatalog(100, 51, flags=2)
-        apdb.storeSSObjects(catalog)
-        res = apdb.getSSObjects()
-        self.assert_catalog(res, 150, ApdbTables.SSObject)
-        self.assertEqual(len(res[res["flags"] == 1]), 50)
-        self.assertEqual(len(res[res["flags"] == 2]), 100)
-
     def test_reassignObjects(self) -> None:
         """Reassign DiaObjects."""
         # don't care about sources.
@@ -644,9 +619,6 @@ class ApdbTest(TestCaseMixin, ABC):
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
         apdb.store(visit_time, objects, sources)
-
-        catalog = makeSSObjectCatalog(100)
-        apdb.storeSSObjects(catalog)
 
         # read it back and filter by ID
         res = apdb.getDiaSources(region, oids, visit_time)

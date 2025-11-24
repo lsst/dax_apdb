@@ -81,7 +81,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         schema.makeSchema()
 
         for apdb_table in ApdbTables:
-            if apdb_table in (ApdbTables.DiaObjectLast, ApdbTables.SSSource):
+            if apdb_table in (ApdbTables.DiaObjectLast, ApdbTables.SSObject, ApdbTables.SSSource):
                 with self.assertRaisesRegex(ValueError, ".*does not exist in the schema"):
                     table = schema.get_table(apdb_table)
                 continue

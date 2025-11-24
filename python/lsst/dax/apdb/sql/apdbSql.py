@@ -32,7 +32,7 @@ import uuid
 import warnings
 from collections.abc import Iterable, Mapping, MutableMapping
 from contextlib import closing
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import astropy.time
 import numpy as np
@@ -72,7 +72,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 2, 0)
+VERSION = VersionTuple(1, 2, 1)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -648,20 +648,6 @@ class ApdbSql(Apdb):
                 result = conn.execute(query2).scalar_one_or_none()
                 return result is not None
 
-    def getSSObjects(self) -> pandas.DataFrame:
-        # docstring is inherited from a base class
-
-        columns = self._schema.get_apdb_columns(ApdbTables.SSObject)
-        query = sql.select(*columns)
-
-        # execute select
-        with self._timer("SSObject_select_time", tags={"table": "SSObject"}) as timer:
-            with self._engine.begin() as conn:
-                objects = pandas.read_sql_query(query, conn)
-            timer.add_values(row_count=len(objects))
-        _LOG.debug("found %s SSObjects", len(objects))
-        return self._fix_result_timestamps(objects)
-
     def store(
         self,
         visit_time: astropy.time.Time,
@@ -694,39 +680,6 @@ class ApdbSql(Apdb):
 
             if forced_sources is not None:
                 self._storeDiaForcedSources(forced_sources, replica_chunk, connection)
-
-    def storeSSObjects(self, objects: pandas.DataFrame) -> None:
-        # docstring is inherited from a base class
-        objects = self._fix_input_timestamps(objects)
-
-        idColumn = "ssObjectId"
-        table = self._schema.get_table(ApdbTables.SSObject)
-
-        # everything to be done in single transaction
-        with self._engine.begin() as conn:
-            # Find record IDs that already exist. Some types like np.int64 can
-            # cause issues with sqlalchemy, convert them to int.
-            ids = sorted(int(oid) for oid in objects[idColumn])
-
-            query = sql.select(table.columns[idColumn], table.columns[idColumn].in_(ids))
-            result = conn.execute(query)
-            knownIds = {row.ssObjectId for row in result}
-
-            filter = objects[idColumn].isin(knownIds)
-            toUpdate = cast(pandas.DataFrame, objects[filter])
-            toInsert = cast(pandas.DataFrame, objects[~filter])
-
-            # insert new records
-            if len(toInsert) > 0:
-                toInsert.to_sql(table.name, conn, if_exists="append", index=False, schema=table.schema)
-
-            # update existing records
-            if len(toUpdate) > 0:
-                whereKey = f"{idColumn}_param"
-                update = table.update().where(table.columns[idColumn] == sql.bindparam(whereKey))
-                toUpdate = toUpdate.rename({idColumn: whereKey}, axis="columns")
-                values = toUpdate.to_dict("records")
-                result = conn.execute(update, values)
 
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
