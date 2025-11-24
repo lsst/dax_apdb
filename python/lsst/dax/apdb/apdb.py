@@ -267,18 +267,6 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def getSSObjects(self) -> pandas.DataFrame:
-        """Return catalog of SSObject instances.
-
-        Returns
-        -------
-        catalog : `pandas.DataFrame`
-            Catalog containing SSObject records, all existing records are
-            returned.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
     def store(
         self,
         visit_time: astropy.time.Time,
@@ -317,22 +305,6 @@ class Apdb(ABC):
 
         This operation need not be atomic, but DiaSources and DiaForcedSources
         will not be stored until all DiaObjects are stored.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def storeSSObjects(self, objects: pandas.DataFrame) -> None:
-        """Store or update SSObject catalog.
-
-        Parameters
-        ----------
-        objects : `pandas.DataFrame`
-            Catalog with SSObject records.
-
-        Notes
-        -----
-        If SSObjects with matching IDs already exist in the database, their
-        records will be updated with the information from provided records.
         """
         raise NotImplementedError()
 

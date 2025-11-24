@@ -359,8 +359,10 @@ class ApdbSqlSchema(ApdbSchema):
             if table_enum is ApdbTables.metadata and table_enum not in self.tableSchemas:
                 # Schema does not define metadata.
                 continue
-            if table_enum is ApdbTables.SSSource:
-                # We do not support SSSource table yet.
+            if table_enum in (ApdbTables.SSObject, ApdbTables.SSSource):
+                # SSObject/SSSource do not exist in APDB, but are defined in
+                # ApdbTables. The reason is that AP wants to have schema of
+                # these tables for alert-related business.
                 continue
             table = self.tableSchemas[table_enum]
 

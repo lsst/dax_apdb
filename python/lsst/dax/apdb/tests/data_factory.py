@@ -256,32 +256,3 @@ def makeForcedSourceCatalog(
         }
     )
     return df
-
-
-def makeSSObjectCatalog(count: int, start_id: int = 1, flags: int = 0) -> pandas.DataFrame:
-    """Make a catalog containing a bunch of SSObjects.
-
-    Parameters
-    ----------
-    count : `int`
-        Number of records to generate.
-    startID : `int`
-        Initial SSObject ID.
-    flags : `int`
-        Value for ``flags`` column.
-
-    Returns
-    -------
-    catalog : `pandas.DataFrame`
-        Catalog of SSObjects records.
-
-    Notes
-    -----
-    Returned catalog only contains three columns - ``ssObjectId`, ``arc``,
-    and ``flags``.
-    """
-    ids = numpy.arange(start_id, count + start_id, dtype=numpy.int64)
-    arc = numpy.full(count, 0.001, dtype=numpy.float32)
-    flags_array = numpy.full(count, flags, dtype=numpy.int64)
-    df = pandas.DataFrame({"ssObjectId": ids, "arc": arc, "flags": flags_array})
-    return df
