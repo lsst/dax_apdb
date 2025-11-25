@@ -1,0 +1,48 @@
+---
+name: "SSOSchema"
+tables:
+- name: SSObject
+  description: The SSObject table contains description of the Solar System (moving)
+    Objects.
+  columns:
+  - name: ssObjectId
+    datatype: long
+    nullable: false
+    description: Unique identifier.
+    mysql:datatype: BIGINT
+    ivoa:ucd: meta.id;src
+  - name: arc
+    datatype: float
+    description: Arc of observation.
+    mysql:datatype: FLOAT
+    fits:tunit: day
+  - name: flags
+    datatype: long
+    nullable: false
+    description: Flags, bitwise OR tbd.
+    value: 0
+    mysql:datatype: BIGINT
+    ivoa:ucd: meta.code
+  primaryKey: "#SSObject.ssObjectId"
+- name: SSSource
+  description: LSST-computed per-source quantities. 1:1 relationship with DIASource.
+    Recomputed daily, upon MPCORB ingestion.
+  primaryKey: "#SSSource.ssObjectId"
+  columns:
+  - name: ssObjectId
+    datatype: long
+    autoincrement: false
+    description: Unique identifier of the object.
+    ivoa:ucd: meta.id;src
+  - name: diaSourceId
+    datatype: long
+    description: Unique identifier of the observation.
+    ivoa:ucd: meta.id;src
+  - name: eclipticLambda
+    datatype: double
+    description: Ecliptic longitude.
+    fits:tunit: deg
+  - name: eclipticBeta
+    datatype: double
+    description: Ecliptic latitude.
+    fits:tunit: deg

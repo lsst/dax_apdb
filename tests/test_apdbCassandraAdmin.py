@@ -47,7 +47,7 @@ from lsst.dax.apdb.cassandra.apdbCassandraAdmin import ApdbCassandraAdmin
 from lsst.dax.apdb.cassandra.partitioner import Partitioner
 from lsst.dax.apdb.tests import ApdbAdminTest, cassandra_mixin
 
-TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-apdb+sso.yaml")
 
 logging.basicConfig(level=logging.INFO)
 

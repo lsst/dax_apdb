@@ -42,8 +42,9 @@ try:
 except ImportError:
     testing = None
 
-TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
-# Schema that uses `datetime` for timestamps.
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-apdb.yaml")
+TEST_SCHEMA_SSO = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-sso.yaml")
+# Schema that uses `datetime` for timestamps and combines APDB and SSP.
 TEST_SCHEMA_DT = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-datetime.yaml")
 
 
@@ -56,6 +57,7 @@ class ApdbSQLTest(ApdbTest):
         """Create database and return its config."""
         kw = {
             "schema_file": TEST_SCHEMA,
+            "ss_schema_file": TEST_SCHEMA_SSO,
             "dia_object_index": self.dia_object_index,
             "enable_replica": self.enable_replica,
         }
@@ -218,6 +220,7 @@ class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
         kw = {
             "db_url": self.db_url,
             "schema_file": TEST_SCHEMA,
+            "ss_schema_file": TEST_SCHEMA_SSO,
         }
         kw.update(kwargs)
         return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
@@ -230,7 +233,9 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
         self.tempdir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tempdir, ignore_errors=True)
         self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
-        config = ApdbSql.init_database(db_url=self.db_url, schema_file=TEST_SCHEMA)
+        config = ApdbSql.init_database(
+            db_url=self.db_url, schema_file=TEST_SCHEMA, ss_schema_file=TEST_SCHEMA_SSO
+        )
         # TODO: This will need update when we switch to pydantic configs.
         self.config_path = os.path.join(self.tempdir, "apdb-config.yaml")
         config.save(self.config_path)

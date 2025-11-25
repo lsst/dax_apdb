@@ -170,7 +170,7 @@ class ApdbSql(Apdb):
             engine=self._engine,
             dia_object_index=self.config.dia_object_index,
             schema_file=self.config.schema_file,
-            schema_name=self.config.schema_name,
+            ss_schema_file=self.config.ss_schema_file,
             prefix=self.config.prefix,
             namespace=self.config.namespace,
             htm_index_column=self.config.pixelization.htm_index_column,
@@ -367,7 +367,7 @@ class ApdbSql(Apdb):
         db_url: str,
         *,
         schema_file: str | None = None,
-        schema_name: str | None = None,
+        ss_schema_file: str | None = None,
         read_sources_months: int | None = None,
         read_forced_sources_months: int | None = None,
         enable_replica: bool = False,
@@ -389,14 +389,14 @@ class ApdbSql(Apdb):
         schema_file : `str`, optional
             Location of (YAML) configuration file with APDB schema. If not
             specified then default location will be used.
-        schema_name : str | None
-            Name of the schema in YAML configuration file. If not specified
-            then default name will be used.
+        ss_schema_file : `str`, optional
+            Location of (YAML) configuration file with SSO schema. If not
+            specified then default location will be used.
         read_sources_months : `int`, optional
             Number of months of history to read from DiaSource.
         read_forced_sources_months : `int`, optional
             Number of months of history to read from DiaForcedSource.
-        enable_replica : `bool`
+        enable_replica : `bool`, optional
             If True, make additional tables used for replication to PPDB.
         connection_timeout : `int`, optional
             Database connection timeout in seconds.
@@ -424,8 +424,8 @@ class ApdbSql(Apdb):
         config = ApdbSqlConfig(db_url=db_url, enable_replica=enable_replica)
         if schema_file is not None:
             config.schema_file = schema_file
-        if schema_name is not None:
-            config.schema_name = schema_name
+        if ss_schema_file is not None:
+            config.ss_schema_file = ss_schema_file
         if read_sources_months is not None:
             config.read_sources_months = read_sources_months
         if read_forced_sources_months is not None:
@@ -503,7 +503,7 @@ class ApdbSql(Apdb):
             engine=engine,
             dia_object_index=config.dia_object_index,
             schema_file=config.schema_file,
-            schema_name=config.schema_name,
+            ss_schema_file=config.ss_schema_file,
             prefix=config.prefix,
             namespace=config.namespace,
             htm_index_column=config.pixelization.htm_index_column,

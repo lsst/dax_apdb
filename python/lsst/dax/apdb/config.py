@@ -23,7 +23,6 @@ from __future__ import annotations
 
 __all__ = ["ApdbConfig"]
 
-import os
 import warnings
 from collections.abc import Mapping
 from typing import Any, ClassVar, cast
@@ -37,11 +36,6 @@ from .apdbIndex import ApdbIndex
 from .factory import config_type_for_name
 
 
-def _data_file_name(basename: str) -> str:
-    """Return path name of a data file in sdm_schemas package."""
-    return os.path.join("${SDM_SCHEMAS_DIR}", "yml", basename)
-
-
 class ApdbConfig(BaseModel):
     """Base class for APDB configuration types.
 
@@ -53,13 +47,22 @@ class ApdbConfig(BaseModel):
     _implementation_type: ClassVar[str]
 
     schema_file: str = Field(
-        default=_data_file_name("apdb.yaml"),
-        description="Location of (YAML) configuration file with standard schema.",
+        default="resource://lsst.sdm.schemas/apdb.yaml",
+        description="Location of (YAML) configuration file with standard APDB schema.",
+    )
+
+    ss_schema_file: str = Field(
+        default="resource://lsst.sdm.schemas/sso.yaml",
+        description=(
+            "Location of (YAML) configuration file with SSO schema. "
+            "This file is only loaded if SSObject/SSSource tables are not present in APDB schema file. "
+            "Can be set to empty string to avoid loading even if tables are not in APDB schema."
+        ),
     )
 
     schema_name: str = Field(
         default="ApdbSchema",
-        description="Name of the schema in YAML configuration file.",
+        description="Name of the schema in YAML configuration file (not used and deprecated).",
     )
 
     read_sources_months: int = Field(

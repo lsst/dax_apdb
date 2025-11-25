@@ -33,7 +33,7 @@ import lsst.utils.tests
 from lsst.dax.apdb import Apdb
 from lsst.dax.apdb.sql import ApdbSql
 
-TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-apdb+sso.yaml")
 
 
 def createTestObjects(

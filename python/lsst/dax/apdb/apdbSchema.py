@@ -31,14 +31,11 @@ __all__ = ["ApdbSchema", "ApdbTables"]
 
 import enum
 import logging
-import os
 from collections.abc import Mapping, MutableMapping
 from functools import cached_property
 
 import felis.datamodel
 import numpy
-import yaml
-from felis.datamodel import Schema as FelisSchema
 
 from .schema_model import ExtraDataTypes, Schema, Table
 from .versionTuple import VersionTuple
@@ -126,18 +123,30 @@ class ApdbSchema:
     Parameters
     ----------
     schema_file : `str`
-        Name of the YAML schema file.
-    schema_name : `str`, optional
-        Name of the schema in YAML files.
+        Location of the YAML file with APDB schema.
+    ss_schema_file : `str`
+        Location of the YAML file with SSO schema. File will be loaded if APDB
+        schema file does not contain SSObject/SSSource tables. Can be set to
+        empty string to skip loading of SSObject/SSSource schema.
     """
 
     def __init__(
         self,
         schema_file: str,
-        schema_name: str = "ApdbSchema",
+        ss_schema_file: str,
     ):
         # build complete table schema
-        self.tableSchemas, self._schemaVersion = self._buildSchemas(schema_file, schema_name)
+        self.tableSchemas, self._schemaVersion = self._buildSchemas(schema_file)
+        if ss_schema_file:
+            if ApdbTables.SSObject not in self.tableSchemas or ApdbTables.SSSource not in self.tableSchemas:
+                # Read additional SSP schema.
+                ssp_tables, _ = self._buildSchemas(ss_schema_file)
+                if ApdbTables.SSObject not in ssp_tables or ApdbTables.SSSource not in ssp_tables:
+                    raise LookupError(f"Cannot locate SSObject/SSSource table in {ss_schema_file}")
+                self.tableSchemas = dict(self.tableSchemas) | {
+                    ApdbTables.SSObject: ssp_tables[ApdbTables.SSObject],
+                    ApdbTables.SSSource: ssp_tables[ApdbTables.SSSource],
+                }
 
     def column_dtype(self, felis_type: felis.datamodel.DataType | ExtraDataTypes) -> type | str:
         """Return Pandas data type for a given Felis column type.
@@ -177,41 +186,29 @@ class ApdbSchema:
             return self._schemaVersion
 
     @classmethod
-    def _buildSchemas(
-        cls, schema_file: str, schema_name: str = "ApdbSchema"
-    ) -> tuple[Mapping[ApdbTables, Table], VersionTuple | None]:
-        """Create schema definitions for all tables.
+    def _buildSchemas(cls, schema_file: str) -> tuple[Mapping[ApdbTables, Table], VersionTuple | None]:
+        """Create schema definitions for tables from felis schema.
 
         Reads YAML schema and builds a dictionary containing
-        `.schema_model.Table` instances for each table.
+        `.schema_model.Table` instances for each APDB table appearing in that
+        schema.
 
         Parameters
         ----------
         schema_file : `str`
             Name of YAML file with ``felis`` schema.
-        schema_name : `str`, optional
-            Name of the schema in YAML files.
 
         Returns
         -------
-        tables : `dict`
+        tables : `dict` [`ApdbTables`, `schema_model.Table`]
             Mapping of table names to `.schema_model.Table` instances.
         version : `VersionTuple` or `None`
             Schema version defined in schema file, `None` if version is not
             defined.
         """
-        schema_file = os.path.expandvars(schema_file)
-        with open(schema_file) as yaml_stream:
-            schemas_list = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
-            schemas_list = [schema for schema in schemas_list if schema.get("name") == schema_name]
-            if not schemas_list:
-                raise ValueError(f"Schema file {schema_file!r} does not define schema {schema_name!r}")
-            elif len(schemas_list) > 1:
-                raise ValueError(f"Schema file {schema_file!r} defines multiple schemas {schema_name!r}")
-            felis_schema: FelisSchema = felis.datamodel.Schema.model_validate(
-                schemas_list[0], context={"id_generation": True}
-            )
-            schema = Schema.from_felis(felis_schema)
+        _LOG.debug("Loading felis schema from %s", schema_file)
+        felis_schema = felis.datamodel.Schema.from_uri(schema_file, context={"id_generation": True})
+        schema = Schema.from_felis(felis_schema)
 
         # convert all dicts into classes
         tables: MutableMapping[ApdbTables, Table] = {}
@@ -229,6 +226,7 @@ class ApdbSchema:
         if schema.version is not None:
             version = VersionTuple.fromString(schema.version.current)
 
+        _LOG.debug("Loaded schema for tables %s", list(tables))
         return tables, version
 
     @cached_property
