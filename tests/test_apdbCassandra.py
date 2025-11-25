@@ -47,8 +47,9 @@ from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
 from lsst.dax.apdb.tests.data_factory import makeObjectCatalog
 
-TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
-# Schema that uses `datetime` for timestamps.
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-apdb.yaml")
+TEST_SCHEMA_SSO = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-sso.yaml")
+# Schema that uses `datetime` for timestamps and combines APDB and SSP.
 TEST_SCHEMA_DT = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-datetime.yaml")
 
 
@@ -79,6 +80,7 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
             "hosts": (self.cluster_host,),
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
+            "ss_schema_file": TEST_SCHEMA_SSO,
             "time_partition_tables": self.time_partition_tables,
             "enable_replica": self.enable_replica,
         }
@@ -143,6 +145,7 @@ class ApdbCassandraTestCaseDatetimeReplica(ApdbCassandraTestCaseReplica):
         super().setUp()
         # Schema for datetime case is also missing a validityTime column in
         # DiaObjectLast table.
+        self.table_column_count = dict(self.table_column_count)
         self.table_column_count[ApdbTables.DiaObjectLast] = 4
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
@@ -163,6 +166,7 @@ class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest
             "hosts": (self.cluster_host,),
             "keyspace": self.keyspace,
             "schema_file": TEST_SCHEMA,
+            "ss_schema_file": TEST_SCHEMA_SSO,
             "time_partition_tables": self.time_partition_tables,
         }
         kw.update(kwargs)

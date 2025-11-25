@@ -29,7 +29,7 @@ import unittest
 from lsst.dax.apdb import Apdb
 from lsst.dax.apdb.cli import apdb_cli
 
-TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
+TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-apdb+sso.yaml")
 
 
 class CreateSqlTestCase(unittest.TestCase):

@@ -105,9 +105,9 @@ class ApdbSqlSchema(ApdbSchema):
     htm_index_column : `str`
         Name of a HTM index column for DiaObject and DiaSource tables.
     schema_file : `str`
-        Name of the YAML schema file.
-    schema_name : `str`, optional
-        Name of the schema in YAML files.
+        Location of the YAML file with APDB schema.
+    ss_schema_file : `str`
+        Location of the YAML file with SSP schema.
     prefix : `str`, optional
         Prefix to add to all schema elements.
     namespace : `str`, optional
@@ -125,12 +125,12 @@ class ApdbSqlSchema(ApdbSchema):
         dia_object_index: str,
         htm_index_column: str,
         schema_file: str,
-        schema_name: str = "ApdbSchema",
+        ss_schema_file: str,
         prefix: str = "",
         namespace: str | None = None,
         enable_replica: bool = False,
     ):
-        super().__init__(schema_file, schema_name)
+        super().__init__(schema_file, ss_schema_file)
 
         self._engine = engine
         self._dia_object_index = dia_object_index

@@ -106,7 +106,7 @@ class ApdbCassandra(Apdb):
 
         self._config = config
         self._keyspace = config.keyspace
-        self._schema = ApdbSchema(config.schema_file, config.schema_name)
+        self._schema = ApdbSchema(config.schema_file, config.ss_schema_file)
 
         self._session_factory = SessionFactory(config)
         self._connection_context: ConnectionContext | None = None
@@ -195,7 +195,7 @@ class ApdbCassandra(Apdb):
         keyspace: str,
         *,
         schema_file: str | None = None,
-        schema_name: str | None = None,
+        ss_schema_file: str | None = None,
         read_sources_months: int | None = None,
         read_forced_sources_months: int | None = None,
         enable_replica: bool = False,
@@ -228,9 +228,9 @@ class ApdbCassandra(Apdb):
         schema_file : `str`, optional
             Location of (YAML) configuration file with APDB schema. If not
             specified then default location will be used.
-        schema_name : `str`, optional
-            Name of the schema in YAML configuration file. If not specified
-            then default name will be used.
+        ss_schema_file : `str`, optional
+            Location of (YAML) configuration file with SSO schema. If not
+            specified then default location will be used.
         read_sources_months : `int`, optional
             Number of months of history to read from DiaSource.
         read_forced_sources_months : `int`, optional
@@ -303,8 +303,8 @@ class ApdbCassandra(Apdb):
         config.partitioning.time_partition_tables = time_partition_tables
         if schema_file is not None:
             config.schema_file = schema_file
-        if schema_name is not None:
-            config.schema_name = schema_name
+        if ss_schema_file is not None:
+            config.ss_schema_file = ss_schema_file
         if read_sources_months is not None:
             config.read_sources_months = read_sources_months
         if read_forced_sources_months is not None:
@@ -358,7 +358,7 @@ class ApdbCassandra(Apdb):
         if not isinstance(config, ApdbCassandraConfig):
             raise TypeError(f"Unexpected type of configuration object: {type(config)}")
 
-        simple_schema = ApdbSchema(config.schema_file, config.schema_name)
+        simple_schema = ApdbSchema(config.schema_file, config.ss_schema_file)
 
         with SessionContext(config) as session:
             schema = ApdbCassandraSchema(

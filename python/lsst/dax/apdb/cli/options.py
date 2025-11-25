@@ -68,7 +68,7 @@ def common_apdb_options(parser: argparse.ArgumentParser) -> None:
     """Define common configuration options."""
     group = parser.add_argument_group("common APDB options")
     _option_from_pydantic_field(group, ApdbConfig, "schema_file", metavar="URL")
-    _option_from_pydantic_field(group, ApdbConfig, "schema_name")
+    _option_from_pydantic_field(group, ApdbConfig, "ss_schema_file", metavar="URL")
     _option_from_pydantic_field(group, ApdbConfig, "read_sources_months", metavar="NUMBER")
     _option_from_pydantic_field(group, ApdbConfig, "read_forced_sources_months", metavar="NUMBER")
     _option_from_pydantic_field(group, ApdbConfig, "enable_replica", action="store_true", default=False)

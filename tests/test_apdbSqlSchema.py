@@ -33,7 +33,10 @@ from lsst.dax.apdb.apdbSchema import ApdbTables
 from lsst.dax.apdb.sql.apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from lsst.dax.apdb.tests import update_schema_yaml
 
-TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema.yaml")
+_HERE = os.path.abspath(os.path.dirname(__file__))
+TEST_SCHEMA = os.path.join(_HERE, "config/schema-apdb.yaml")
+TEST_SCHEMA_COMBINED = os.path.join(_HERE, "config/schema-apdb+sso.yaml")
+TEST_SCHEMA_SSO = os.path.join(_HERE, "config/schema-sso.yaml")
 
 
 class ApdbSchemaTestCase(unittest.TestCase):
@@ -76,7 +79,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
 
         # create standard (baseline) schema
         schema = ApdbSqlSchema(
-            engine=engine, dia_object_index="baseline", htm_index_column="pixelId", schema_file=TEST_SCHEMA
+            engine=engine,
+            dia_object_index="baseline",
+            htm_index_column="pixelId",
+            schema_file=TEST_SCHEMA,
+            ss_schema_file=TEST_SCHEMA_SSO,
         )
         schema.makeSchema()
 
@@ -109,7 +116,8 @@ class ApdbSchemaTestCase(unittest.TestCase):
             engine=engine,
             dia_object_index="baseline",
             htm_index_column="pixelId",
-            schema_file=TEST_SCHEMA,
+            schema_file=TEST_SCHEMA_COMBINED,
+            ss_schema_file="",
             prefix="Pfx",
         )
         # Drop existing tables (but we don't check it here)
@@ -138,7 +146,11 @@ class ApdbSchemaTestCase(unittest.TestCase):
         """
         engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
-            engine=engine, dia_object_index="pix_id_iov", htm_index_column="pixelId", schema_file=TEST_SCHEMA
+            engine=engine,
+            dia_object_index="pix_id_iov",
+            htm_index_column="pixelId",
+            schema_file=TEST_SCHEMA,
+            ss_schema_file=TEST_SCHEMA_SSO,
         )
         schema.makeSchema(drop=True)
         table = schema.get_table(ApdbTables.DiaObject)
@@ -165,6 +177,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
             dia_object_index="last_object_table",
             htm_index_column="pixelId",
             schema_file=TEST_SCHEMA,
+            ss_schema_file=TEST_SCHEMA_SSO,
         )
         schema.makeSchema(drop=True)
         table = schema.get_table(ApdbTables.DiaObject)
@@ -192,6 +205,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
             dia_object_index="last_object_table",
             htm_index_column="pixelId",
             schema_file=TEST_SCHEMA,
+            ss_schema_file=TEST_SCHEMA_SSO,
             enable_replica=True,
         )
         schema.makeSchema(drop=True)
@@ -213,6 +227,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
                 dia_object_index="baseline",
                 htm_index_column="pixelId",
                 schema_file=schema_file,
+                ss_schema_file=TEST_SCHEMA_SSO,
             )
             schema.makeSchema(drop=True)
             with self.assertRaisesRegex(ValueError, "Table type ApdbTables.metadata does not exist"):
@@ -225,6 +240,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
                 dia_object_index="baseline",
                 htm_index_column="pixelId",
                 schema_file=TEST_SCHEMA,
+                ss_schema_file=TEST_SCHEMA_SSO,
             )
             with self.assertRaisesRegex(ValueError, "Table type ApdbTables.metadata does not exist"):
                 schema.get_table(ApdbTables.metadata)
