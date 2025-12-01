@@ -24,7 +24,7 @@ jobs:
         options: --health-cmd "cqlsh --debug" --health-interval 10s --health-retries 12
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           # Need to clone everything for the git tags.
           fetch-depth: 0
