@@ -748,10 +748,20 @@ class ApdbCassandraSchema:
         query = "SELECT replication FROM system_schema.keyspaces WHERE keyspace_name = %s"
         result = self._session.execute(query, (self._keyspace,))
         if row := result.one():
-            # Check replication factor, ignore strategy class.
+            # Check replication factor, this depends strategy class.
             repl_config = cast(Mapping[str, str], row[0])
-            current_repl = int(repl_config["replication_factor"])
-            if replication_factor != current_repl:
+            _, _, repl_class = repl_config["class"].rpartition(".")
+            if repl_class == "SimpleStrategy":
+                current_repl = {int(repl_config["replication_factor"])}
+            elif repl_class == "NetworkTopologyStrategy":
+                # There may by multiple datacenters with different replication
+                # factors.
+                current_repl = {
+                    int(val) for key, val in repl_config.items() if key != "class" and val.isdecimal()
+                }
+            else:
+                raise ValueError(f"Unexpected replication strategy: {repl_class}")
+            if replication_factor not in current_repl:
                 raise ValueError(
                     f"New replication factor {replication_factor} differs from the replication factor "
                     f"for already existing keyspace: {current_repl}"
@@ -760,7 +770,7 @@ class ApdbCassandraSchema:
             # Need a new keyspace.
             query = (
                 f'CREATE KEYSPACE "{self._keyspace}"'
-                " WITH replication = {'class': 'SimpleStrategy', 'replication_factor': "
+                " WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': "
                 f"{replication_factor}"
                 "}"
             )
