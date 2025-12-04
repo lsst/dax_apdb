@@ -79,7 +79,7 @@ class ExtraTables(enum.Enum):
         }
 
 
-class ApdbSqlSchema(ApdbSchema):
+class ApdbSqlSchema:
     """Class for management of APDB schema.
 
     Attributes
@@ -97,6 +97,8 @@ class ApdbSqlSchema(ApdbSchema):
 
     Parameters
     ----------
+    table_schema : `ApdbSchema`
+        Basic description of table schema.
     engine : `sqlalchemy.engine.Engine`
         SQLAlchemy engine instance
     dia_object_index : `str`
@@ -104,10 +106,6 @@ class ApdbSqlSchema(ApdbSchema):
         for details.
     htm_index_column : `str`
         Name of a HTM index column for DiaObject and DiaSource tables.
-    schema_file : `str`
-        Location of the YAML file with APDB schema.
-    ss_schema_file : `str`
-        Location of the YAML file with SSP schema.
     prefix : `str`, optional
         Prefix to add to all schema elements.
     namespace : `str`, optional
@@ -121,17 +119,15 @@ class ApdbSqlSchema(ApdbSchema):
 
     def __init__(
         self,
+        table_schema: ApdbSchema,
         engine: sqlalchemy.engine.Engine,
         dia_object_index: str,
         htm_index_column: str,
-        schema_file: str,
-        ss_schema_file: str,
         prefix: str = "",
         namespace: str | None = None,
         enable_replica: bool = False,
     ):
-        super().__init__(schema_file, ss_schema_file)
-
+        self._table_schema = table_schema
         self._engine = engine
         self._dia_object_index = dia_object_index
         self._htm_index_column = htm_index_column
@@ -142,7 +138,7 @@ class ApdbSqlSchema(ApdbSchema):
 
         # Add pixelId column and index to tables that need it
         for table in self.pixel_id_tables:
-            tableDef = self.tableSchemas.get(table)
+            tableDef = table_schema.tableSchemas.get(table)
             if not tableDef:
                 continue
             column = schema_model.Column(
@@ -185,6 +181,10 @@ class ApdbSqlSchema(ApdbSchema):
 
         self._has_replica_chunks: bool | None = None
         self._metadata_check: bool | None = None
+
+    @property
+    def tableSchemas(self) -> Mapping[ApdbTables, schema_model.Table]:
+        return self._table_schema.tableSchemas
 
     def empty(self) -> bool:
         """Return True if database schema is empty.

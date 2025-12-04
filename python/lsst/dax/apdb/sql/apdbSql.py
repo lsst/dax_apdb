@@ -50,7 +50,7 @@ from lsst.utils.iteration import chunk_iterable
 from ..apdb import Apdb
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ReplicaChunk
-from ..apdbSchema import ApdbTables
+from ..apdbSchema import ApdbSchema, ApdbTables
 from ..config import ApdbConfig
 from ..monitor import MonAgent
 from ..schema_model import Table
@@ -157,6 +157,13 @@ class ApdbSql(Apdb):
         meta_table = sqlalchemy.schema.Table(meta_table_name, sa_metadata, autoload_with=self._engine)
         self._metadata = ApdbMetadataSql(self._engine, meta_table)
 
+        # Get tables schemas.
+        self._table_schema = ApdbSchema(config.schema_file, config.ss_schema_file)
+
+        # Check that versions are compatible, must be the first thing before
+        # reading frozen config.
+        self._db_schema_version = self._versionCheck(self._metadata, self._table_schema.schemaVersion())
+
         # Read frozen config from metadata.
         config_json = self._metadata.get(self.metadataConfigKey)
         if config_json is not None:
@@ -167,17 +174,14 @@ class ApdbSql(Apdb):
             self.config = config
 
         self._schema = ApdbSqlSchema(
+            table_schema=self._table_schema,
             engine=self._engine,
             dia_object_index=self.config.dia_object_index,
-            schema_file=self.config.schema_file,
-            ss_schema_file=self.config.ss_schema_file,
             prefix=self.config.prefix,
             namespace=self.config.namespace,
             htm_index_column=self.config.pixelization.htm_index_column,
             enable_replica=self.config.enable_replica,
         )
-
-        self._db_schema_version = self._versionCheck(self._metadata)
 
         self.pixelator = HtmPixelization(self.config.pixelization.htm_level)
 
@@ -309,7 +313,8 @@ class ApdbSql(Apdb):
 
         return url_string
 
-    def _versionCheck(self, metadata: ApdbMetadataSql) -> VersionTuple:
+    @classmethod
+    def _versionCheck(cls, metadata: ApdbMetadataSql, schema_version: VersionTuple) -> VersionTuple:
         """Check schema version compatibility and return the database schema
         version.
         """
@@ -322,25 +327,29 @@ class ApdbSql(Apdb):
                 raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
             return VersionTuple.fromString(version_str)
 
-        db_schema_version = _get_version(self.metadataSchemaVersionKey)
-        db_code_version = _get_version(self.metadataCodeVersionKey)
+        db_schema_version = _get_version(cls.metadataSchemaVersionKey)
+        db_code_version = _get_version(cls.metadataCodeVersionKey)
 
         # For now there is no way to make read-only APDB instances, assume that
         # any access can do updates.
-        if not self._schema.schemaVersion().checkCompatibility(db_schema_version):
+        if not schema_version.checkCompatibility(db_schema_version):
             raise IncompatibleVersionError(
-                f"Configured schema version {self._schema.schemaVersion()} "
+                f"Configured schema version {schema_version} "
                 f"is not compatible with database version {db_schema_version}"
             )
-        if not self.apdbImplementationVersion().checkCompatibility(db_code_version):
+        if not cls.apdbImplementationVersion().checkCompatibility(db_code_version):
             raise IncompatibleVersionError(
-                f"Current code version {self.apdbImplementationVersion()} "
+                f"Current code version {cls.apdbImplementationVersion()} "
                 f"is not compatible with database version {db_code_version}"
             )
 
-        # Check replica code version only if replica is enabled.
-        if self._schema.replication_enabled:
-            db_replica_version = _get_version(self.metadataReplicaVersionKey)
+        # Check replica code version only if replica is enabled. Sort of
+        # chicken and egg problem - `enable_replica` is a part of frozen
+        # configuration, but we cannot read frozen configuration until we
+        # validate versions. Assume that if the replica version is present
+        # then replication is enabled.
+        if metadata.get(cls.metadataReplicaVersionKey) is not None:
+            db_replica_version = _get_version(cls.metadataReplicaVersionKey)
             code_replica_version = ApdbSqlReplica.apdbReplicaImplementationVersion()
             if not code_replica_version.checkCompatibility(db_replica_version):
                 raise IncompatibleVersionError(
@@ -498,12 +507,13 @@ class ApdbSql(Apdb):
 
         engine = cls._makeEngine(config, create=True)
 
+        table_schema = ApdbSchema(config.schema_file, config.ss_schema_file)
+
         # Ask schema class to create all tables.
         schema = ApdbSqlSchema(
+            table_schema=table_schema,
             engine=engine,
             dia_object_index=config.dia_object_index,
-            schema_file=config.schema_file,
-            ss_schema_file=config.ss_schema_file,
             prefix=config.prefix,
             namespace=config.namespace,
             htm_index_column=config.pixelization.htm_index_column,
@@ -516,7 +526,7 @@ class ApdbSql(Apdb):
         apdb_meta = ApdbMetadataSql(engine, meta_table)
 
         # Fill version numbers, overwrite if they are already there.
-        apdb_meta.set(cls.metadataSchemaVersionKey, str(schema.schemaVersion()), force=True)
+        apdb_meta.set(cls.metadataSchemaVersionKey, str(table_schema.schemaVersion()), force=True)
         apdb_meta.set(cls.metadataCodeVersionKey, str(cls.apdbImplementationVersion()), force=True)
         if config.enable_replica:
             # Only store replica code version if replica is enabled.
@@ -548,7 +558,7 @@ class ApdbSql(Apdb):
         # build selection
         query = query.where(self._filterRegion(table, region))
 
-        if self._schema.has_mjd_timestamps:
+        if self.schema.has_mjd_timestamps:
             validity_end_column = "validityEndMjdTai"
         else:
             validity_end_column = "validityEnd"
@@ -685,7 +695,7 @@ class ApdbSql(Apdb):
         # docstring is inherited from a base class
 
         timestamp: float | datetime.datetime
-        if self._schema.has_mjd_timestamps:
+        if self.schema.has_mjd_timestamps:
             timestamp_column = "ssObjectReassocTimeMjdTai"
             timestamp = float(astropy.time.Time.now().tai.mjd)
         else:
@@ -724,7 +734,7 @@ class ApdbSql(Apdb):
         # Retrieve the DiaObject table.
         table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaObject)
 
-        if self._schema.has_mjd_timestamps:
+        if self.schema.has_mjd_timestamps:
             validity_end_column = "validityEndMjdTai"
         else:
             validity_end_column = "validityEnd"
@@ -738,6 +748,11 @@ class ApdbSql(Apdb):
             count = conn.execute(stmt).scalar_one()
 
         return count
+
+    @property
+    def schema(self) -> ApdbSchema:
+        # docstring is inherited from a base class
+        return self._table_schema
 
     @property
     def metadata(self) -> ApdbMetadata:
@@ -915,7 +930,7 @@ class ApdbSql(Apdb):
         ids = sorted(int(oid) for oid in objs["diaObjectId"])
         _LOG.debug("first object ID: %d", ids[0])
 
-        if self._schema.has_mjd_timestamps:
+        if self.schema.has_mjd_timestamps:
             validity_start_column = "validityStartMjdTai"
             validity_end_column = "validityEndMjdTai"
             timestamp = float(visit_time.tai.mjd)

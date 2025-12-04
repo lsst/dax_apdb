@@ -32,7 +32,15 @@ from unittest.mock import patch
 import sqlalchemy
 
 import lsst.utils.tests
-from lsst.dax.apdb import Apdb, ApdbConfig, ApdbReplica, ApdbTables, ApdbUpdateRecord, ReplicaChunk
+from lsst.dax.apdb import (
+    Apdb,
+    ApdbConfig,
+    ApdbReplica,
+    ApdbTables,
+    ApdbUpdateRecord,
+    IncompatibleVersionError,
+    ReplicaChunk,
+)
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.sql import ApdbSql, ApdbSqlConfig
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest
@@ -227,7 +235,7 @@ class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
 
 
 class ApdbSQLiteFromUriTestCase(unittest.TestCase):
-    """A test case for for instantiating ApdbSql via URI."""
+    """A test case for instantiating ApdbSql via URI."""
 
     def setUp(self) -> None:
         self.tempdir = tempfile.mkdtemp()
@@ -304,6 +312,35 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
         ApdbReplica.from_uri(self.config_path)
         with self.assertRaises(FileNotFoundError):
             Apdb.from_uri(self.bad_config_path)
+
+
+class ApdbSQLiteVersionCheck(unittest.TestCase):
+    """A test case to verify that version check happens before reading
+    frozen configuration.
+    """
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tempdir, ignore_errors=True)
+        self.db_url = f"sqlite:///{self.tempdir}/apdb.sqlite3"
+        self.config = ApdbSql.init_database(
+            db_url=self.db_url, schema_file=TEST_SCHEMA, ss_schema_file=TEST_SCHEMA_SSO
+        )
+
+    def test_version_check(self) -> None:
+        """Test that version check happens before reading config."""
+        apdb = Apdb.from_config(self.config)
+        assert isinstance(apdb, ApdbSql)
+
+        # Store incompatible version.
+        apdb.metadata.set(ApdbSql.metadataSchemaVersionKey, "99.0.0", force=True)
+
+        # Overwrite frozen config with something that will break.
+        apdb.metadata.set(ApdbSql.metadataConfigKey, '{"not_a_config_key": 0}', force=True)
+
+        # Try again.
+        with self.assertRaises(IncompatibleVersionError):
+            Apdb.from_config(self.config)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

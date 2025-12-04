@@ -33,7 +33,7 @@ import pandas
 from lsst.resources import ResourcePathExpression
 from lsst.sphgeom import Region
 
-from .apdbSchema import ApdbTables
+from .apdbSchema import ApdbSchema, ApdbTables
 from .config import ApdbConfig
 from .factory import make_apdb
 from .schema_model import Table
@@ -350,6 +350,12 @@ class Apdb(ABC):
         -----
         This method can be very inefficient or slow in some implementations.
         """
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def schema(self) -> ApdbSchema:
+        """APDB table schema from ``sdm_schemas`` (`ApdbSchema`)."""
         raise NotImplementedError()
 
     @property
