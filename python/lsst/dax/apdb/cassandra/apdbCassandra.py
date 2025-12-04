@@ -59,7 +59,7 @@ from ..apdbSchema import ApdbSchema, ApdbTables
 from ..monitor import MonAgent
 from ..schema_model import Table
 from ..timer import Timer
-from ..versionTuple import IncompatibleVersionError, VersionTuple
+from ..versionTuple import VersionTuple
 from .apdbCassandraAdmin import ApdbCassandraAdmin
 from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema, CreateTableOptions, ExtraTables
@@ -115,21 +115,17 @@ class ApdbCassandra(Apdb):
     def _context(self) -> ConnectionContext:
         """Establish connection if not established and return context."""
         if self._connection_context is None:
-            session = self._session_factory.session()
-            self._connection_context = ConnectionContext(session, self._config, self._schema.tableSchemas)
-
-            # Check version compatibility
             current_versions = DbVersions(
-                schema_version=self._schema.schemaVersion(),
+                schema_version=self.schema.schemaVersion(),
                 code_version=self.apdbImplementationVersion(),
-                replica_version=(
-                    ApdbCassandraReplica.apdbReplicaImplementationVersion()
-                    if self._connection_context.config.enable_replica
-                    else None
-                ),
+                replica_version=ApdbCassandraReplica.apdbReplicaImplementationVersion(),
             )
             _LOG.debug("Current versions: %s", current_versions)
-            self._versionCheck(current_versions, self._connection_context.db_versions)
+
+            session = self._session_factory.session()
+            self._connection_context = ConnectionContext(
+                session, self._config, self.schema.tableSchemas, current_versions
+            )
 
             if _LOG.isEnabledFor(logging.DEBUG):
                 _LOG.debug("ApdbCassandra Configuration: %s", self._connection_context.config.model_dump())
@@ -139,35 +135,6 @@ class ApdbCassandra(Apdb):
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
         return Timer(name, _MON, tags=tags)
-
-    def _versionCheck(self, current_versions: DbVersions, db_versions: DbVersions) -> None:
-        """Check schema version compatibility."""
-        if not current_versions.schema_version.checkCompatibility(db_versions.schema_version):
-            raise IncompatibleVersionError(
-                f"Configured schema version {current_versions.schema_version} "
-                f"is not compatible with database version {db_versions.schema_version}"
-            )
-        if not current_versions.code_version.checkCompatibility(db_versions.code_version):
-            raise IncompatibleVersionError(
-                f"Current code version {current_versions.code_version} "
-                f"is not compatible with database version {db_versions.code_version}"
-            )
-
-        # Check replica code version only if replica is enabled.
-        match current_versions.replica_version, db_versions.replica_version:
-            case None, None:
-                pass
-            case VersionTuple() as current, VersionTuple() as stored:
-                if not current.checkCompatibility(stored):
-                    raise IncompatibleVersionError(
-                        f"Current replication code version {current} "
-                        f"is not compatible with database version {stored}"
-                    )
-            case _:
-                raise IncompatibleVersionError(
-                    f"Current replication code version {current_versions.replica_version} "
-                    f"is not compatible with database version {db_versions.replica_version}"
-                )
 
     @classmethod
     def apdbImplementationVersion(cls) -> VersionTuple:
@@ -186,7 +153,7 @@ class ApdbCassandra(Apdb):
 
     def tableDef(self, table: ApdbTables) -> Table | None:
         # docstring is inherited from a base class
-        return self._schema.tableSchemas.get(table)
+        return self.schema.tableSchemas.get(table)
 
     @classmethod
     def init_database(
@@ -636,7 +603,7 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
-        if self._schema.has_mjd_timestamps:
+        if self.schema.has_mjd_timestamps:
             reassign_time_column = "ssObjectReassocTimeMjdTai"
             reassignTime = float(astropy.time.Time.now().tai.mjd)
         else:
@@ -725,6 +692,11 @@ class ApdbCassandra(Apdb):
 
         # It's too inefficient to implement it for Cassandra in current schema.
         raise NotImplementedError()
+
+    @property
+    def schema(self) -> ApdbSchema:
+        # docstring is inherited from a base class
+        return self._schema
 
     @property
     def metadata(self) -> ApdbMetadata:
@@ -957,7 +929,7 @@ class ApdbCassandra(Apdb):
             self._deleteMovingObjects(objs)
 
         timestamp: float | datetime.datetime
-        if self._schema.has_mjd_timestamps:
+        if self.schema.has_mjd_timestamps:
             validity_start_column = "validityStartMjdTai"
             timestamp = float(visit_time.tai.mjd)
         else:
@@ -1358,10 +1330,10 @@ class ApdbCassandra(Apdb):
         catalog : `pandas.DataFrame`
             An empty catalog.
         """
-        table = self._schema.tableSchemas[table_name]
+        table = self.schema.tableSchemas[table_name]
 
         data = {
-            columnDef.name: pandas.Series(dtype=self._schema.column_dtype(columnDef.datatype))
+            columnDef.name: pandas.Series(dtype=self.schema.column_dtype(columnDef.datatype))
             for columnDef in table.columns
         }
         return pandas.DataFrame(data)
