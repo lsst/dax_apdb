@@ -29,7 +29,7 @@ import sqlalchemy
 from sqlalchemy import create_engine
 
 import lsst.utils.tests
-from lsst.dax.apdb.apdbSchema import ApdbTables
+from lsst.dax.apdb.apdbSchema import ApdbSchema, ApdbTables
 from lsst.dax.apdb.sql.apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from lsst.dax.apdb.tests import update_schema_yaml
 
@@ -79,11 +79,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
 
         # create standard (baseline) schema
         schema = ApdbSqlSchema(
+            table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
             engine=engine,
             dia_object_index="baseline",
             htm_index_column="pixelId",
-            schema_file=TEST_SCHEMA,
-            ss_schema_file=TEST_SCHEMA_SSO,
         )
         schema.makeSchema()
 
@@ -113,11 +112,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         """Create schema using prefix."""
         engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
+            table_schema=ApdbSchema(TEST_SCHEMA_COMBINED, ""),
             engine=engine,
             dia_object_index="baseline",
             htm_index_column="pixelId",
-            schema_file=TEST_SCHEMA_COMBINED,
-            ss_schema_file="",
             prefix="Pfx",
         )
         # Drop existing tables (but we don't check it here)
@@ -146,11 +144,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         """
         engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
+            table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
             engine=engine,
             dia_object_index="pix_id_iov",
             htm_index_column="pixelId",
-            schema_file=TEST_SCHEMA,
-            ss_schema_file=TEST_SCHEMA_SSO,
         )
         schema.makeSchema(drop=True)
         table = schema.get_table(ApdbTables.DiaObject)
@@ -173,11 +170,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         """Use DiaObjectLast table for DiaObject."""
         engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
+            table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
             engine=engine,
             dia_object_index="last_object_table",
             htm_index_column="pixelId",
-            schema_file=TEST_SCHEMA,
-            ss_schema_file=TEST_SCHEMA_SSO,
         )
         schema.makeSchema(drop=True)
         table = schema.get_table(ApdbTables.DiaObject)
@@ -201,11 +197,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         """Add replica tables."""
         engine = create_engine("sqlite://")
         schema = ApdbSqlSchema(
+            table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
             engine=engine,
             dia_object_index="last_object_table",
             htm_index_column="pixelId",
-            schema_file=TEST_SCHEMA,
-            ss_schema_file=TEST_SCHEMA_SSO,
             enable_replica=True,
         )
         schema.makeSchema(drop=True)
@@ -223,11 +218,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
         with update_schema_yaml(TEST_SCHEMA, drop_metadata=True) as schema_file:
             engine = create_engine("sqlite://")
             schema = ApdbSqlSchema(
+                table_schema=ApdbSchema(schema_file, TEST_SCHEMA_SSO),
                 engine=engine,
                 dia_object_index="baseline",
                 htm_index_column="pixelId",
-                schema_file=schema_file,
-                ss_schema_file=TEST_SCHEMA_SSO,
             )
             schema.makeSchema(drop=True)
             with self.assertRaisesRegex(ValueError, "Table type ApdbTables.metadata does not exist"):
@@ -236,11 +230,10 @@ class ApdbSchemaTestCase(unittest.TestCase):
             # Also check the case when database is missing metadata table but
             # YAML schema has it.
             schema = ApdbSqlSchema(
+                table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
                 engine=engine,
                 dia_object_index="baseline",
                 htm_index_column="pixelId",
-                schema_file=TEST_SCHEMA,
-                ss_schema_file=TEST_SCHEMA_SSO,
             )
             with self.assertRaisesRegex(ValueError, "Table type ApdbTables.metadata does not exist"):
                 schema.get_table(ApdbTables.metadata)

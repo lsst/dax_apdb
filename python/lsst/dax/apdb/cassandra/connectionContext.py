@@ -38,7 +38,7 @@ from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
 from ..schema_model import Table
-from ..versionTuple import VersionTuple
+from ..versionTuple import IncompatibleVersionError, VersionTuple
 from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema
 from .apdbMetadataCassandra import ApdbMetadataCassandra
@@ -106,7 +106,11 @@ class ConnectionContext:
     """Names of the config parameters to be frozen in metadata table."""
 
     def __init__(
-        self, session: Session, config: ApdbCassandraConfig, table_schemas: Mapping[ApdbTables, Table]
+        self,
+        session: Session,
+        config: ApdbCassandraConfig,
+        table_schemas: Mapping[ApdbTables, Table],
+        current_versions: DbVersions,
     ):
         self.session = session
 
@@ -114,6 +118,12 @@ class ConnectionContext:
         self.metadata = ApdbMetadataCassandra(
             self.session, meta_table_name, config.keyspace, "read_tuples", "write"
         )
+
+        # Read versions stored in database.
+        self.db_versions = self._readVersions(self.metadata)
+        _LOG.debug("Database versions: %s", self.db_versions)
+
+        self._versionCheck(current_versions, self.db_versions)
 
         # Read frozen config from metadata.
         config_json = self.metadata.get(self.metadataConfigKey)
@@ -124,10 +134,6 @@ class ConnectionContext:
         else:
             self.config = config
         del config
-
-        # Read versions stored in database.
-        self.db_versions = self._readVersions(self.metadata)
-        _LOG.debug("Database versions: %s", self.db_versions)
 
         # Since replica version 1.1.0 we use finer partitioning for replica
         # chunk tables.
@@ -190,7 +196,8 @@ class ConnectionContext:
                 raise LookupError("Failed to find any partitioned DiaSource table.")
             return ApdbCassandraTimePartitionRange(start=min(partitions), end=max(partitions))
 
-    def _readVersions(self, metadata: ApdbMetadataCassandra) -> DbVersions:
+    @classmethod
+    def _readVersions(cls, metadata: ApdbMetadataCassandra) -> DbVersions:
         """Read versions of all objects from metadata."""
 
         def _get_version(key: str) -> VersionTuple:
@@ -201,14 +208,40 @@ class ConnectionContext:
                 raise RuntimeError(f"Version key {key!r} does not exist in metadata table.")
             return VersionTuple.fromString(version_str)
 
-        db_schema_version = _get_version(self.metadataSchemaVersionKey)
-        db_code_version = _get_version(self.metadataCodeVersionKey)
+        db_schema_version = _get_version(cls.metadataSchemaVersionKey)
+        db_code_version = _get_version(cls.metadataCodeVersionKey)
 
-        # Check replica code version only if replica is enabled.
         db_replica_version: VersionTuple | None = None
-        if self.config.enable_replica:
-            db_replica_version = _get_version(self.metadataReplicaVersionKey)
+        if version_str := metadata.get(cls.metadataReplicaVersionKey):
+            db_replica_version = VersionTuple.fromString(version_str)
 
         return DbVersions(
             schema_version=db_schema_version, code_version=db_code_version, replica_version=db_replica_version
         )
+
+    @classmethod
+    def _versionCheck(cls, current_versions: DbVersions, db_versions: DbVersions) -> None:
+        """Check schema version compatibility."""
+        if not current_versions.schema_version.checkCompatibility(db_versions.schema_version):
+            raise IncompatibleVersionError(
+                f"Configured schema version {current_versions.schema_version} "
+                f"is not compatible with database version {db_versions.schema_version}"
+            )
+        if not current_versions.code_version.checkCompatibility(db_versions.code_version):
+            raise IncompatibleVersionError(
+                f"Current code version {current_versions.code_version} "
+                f"is not compatible with database version {db_versions.code_version}"
+            )
+
+        # Check replica code version only if replica is enabled. Sort of
+        # chicken and egg problem - `enable_replica` is a part of frozen
+        # configuration, but we cannot read frozen configuration until we
+        # validate versions. Assume that if the replica version is present
+        # then replication is enabled.
+        if db_versions.replica_version is not None:
+            assert current_versions.replica_version is not None, "Do not expect None"
+            if not current_versions.replica_version.checkCompatibility(db_versions.replica_version):
+                raise IncompatibleVersionError(
+                    f"Current replication code version {current_versions.replica_version} "
+                    f"is not compatible with database version {db_versions.replica_version}"
+                )

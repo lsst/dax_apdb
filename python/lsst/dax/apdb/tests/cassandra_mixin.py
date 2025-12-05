@@ -41,6 +41,8 @@ from .utils import TestCaseMixin
 class ApdbCassandraMixin(TestCaseMixin):
     """Mixin class which defines common methods for unit tests."""
 
+    cluster_host: str
+
     @classmethod
     def setUpClass(cls) -> None:
         """Prepare config for server connection."""
@@ -54,7 +56,9 @@ class ApdbCassandraMixin(TestCaseMixin):
 
     def setUp(self) -> None:
         """Prepare config for server connection."""
-        self.cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
+        cluster_host = os.environ.get("DAX_APDB_TEST_CASSANDRA_CLUSTER")
+        assert cluster_host is not None
+        self.cluster_host = cluster_host
         # Use dedicated keyspace for each test, keyspace is created by
         # init_database if it does not exist.
         key = uuid.uuid4()

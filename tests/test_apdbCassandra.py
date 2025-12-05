@@ -41,8 +41,16 @@ from typing import Any
 import astropy.time
 
 import lsst.utils.tests
-from lsst.dax.apdb import Apdb, ApdbConfig, ApdbTables, ApdbUpdateRecord, ReplicaChunk
+from lsst.dax.apdb import (
+    Apdb,
+    ApdbConfig,
+    ApdbTables,
+    ApdbUpdateRecord,
+    IncompatibleVersionError,
+    ReplicaChunk,
+)
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
+from lsst.dax.apdb.cassandra.connectionContext import ConnectionContext
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
 from lsst.dax.apdb.tests.data_factory import makeObjectCatalog
@@ -171,6 +179,39 @@ class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest
         }
         kw.update(kwargs)
         return ApdbCassandra.init_database(**kw)  # type: ignore[arg-type]
+
+
+class ApdbCassandraVersionCheck(cassandra_mixin.ApdbCassandraMixin, unittest.TestCase):
+    """A test case to verify that version check happens before reading
+    frozen configuration.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        self.config = ApdbCassandra.init_database(
+            hosts=(self.cluster_host,),
+            keyspace=self.keyspace,
+            schema_file=TEST_SCHEMA,
+            ss_schema_file=TEST_SCHEMA_SSO,
+            time_partition_tables=False,
+        )
+
+    def test_version_check(self) -> None:
+        """Test that version check happens before reading config."""
+        apdb = Apdb.from_config(self.config)
+        assert isinstance(apdb, ApdbCassandra)
+
+        # Store incompatible version.
+        apdb.metadata.set(ConnectionContext.metadataSchemaVersionKey, "99.0.0", force=True)
+
+        # Overwrite frozen config with something that will break.
+        apdb.metadata.set(ConnectionContext.metadataConfigKey, '{"not_a_config_key": 0}', force=True)
+
+        # Try again.
+        with self.assertRaises(IncompatibleVersionError):
+            # Need to call some actual method to initiate connection.
+            Apdb.from_config(self.config).metadata.items()
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

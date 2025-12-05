@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
+import logging.config
 import os
 import tempfile
 from abc import ABC, abstractmethod
@@ -61,6 +62,11 @@ from .utils import TestCaseMixin
 
 if TYPE_CHECKING:
     from ..pixelization import Pixelization
+
+
+# Optionally configure logging from a config file.
+if log_config := os.environ.get("DAX_APDB_TEST_LOG_CONFIG"):
+    logging.config.fileConfig(log_config)
 
 
 def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
@@ -838,13 +844,13 @@ class ApdbTest(TestCaseMixin, ABC):
         config = self.make_instance()
         default_schema = config.schema_file
         apdb = Apdb.from_config(config)
-        self.assertEqual(apdb._schema.schemaVersion(), VersionTuple(0, 1, 1))  # type: ignore[attr-defined]
+        self.assertEqual(apdb.schema.schemaVersion(), VersionTuple(0, 1, 1))
 
         with update_schema_yaml(default_schema, version="") as schema_file:
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
             self.assertEqual(
-                apdb._schema.schemaVersion(),  # type: ignore[attr-defined]
+                apdb.schema.schemaVersion(),
                 VersionTuple(0, 1, 0),
             )
 
@@ -852,7 +858,7 @@ class ApdbTest(TestCaseMixin, ABC):
             config = self.make_instance(schema_file=schema_file)
             apdb = Apdb.from_config(config)
             self.assertEqual(
-                apdb._schema.schemaVersion(),  # type: ignore[attr-defined]
+                apdb.schema.schemaVersion(),
                 VersionTuple(99, 0, 0),
             )
 
@@ -919,7 +925,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         config = self.make_instance()
         apdb = Apdb.from_config(config)
 
-        self.assertEqual(apdb._schema.schemaVersion(), VersionTuple(0, 1, 1))  # type: ignore[attr-defined]
+        self.assertEqual(apdb.schema.schemaVersion(), VersionTuple(0, 1, 1))
 
         # Claim that schema version is now 99.0.0, must raise an exception.
         with update_schema_yaml(config.schema_file, version="99.0.0") as schema_file:
