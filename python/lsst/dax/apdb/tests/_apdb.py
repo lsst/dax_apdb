@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
+import logging.config
 import os
 import tempfile
 from abc import ABC, abstractmethod
@@ -61,6 +62,11 @@ from .utils import TestCaseMixin
 
 if TYPE_CHECKING:
     from ..pixelization import Pixelization
+
+
+# Optionally configure logging from a config file.
+if log_config := os.environ.get("DAX_APDB_TEST_LOG_CONFIG"):
+    logging.config.fileConfig(log_config)
 
 
 def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
