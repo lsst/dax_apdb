@@ -1390,11 +1390,11 @@ class ApdbSql(Apdb):
 
     def _timestamp_column_name(self, column: str) -> str:
         """Return column name before/after schema migration to MJD TAI."""
-        return self._schema.timestamp_column_name(column)
+        return self.schema.timestamp_column_name(column)
 
     def _timestamp_column_value(self, time: astropy.time.Time) -> float | datetime.datetime:
         """Return column value before/after schema migration to MJD TAI."""
-        if self._schema.has_mjd_timestamps:
+        if self.schema.has_mjd_timestamps:
             return float(time.tai.mjd)
         else:
             return time.datetime.astimezone(tz=datetime.UTC)
