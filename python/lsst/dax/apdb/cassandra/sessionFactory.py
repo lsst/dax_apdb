@@ -124,6 +124,13 @@ class SessionFactory:
                 self._config.contact_points, self._config.connection_config.private_ips
             )
 
+        extra_parameters = {
+            "idle_heartbeat_interval": 0,
+            "idle_heartbeat_timeout": 30,
+            "control_connection_timeout": 100,
+            "executor_threads": 10,
+        }
+        extra_parameters.update(self._config.connection_config.extra_parameters)
         with Timer("cluster_connect", _MON):
             cluster = Cluster(
                 execution_profiles=self._make_profiles(),
@@ -132,7 +139,7 @@ class SessionFactory:
                 address_translator=addressTranslator,
                 protocol_version=self._config.connection_config.protocol_version,
                 auth_provider=self._make_auth_provider(),
-                **self._config.connection_config.extra_parameters,
+                **extra_parameters,
             )
             session = cluster.connect()
 
