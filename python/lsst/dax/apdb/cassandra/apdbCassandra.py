@@ -24,11 +24,12 @@ from __future__ import annotations
 __all__ = ["ApdbCassandra"]
 
 import datetime
+import json
 import logging
 import random
 import uuid
 import warnings
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Set
 from typing import TYPE_CHECKING, Any, cast
 
@@ -56,7 +57,13 @@ from ..apdb import Apdb, ApdbConfig
 from ..apdbConfigFreezer import ApdbConfigFreezer
 from ..apdbReplica import ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbSchema, ApdbTables
+from ..apdbUpdateRecord import (
+    ApdbCloseDiaObjectValidityRecord,
+    ApdbReassignDiaSourceToDiaObjectRecord,
+    ApdbUpdateNDiaSourcesRecord,
+)
 from ..monitor import MonAgent
+from ..recordIds import DiaObjectId, DiaSourceId
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import VersionTuple
@@ -84,7 +91,7 @@ _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
 
-VERSION = VersionTuple(1, 2, 1)
+VERSION = VersionTuple(1, 3, 0)
 """Version for the code controlling non-replication tables. This needs to be
 updated following compatibility rules when schema produced by this code
 changes.
@@ -419,21 +426,17 @@ class ApdbCassandra(Apdb):
             statements.append((statement, params))
         _LOG.debug("getDiaObjects: #queries: %s", len(statements))
 
-        with _MON.context_tags({"table": "DiaObject"}):
-            _MON.add_record(
-                "select_query_stats", values={"num_sp_part": num_sp_part, "num_queries": len(statements)}
+        with self._timer("select_time", tags={"table": "DiaObject", "method": "getDiaObjects"}) as timer:
+            objects = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi",
+                    config.connection_config.read_concurrency,
+                ),
             )
-            with self._timer("select_time") as timer:
-                objects = cast(
-                    pandas.DataFrame,
-                    select_concurrent(
-                        context.session,
-                        statements,
-                        "read_pandas_multi",
-                        config.connection_config.read_concurrency,
-                    ),
-                )
-                timer.add_values(row_count=len(objects))
+            timer.add_values(row_count=len(objects), num_sp_part=num_sp_part, num_queries=len(statements))
 
         _LOG.debug("found %s DiaObjects", objects.shape[0])
         return objects
@@ -484,6 +487,129 @@ class ApdbCassandra(Apdb):
 
         return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
 
+    def getDiaObjectsForDedup(self, since: astropy.time.Time | None = None) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        if not context.has_dedup_table:
+            raise TypeError("DiaObjectDedup table does not exist in this APDB instance.")
+
+        if since is None:
+            # Read last deduplication time from metadata.
+            dedup_str = context.metadata.get(context.metadataDedupKey)
+            if dedup_str is not None:
+                dedup_state = json.loads(dedup_str)
+                dedup_time_str = dedup_state["dedup_time_iso_tai"]
+                since = astropy.time.Time(dedup_time_str, format="iso", scale="tai")
+
+        column_names = context.schema.apdbColumnNames(ExtraTables.DiaObjectDedup)
+        what = ",".join(quote_id(column) for column in column_names)
+
+        validity_start_column = self._timestamp_column_name("validityStart")
+        timestamp = None if since is None else self._timestamp_column_value(since)
+
+        table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
+        query = f'SELECT {what} FROM "{self._keyspace}"."{table_name}" WHERE dedup_part = %s'
+        if since is not None:
+            query += f' AND "{validity_start_column}" >= %s'
+        query += " ALLOW FILTERING"
+
+        statement = cassandra.query.SimpleStatement(query)
+
+        num_part = config.partitioning.num_part_dedup
+        statements = []
+        for dedup_part in range(num_part):
+            params = (dedup_part,) if timestamp is None else (dedup_part, timestamp)
+            statements.append((statement, params))
+
+        with self._timer(
+            "select_time", tags={"table": "DiaObjectDedup", "method": "getDiaObjectsForDedup"}
+        ) as timer:
+            objects = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi_dedup",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(objects), num_queries=num_part)
+
+        _LOG.debug("found %s DiaObjectDedup records", objects.shape[0])
+        return objects
+
+    def getDiaSourcesForDiaObjects(
+        self, objects: list[DiaObjectId], start_time: astropy.time.Time, max_dist_arcsec: float = 1.0
+    ) -> pandas.DataFrame:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        # Which tables to query and temporal constraints.
+        end_time = self._current_time()
+        tables, temporal_where = context.partitioner.temporal_where(
+            ApdbTables.DiaSource,
+            start_time,
+            end_time,
+            for_prepare=False,
+            partitons_range=context.time_partitions_range,
+            query_per_time_part=False,
+        )
+        if not tables:
+            warnings.warn(
+                f"Query time range ({start_time.isot} - {end_time.isot}) does not overlap database "
+                "time partitions."
+            )
+
+        # Group DiaObjects by partition.
+        partitioned_object_ids = self._group_dia_objects_by_partition(
+            context.partitioner, objects, max_dist_arcsec
+        )
+
+        # Columns to return.
+        column_names = context.schema.apdbColumnNames(ApdbTables.DiaSource)
+        what = ",".join(quote_id(column) for column in column_names)
+
+        # Make a bunch of queries.
+        statements = []
+        suffix = "ALLOW FILTERING"
+        for apdb_part, diaObjectIds in partitioned_object_ids.items():
+            spatial_where = [(f"apdb_part = {apdb_part}", ())]
+            for table in tables:
+                prefix = f'SELECT {what} FROM "{self._keyspace}"."{table}"'
+                for id_chunk in chunk_iterable(diaObjectIds, 10_000):
+                    chunk_str = ",".join(str(diaObjectId) for diaObjectId in id_chunk)
+                    id_where = (f'"diaObjectId" IN ({chunk_str})', ())
+                    statements += list(
+                        self._combine_where(prefix, spatial_where, temporal_where, id_where, suffix=suffix)
+                    )
+
+        _LOG.debug("getDiaSourcesForDiaObjects #queries: %s", len(statements))
+
+        with self._timer(
+            "select_time", tags={"table": "DiaSource", "method": "getDiaSourcesForDiaObjects"}
+        ) as timer:
+            catalog = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count_from_db=len(catalog), num_queries=len(statements))
+
+            # precise filtering on midpointMjdTai
+            catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] >= start_time.tai.mjd])
+
+            timer.add_values(row_count=len(catalog))
+
+        _LOG.debug("found %d DiaSources", len(catalog))
+        return catalog
+
     def containsVisitDetector(
         self,
         visit: int,
@@ -501,7 +627,7 @@ class ApdbCassandra(Apdb):
             query = (
                 f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" WHERE visit = %s AND detector = %s'
             )
-            with self._timer("contains_visit_detector_time"):
+            with self._timer("contains_visit_detector_time", tags={"table": table_name}):
                 result = context.session.execute(query, (visit, detector))
                 return bool(result.one()[0])
 
@@ -514,7 +640,7 @@ class ApdbCassandra(Apdb):
         visit_detector_where = ("visit = ? AND detector = ?", (visit, detector))
 
         # Sources are partitioned on their midPointMjdTai. To avoid precision
-        # issues add some fuzzines to visit time.
+        # issues add some fuzziness to visit time.
         mjd_start = float(visit_time.tai.mjd) - 1.0 / 24
         mjd_end = float(visit_time.tai.mjd) + 1.0 / 24
 
@@ -531,7 +657,7 @@ class ApdbCassandra(Apdb):
                     self._combine_where(prefix, sp_where, temporal_where, visit_detector_where, suffix)
                 )
 
-        with self._timer("contains_visit_detector_time"):
+        with self._timer("contains_visit_detector_time", tags={"table": "DiaSource"}):
             result = cast(
                 list[tuple[int] | None],
                 select_concurrent(
@@ -598,18 +724,290 @@ class ApdbCassandra(Apdb):
             forced_sources = self._add_apdb_part(forced_sources)
             self._storeDiaSources(ApdbTables.DiaForcedSource, forced_sources, replica_chunk)
 
+    def reassignDiaSourcesToDiaObjects(
+        self,
+        idMap: Mapping[DiaSourceId, int],
+        *,
+        increment_nDiaSources: bool = True,
+        decrement_nDiaSources: bool = True,
+    ) -> None:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        source_ids = {source_id.diaSourceId for source_id in idMap}
+
+        # Find all DiaSources.
+        found_sources = self._get_diasource_data(
+            idMap, "apdb_part", "diaObjectId", "ra", "dec", "midpointMjdTai"
+        )
+
+        if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
+            raise LookupError(f"Some source IDs were not found in DiaSource table: {missing_ids}")
+
+        found_sources_by_id = {row.diaSourceId: row for row in found_sources}
+
+        # Make sure that all DiaObjects exist, we also want to know
+        # nDiaSources count for current and new records because we want to
+        # send updated values to replica.
+        current_object_ids = {
+            DiaObjectId(diaObjectId=row.diaObjectId, ra=row.ra, dec=row.dec) for row in found_sources
+        }
+        # Assume that DiaSource ra/dec are very close to re-assigned objects.
+        new_object_ids = {
+            DiaObjectId(diaObjectId=diaObjectId, ra=source_id.ra, dec=source_id.dec)
+            for source_id, diaObjectId in idMap.items()
+        }
+        all_object_ids = new_object_ids | current_object_ids
+        found_objects = self._get_diaobject_data(all_object_ids, "apdb_part", "ra", "dec", "nDiaSources")
+
+        if missing_ids := (
+            {row.diaObjectId for row in all_object_ids} - {row.diaObjectId for row in found_objects}
+        ):
+            raise LookupError(f"Some object IDs were not found in DiaObjectLast table: {missing_ids}")
+
+        update_records: list[ApdbUpdateRecord] = []
+        update_order = 0
+        current_time = self._current_time()
+        current_time_ns = int(current_time.unix_tai * 1e9)
+
+        # Update DiaSources.
+        table_name = context.schema.tableName(ApdbTables.DiaSource)
+        statements: list[tuple] = []
+        for source_id, diaObjectId in idMap.items():
+            source_row = found_sources_by_id[source_id.diaSourceId]
+            apdb_part = source_row.apdb_part
+            time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
+
+            if config.partitioning.time_partition_tables:
+                statement = context.preparer.prepare(
+                    f'UPDATE "{self._keyspace}"."{table_name}_{time_part}" SET "diaObjectId" = ? '
+                    'WHERE apdb_part = ? AND "diaSourceId" = ?'
+                )
+                statements.append((statement, (diaObjectId, apdb_part, source_id.diaSourceId)))
+            else:
+                statement = context.preparer.prepare(
+                    f'UPDATE "{self._keyspace}"."{table_name}" SET "diaObjectId" = ? '
+                    'WHERE apdb_part = ? AND apdb_time_part = ? AND "diaSourceId" = ?'
+                )
+                statements.append((statement, (diaObjectId, apdb_part, time_part, source_id.diaSourceId)))
+
+            if context.schema.replication_enabled:
+                update_records.append(
+                    ApdbReassignDiaSourceToDiaObjectRecord(
+                        diaSourceId=source_id.diaSourceId,
+                        ra=source_id.ra,
+                        dec=source_id.dec,
+                        midpointMjdTai=source_id.midpointMjdTai,
+                        diaObjectId=diaObjectId,
+                        update_time_ns=current_time_ns,
+                        update_order=update_order,
+                    )
+                )
+                update_order += 1
+
+        with self._timer(
+            "update_time", tags={"table": table_name, "method": "reassignDiaSourcesToDiaObjects"}
+        ) as timer:
+            execute_concurrent(context.session, statements, execution_profile="write")
+            timer.add_values(num_queries=len(statements))
+
+        # Update nDiaSources in DiaObjectLast. We do not update DiaObject table
+        # here because it may not even exist. PPDB updates DiaObject from
+        # update records.
+        if increment_nDiaSources or decrement_nDiaSources:
+            table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
+            statement = context.preparer.prepare(
+                f'UPDATE "{self._keyspace}"."{table_name}" SET "nDiaSources" = ? '
+                'WHERE apdb_part = ? AND "diaObjectId" = ?'
+            )
+            statements = []
+
+            # Calculate increments/decrements for all affected DiaObjects.
+            increments: Counter = Counter()
+            if increment_nDiaSources:
+                increments.update(idMap.values())
+            if decrement_nDiaSources:
+                increments.subtract(row.diaObjectId for row in found_sources)
+
+            for row in found_objects:
+                if increments.get(row.diaObjectId):
+                    nDiaSources = row.nDiaSources + increments[row.diaObjectId]
+                    statements.append((statement, (nDiaSources, row.apdb_part, row.diaObjectId)))
+
+                    # Also send updated values to replica.
+                    if context.schema.replication_enabled:
+                        update_records.append(
+                            ApdbUpdateNDiaSourcesRecord(
+                                diaObjectId=row.diaObjectId,
+                                ra=row.ra,
+                                dec=row.dec,
+                                nDiaSources=nDiaSources,
+                                update_time_ns=current_time_ns,
+                                update_order=update_order,
+                            )
+                        )
+                        update_order += 1
+
+            if statements:
+                with self._timer(
+                    "update_time", tags={"table": table_name, "method": "reassignDiaSourcesToDiaObjects"}
+                ) as timer:
+                    execute_concurrent(context.session, statements, execution_profile="write")
+                    timer.add_values(num_queries=len(statements))
+
+        if update_records:
+            replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
+    def setValidityEnd(
+        self, objects: list[DiaObjectId], validityEnd: astropy.time.Time, raise_on_missing_id: bool = False
+    ) -> int:
+        # docstring is inherited from a base class
+        if not objects:
+            return 0
+
+        context = self._context
+        config = context.config
+
+        pad_arcsec = 1.0
+        partitioned_object_ids = self._group_dia_objects_by_partition(
+            context.partitioner, objects, pad_arcsec
+        )
+
+        # Check that all objects exist.
+        table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
+        statements: list[tuple] = []
+        for apdb_part, diaObjectIds in partitioned_object_ids.items():
+            id_str = ",".join(str(diaObjectId) for diaObjectId in diaObjectIds)
+            query = (
+                f'SELECT apdb_part, "diaObjectId" FROM "{self._keyspace}"."{table_name}" '
+                f'WHERE apdb_part = %s AND "diaObjectId" IN ({id_str})'
+            )
+            statement = cassandra.query.SimpleStatement(query)
+            statements.append((statement, (apdb_part,)))
+
+        with self._timer("select_time", tags={"table": table_name, "method": "setValidityEnd"}) as timer:
+            records = cast(
+                list[tuple[int, int]],
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_tuples",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(objects))
+
+        requested_ids = {obj.diaObjectId for obj in objects}
+        found_ids = {rec[1] for rec in records}
+        if extra_ids := (found_ids - requested_ids):
+            raise RuntimeError(f"Consistency error - found duplicate records for object IDs: {extra_ids}")
+        if raise_on_missing_id:
+            if missing_ids := (requested_ids - found_ids):
+                raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+
+        # Filter existing records.
+        if len(objects) != len(found_ids):
+            objects = [obj for obj in objects if obj.diaObjectId in found_ids]
+
+        if not objects:
+            return 0
+
+        # Group by partitions again.
+        grouped_object_ids: dict[int, list[int]] = defaultdict(list)
+        for apdb_part, diaObjectId in records:
+            grouped_object_ids[apdb_part].append(diaObjectId)
+
+        # Remove all matching rows from DiaObjectLast.
+        statements = []
+        for apdb_part, diaObjectIds in grouped_object_ids.items():
+            id_str = ",".join(str(diaObjectId) for diaObjectId in diaObjectIds)
+            query = (
+                f'DELETE FROM "{self._keyspace}"."{table_name}" '
+                f'WHERE apdb_part = %s AND "diaObjectId" IN ({id_str})'
+            )
+            statement = cassandra.query.SimpleStatement(query)
+            statements.append((statement, (apdb_part,)))
+
+        # Also remove from DiaObjectLastToPartition.
+        reverse_table_name = context.schema.tableName(ExtraTables.DiaObjectLastToPartition)
+        id_str = ",".join(str(diaObjectId) for _, diaObjectId in records)
+        query = f'DELETE FROM "{self._keyspace}"."{reverse_table_name}" WHERE "diaObjectId" IN ({id_str})'
+        statement = cassandra.query.SimpleStatement(query)
+        statements.append((statement, ()))
+
+        with self._timer("delete_time", tags={"table": table_name, "method": "setValidityEnd"}) as timer:
+            execute_concurrent(context.session, statements, execution_profile="write")
+            timer.add_values(row_count=len(records))
+
+        # If repication is enabled then send all updates.
+        if context.schema.replication_enabled:
+            current_time = self._current_time()
+            current_time_ns = int(current_time.unix_tai * 1e9)
+            replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
+
+            update_records = [
+                ApdbCloseDiaObjectValidityRecord(
+                    diaObjectId=obj.diaObjectId,
+                    ra=obj.ra,
+                    dec=obj.dec,
+                    update_time_ns=current_time_ns,
+                    update_order=index,
+                    validityEndMjdTai=float(validityEnd.tai.mjd),
+                    nDiaSources=None,
+                )
+                for index, obj in enumerate(objects)
+            ]
+
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
+        return len(objects)
+
+    def resetDedup(self, dedup_time: astropy.time.Time | None = None) -> None:
+        # docstring is inherited from a base class
+        context = self._context
+
+        if not context.has_dedup_table:
+            raise TypeError("DiaObjectDedup table does not exist in this APDB instance.")
+
+        if dedup_time is None:
+            dedup_time = self._current_time()
+
+        validity_start_column = self._timestamp_column_name("validityStart")
+
+        # Find latest timestamp in deduplication table.
+        table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
+        query = f'SELECT MAX("{validity_start_column}") FROM "{self._keyspace}"."{table_name}"'
+        result = context.session.execute(query, execution_profile="read_tuples")
+        max_value = result.one()[0]
+        if self._schema.has_mjd_timestamps:
+            max_validity_start = astropy.time.Time(max_value, format="mjd", scale="tai")
+        else:
+            max_validity_start = astropy.time.Time(max_value, format="datetime", scale="tai")
+
+        # If max time is lower than dedup time we can do TRUNCATE.
+        if dedup_time >= max_validity_start:
+            query = f'TRUNCATE TABLE "{self._keyspace}"."{table_name}"'
+            context.session.execute(query, execution_profile="write")
+        else:
+            dedup_time_value = self._timestamp_column_value(dedup_time)
+            query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE "{validity_start_column}" < %s'
+            context.session.execute(query, (dedup_time_value,), execution_profile="write")
+
+        # Store dedup time.
+        data = {"dedup_time_iso_tai": dedup_time.tai.to_value("iso")}
+        data_json = json.dumps(data)
+        context.metadata.set(context.metadataDedupKey, data_json, force=True)
+
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         # docstring is inherited from a base class
         context = self._context
         config = context.config
 
-        if self.schema.has_mjd_timestamps:
-            reassign_time_column = "ssObjectReassocTimeMjdTai"
-            reassignTime = float(astropy.time.Time.now().tai.mjd)
-        else:
-            reassign_time_column = "ssObjectReassocTime"
-            # Current time as milliseconds since epoch.
-            reassignTime = int(datetime.datetime.now(tz=datetime.UTC).timestamp() * 1000)
+        now = self._current_time()
+        reassign_time_column = self._timestamp_column_name("ssObjectReassocTime")
+        reassignTime = self._timestamp_column_value(now)
 
         # To update a record we need to know its exact primary key (including
         # partition key) so we start by querying for diaSourceId to find the
@@ -682,10 +1080,6 @@ class ApdbCassandra(Apdb):
         with self._timer("source_reassign_time") as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(source_count=len(idMap))
-
-    def dailyJob(self) -> None:
-        # docstring is inherited from a base class
-        pass
 
     def countUnassociatedObjects(self) -> int:
         # docstring is inherited from a base class
@@ -769,30 +1163,28 @@ class ApdbCassandra(Apdb):
             statements += list(self._combine_where(prefix, sp_where, temporal_where))
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
-        with _MON.context_tags({"table": table_name.name}):
-            _MON.add_record(
-                "select_query_stats", values={"num_sp_part": num_sp_part, "num_queries": len(statements)}
+        with self._timer("select_time", tags={"table": table_name.name, "method": "_getSources"}) as timer:
+            catalog = cast(
+                pandas.DataFrame,
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_pandas_multi",
+                    config.connection_config.read_concurrency,
+                ),
             )
-            with self._timer("select_time") as timer:
-                catalog = cast(
-                    pandas.DataFrame,
-                    select_concurrent(
-                        context.session,
-                        statements,
-                        "read_pandas_multi",
-                        config.connection_config.read_concurrency,
-                    ),
-                )
-                timer.add_values(row_count_from_db=len(catalog))
+            timer.add_values(
+                row_count_from_db=len(catalog), num_sp_part=num_sp_part, num_queries=len(statements)
+            )
 
-                # filter by given object IDs
-                if len(object_id_set) > 0:
-                    catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
+            # filter by given object IDs
+            if len(object_id_set) > 0:
+                catalog = cast(pandas.DataFrame, catalog[catalog["diaObjectId"].isin(object_id_set)])
 
-                # precise filtering on midpointMjdTai
-                catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] > mjd_start])
+            # precise filtering on midpointMjdTai
+            catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] > mjd_start])
 
-                timer.add_values(row_count=len(catalog))
+            timer.add_values(row_count=len(catalog))
 
         _LOG.debug("found %d %ss", catalog.shape[0], table_name.name)
         return catalog
@@ -843,7 +1235,7 @@ class ApdbCassandra(Apdb):
             queries.append((query, ()))
             object_count += len(id_chunk_list)
 
-        with self._timer("query_object_last_partitions") as timer:
+        with self._timer("query_object_last_partitions", tags={"table": table_name}) as timer:
             data = cast(
                 ApdbTableData,
                 select_concurrent(
@@ -887,7 +1279,7 @@ class ApdbCassandra(Apdb):
             queries = []
             for oid, (old_part, _) in moved_oids.items():
                 queries.append((statement, (old_part, oid)))
-            with self._timer("delete_object_last") as timer:
+            with self._timer("delete_object_last", tags={"table": table_name}) as timer:
                 execute_concurrent(context.session, queries, execution_profile="write")
                 timer.add_values(row_count=len(moved_oids))
 
@@ -900,7 +1292,7 @@ class ApdbCassandra(Apdb):
         for oid, new_part in new_partitions.items():
             queries.append((statement, (oid, new_part)))
 
-        with self._timer("update_object_last_partition") as timer:
+        with self._timer("update_object_last_partition", tags={"table": table_name}) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(queries))
 
@@ -928,13 +1320,8 @@ class ApdbCassandra(Apdb):
         if context.has_dia_object_last_to_partition:
             self._deleteMovingObjects(objs)
 
-        timestamp: float | datetime.datetime
-        if self.schema.has_mjd_timestamps:
-            validity_start_column = "validityStartMjdTai"
-            timestamp = float(visit_time.tai.mjd)
-        else:
-            validity_start_column = "validityStart"
-            timestamp = visit_time.datetime
+        validity_start_column = self._timestamp_column_name("validityStart")
+        timestamp = self._timestamp_column_value(visit_time)
 
         # DiaObjectLast did not have this column in the past.
         extra_columns: dict[str, Any] = {}
@@ -968,6 +1355,15 @@ class ApdbCassandra(Apdb):
                 # that different clients could wrtite to different partitions.
                 # This makes it not exactly reproducible.
                 extra_columns["apdb_replica_subchunk"] = random.randrange(config.replica_sub_chunk_count)
+            self._storeObjectsPandas(objs, table, extra_columns=extra_columns)
+
+        # Store copy of the records in dedup table.
+        if context.has_dedup_table:
+            table = ExtraTables.DiaObjectDedup
+            extra_columns = {
+                "dedup_part": random.randrange(config.partitioning.num_part_dedup),
+                validity_start_column: timestamp,
+            }
             self._storeObjectsPandas(objs, table, extra_columns=extra_columns)
 
     def _storeDiaSources(
@@ -1210,7 +1606,9 @@ class ApdbCassandra(Apdb):
                     assert batch.routing_key is not None and batch.keyspace is not None
 
         _LOG.debug("%s: will store %d records", context.schema.tableName(table_name), records.shape[0])
-        with self._timer("insert_time", tags={"table": table_name.name}) as timer:
+        with self._timer(
+            "insert_time", tags={"table": table_name.name, "method": "_storeObjectsPandas"}
+        ) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(records), num_batches=len(queries))
 
@@ -1277,7 +1675,7 @@ class ApdbCassandra(Apdb):
         query = f'INSERT INTO "{self._keyspace}"."{table_name}" ({columns_str}) VALUES ({placeholders})'
         queries = [(query, row) for row in rows]
 
-        with self._timer("store_update_record") as timer:
+        with self._timer("store_update_record", tags={"table": table_name}) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(row_count=len(queries))
 
@@ -1424,3 +1822,138 @@ class ApdbCassandra(Apdb):
             row_size += 4 * len(context.schema.getColumnMap(table))
             batch_size = min(batch_size, (config.batch_size_limit // row_size) + 1)
         return batch_size
+
+    def _group_dia_objects_by_partition(
+        self, partitioner: Partitioner, objects: list[DiaObjectId], pad_arcsec: float
+    ) -> Mapping[int, list[int]]:
+        """Group DiaObjects by partition.
+
+        Parameters
+        ----------
+        partitioner : `Partitioner`
+            Objects which knows how to partition things.
+        objects : `list` [`DiaObjectId`]
+            Collection of objects to partition.
+        pad_arcsec : `float`
+            Additional padding around object position.
+
+        Returns
+        -------
+        grouped_objects
+            Mapping of spatial patition ID to list ob object IDs that it
+            contains. Some objects may belong to more than one partition.
+        """
+        partitioned_object_ids: dict[int, list[int]] = defaultdict(list)
+        for obj_id in objects:
+            partitions = partitioner.pixelization.circle_pixels(obj_id.ra, obj_id.dec, pad_arcsec)
+            for pixel in partitions:
+                partitioned_object_ids[pixel].append(obj_id.diaObjectId)
+        return partitioned_object_ids
+
+    def _timestamp_column_name(self, column: str) -> str:
+        """Return column name before/after schema migration to MJD TAI."""
+        return self._schema.timestamp_column_name(column)
+
+    def _timestamp_column_value(self, time: astropy.time.Time) -> float | int:
+        """Return column value before/after schema migration to MJD TAI."""
+        if self._schema.has_mjd_timestamps:
+            return float(time.tai.mjd)
+        else:
+            return int(time.datetime.astimezone(tz=datetime.UTC).timestamp() * 1000)
+
+    def _get_diasource_data(self, source_ids: Iterable[DiaSourceId], *columns: str) -> list:
+        """Select records from DiaSource table by diaSourceId and return all
+        records as a list of named tuples.
+        """
+        context = self._context
+        config = context.config
+        partitioner = context.partitioner
+
+        columns = ("diaSourceId",) + columns
+        what = ",".join(quote_id(column) for column in columns)
+
+        # Allow some uncertainty for coordinates and time when calculating
+        # partitions.
+        statements: list[tuple] = []
+        pad_arcsec = 1.0
+        pad_time_day = 10 / (24 * 3600)
+        for source_id in source_ids:
+            center = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(source_id.ra, source_id.dec))
+            region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
+            spatial_where, _ = partitioner.spatial_where(region, for_prepare=True)
+
+            tables, temporal_where = partitioner.temporal_where(
+                ApdbTables.DiaSource,
+                source_id.midpointMjdTai - pad_time_day,
+                source_id.midpointMjdTai + pad_time_day,
+                for_prepare=True,
+                partitons_range=context.time_partitions_range,
+                query_per_time_part=True,
+            )
+
+            id_where = ('"diaSourceId" = ?', (source_id.diaSourceId,))
+
+            for table in tables:
+                prefix = f'SELECT {what} FROM "{self._keyspace}"."{table}"'
+                statements += list(self._combine_where(prefix, spatial_where, temporal_where, id_where))
+
+        with self._timer(
+            "select_time", tags={"table": "DiaSource", "method": "_get_diasource_data"}
+        ) as timer:
+            result = cast(
+                list[tuple],
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_named_tuples",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(result), num_queries=len(statements))
+
+        return result
+
+    def _get_diaobject_data(self, object_ids: Iterable[DiaObjectId], *columns: str) -> list:
+        """Select records from DiaObjectLast table by diaObjectId and return
+        all records as a list of named tuples.
+        """
+        context = self._context
+        config = context.config
+        partitioner = context.partitioner
+
+        table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
+        columns = ("diaObjectId",) + columns
+        what = ",".join(quote_id(column) for column in columns)
+
+        # Allow some uncertainty for coordinates when calculating partitions.
+        pad_arcsec = 1.0
+        ids_by_partition = defaultdict(list)
+        for object_id in object_ids:
+            pixels = partitioner.pixelization.circle_pixels(object_id.ra, object_id.dec, pad_arcsec)
+            for pixel in pixels:
+                ids_by_partition[pixel].append(object_id.diaObjectId)
+
+        statements: list[tuple] = []
+        for apdb_part, diaObjectIds in ids_by_partition.items():
+            ids_str = ",".join(str(diaObjectId) for diaObjectId in diaObjectIds)
+            statement = cassandra.query.SimpleStatement(
+                f'SELECT {what} FROM "{self._keyspace}"."{table_name}" '
+                f'WHERE apdb_part = %s AND "diaObjectId" IN ({ids_str})'
+            )
+            statements.append((statement, (apdb_part,)))
+
+        with self._timer(
+            "select_time", tags={"table": "DiaObjectLast", "method": "_get_diaobject_data"}
+        ) as timer:
+            result = cast(
+                list[tuple],
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_named_tuples",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(result), num_queries=len(statements))
+
+        return result

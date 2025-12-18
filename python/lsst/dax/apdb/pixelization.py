@@ -78,6 +78,26 @@ class Pixelization:
             indices += list(range(lower, upper))
         return indices
 
+    def circle_pixels(self, ra: float, dec: float, pad_arcsec: float) -> list[int]:
+        """Make a list of spatial partitions that a small circle touches.
+
+        Parameters
+        ----------
+        ra, dec : `float`
+            Center of a circle, degrees.
+        pad_arcsec : `float`
+            Radius of a circle in arcseconds.
+
+        Returns
+        -------
+        pixels : `list` [`int`]
+            All pixels that envelop the circle.
+        """
+        lon_lat = sphgeom.LonLat.fromDegrees(ra, dec)
+        center = sphgeom.UnitVector3d(lon_lat)
+        region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
+        return self.pixels(region)
+
     def pixel(self, direction: sphgeom.UnitVector3d) -> int:
         """Compute the index of the pixel for given direction.
 

@@ -169,6 +169,11 @@ class ApdbCassandraPartitioningConfig(BaseModel):
         description="If True then build one query per spatial partition, otherwise build single query.",
     )
 
+    num_part_dedup: int = Field(
+        default=64,
+        description="Number of partitions in DiaObjectDedup table.",
+    )
+
     @field_validator("part_pixelization")
     @classmethod
     def check_pixelization(cls, v: str) -> str:

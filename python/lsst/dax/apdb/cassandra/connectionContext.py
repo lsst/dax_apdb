@@ -93,6 +93,9 @@ class ConnectionContext:
     metadataConfigKey = "config:apdb-cassandra.json"
     """Name of the metadata key to store frozen part of the configuration."""
 
+    metadataDedupKey = "status:deduplication.json"
+    """Name of the metadata key to store code version number."""
+
     frozen_parameters = (
         "enable_replica",
         "ra_dec_columns",
@@ -102,6 +105,7 @@ class ConnectionContext:
         "partitioning.part_pix_level",
         "partitioning.time_partition_tables",
         "partitioning.time_partition_days",
+        "partitioning.num_part_dedup",
     )
     """Names of the config parameters to be frozen in metadata table."""
 
@@ -147,6 +151,9 @@ class ConnectionContext:
             self.has_update_record_chunks_table = ApdbCassandraReplica.hasUpdateRecordChunks(
                 self.db_versions.replica_version
             )
+
+        # Since version 1.3.0 we have metadata for time partitions.
+        self.has_dedup_table = self.db_versions.code_version >= VersionTuple(1, 3, 0)
 
         # Since version 0.1.3 we have metadata for time partitions.
         self.has_time_partition_meta = self.db_versions.code_version >= VersionTuple(0, 1, 3)
