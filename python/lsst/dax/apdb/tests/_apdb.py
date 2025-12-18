@@ -683,7 +683,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # Select first 10 objects.
         object_ids = [DiaObjectId.from_named_tuple(row) for row in catalog.iloc[:10].itertuples()]
-        apdb.setValidityEnd(object_ids, self.processing_time)
+        count = apdb.setValidityEnd(object_ids, self.processing_time)
+        self.assertEqual(count, 10)
 
         res = apdb.getDiaObjects(region)
         self.assert_catalog(res, 90, self.getDiaObjects_table())
@@ -700,6 +701,19 @@ class ApdbTest(TestCaseMixin, ABC):
 
             update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
             self.assertEqual(len(update_records), 10)
+
+        # Check that empty list works.
+        count = apdb.setValidityEnd(object_ids, self.processing_time)
+        self.assertEqual(count, 0)
+
+        # Try with non-existing object.
+        object_ids = [DiaObjectId.from_named_tuple(row) for row in catalog.iloc[10:12].itertuples()]
+        object_ids += [DiaObjectId(diaObjectId=1_000_000, ra=0.0, dec=0.0)]
+        with self.assertRaises(LookupError):
+            apdb.setValidityEnd(object_ids, self.processing_time, raise_on_missing_id=True)
+
+        count = apdb.setValidityEnd(object_ids, self.processing_time)
+        self.assertEqual(count, 2)
 
     def test_resetDedup(self) -> None:
         """Test resetDedup method."""

@@ -860,8 +860,13 @@ class ApdbCassandra(Apdb):
             replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
             self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
 
-    def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
+    def setValidityEnd(
+        self, objects: list[DiaObjectId], validityEnd: astropy.time.Time, raise_on_missing_id: bool = False
+    ) -> int:
         # docstring is inherited from a base class
+        if not objects:
+            return 0
+
         context = self._context
         config = context.config
 
@@ -897,9 +902,17 @@ class ApdbCassandra(Apdb):
         requested_ids = {obj.diaObjectId for obj in objects}
         found_ids = {rec[1] for rec in records}
         if extra_ids := (found_ids - requested_ids):
-            raise LookupError(f"Consistency error - found duplicate records for object IDs: {extra_ids}")
-        if missing_ids := (requested_ids - found_ids):
-            raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+            raise RuntimeError(f"Consistency error - found duplicate records for object IDs: {extra_ids}")
+        if raise_on_missing_id:
+            if missing_ids := (requested_ids - found_ids):
+                raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+
+        # Filter existing records.
+        if len(objects) != len(found_ids):
+            objects = [obj for obj in objects if obj.diaObjectId in found_ids]
+
+        if not objects:
+            return 0
 
         # Group by partitions again.
         grouped_object_ids: dict[int, list[int]] = defaultdict(list)
@@ -948,6 +961,8 @@ class ApdbCassandra(Apdb):
             ]
 
             self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
+        return len(objects)
 
     def resetDedup(self, dedup_time: astropy.time.Time | None = None) -> None:
         # docstring is inherited from a base class
