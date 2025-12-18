@@ -855,8 +855,12 @@ class ApdbSql(Apdb):
                 )
                 self._storeUpdateRecords(update_records, replica_chunk, connection=conn, store_chunk=True)
 
-    def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
+    def setValidityEnd(
+        self, objects: list[DiaObjectId], validityEnd: astropy.time.Time, raise_on_missing_id: bool = False
+    ) -> int:
         # docstring is inherited from a base class
+        if not objects:
+            return 0
 
         requested_ids = {obj.diaObjectId for obj in objects}
 
@@ -877,29 +881,43 @@ class ApdbSql(Apdb):
             found_ids = set(result.scalars())
 
             # Check that we found all that is requested.
-            if missing_ids := (requested_ids - found_ids):
-                raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+            if raise_on_missing_id:
+                if missing_ids := (requested_ids - found_ids):
+                    raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+
+            # Filter existing records.
+            if len(objects) != len(found_ids):
+                objects = [obj for obj in objects if obj.diaObjectId in found_ids]
+
+            if not objects:
+                return 0
 
             values = {validity_end_column: validityEnd_value}
             update = (
                 table.update()
                 .where(
                     sqlalchemy.and_(
-                        table.columns["diaObjectId"].in_(sorted(requested_ids)),
+                        table.columns["diaObjectId"].in_(sorted(found_ids)),
                         table.columns[validity_end_column].is_(None),
                     )
                 )
                 .values(**values)
             )
-            conn.execute(update)
+            result = conn.execute(update)
+            if result.rowcount != len(found_ids):
+                raise RuntimeError(
+                    f"Unexpected mismatch in the number of records updated. Object IDs = {found_ids}"
+                )
 
             # Also drop them from DiaObjectLast.
             if self.config.dia_object_index == "last_object_table":
                 last_table = self._schema.get_table(ApdbTables.DiaObjectLast)
-                delete = last_table.delete().where(
-                    last_table.columns["diaObjectId"].in_(sorted(requested_ids))
-                )
-                conn.execute(delete)
+                delete = last_table.delete().where(last_table.columns["diaObjectId"].in_(sorted(found_ids)))
+                result = conn.execute(delete)
+                if result.rowcount != len(found_ids):
+                    raise RuntimeError(
+                        f"Unexpected mismatch in the number of records deleted. Object IDs = {found_ids}"
+                    )
 
         # If replication is enabled then send all updates.
         if self._schema.replication_enabled:
@@ -921,6 +939,8 @@ class ApdbSql(Apdb):
             ]
 
             self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
+        return len(objects)
 
     def resetDedup(self, dedup_time: astropy.time.Time | None = None) -> None:
         # docstring is inherited from a base class

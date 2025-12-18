@@ -402,7 +402,9 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def setValidityEnd(self, objects: list[DiaObjectId], validityEnd: astropy.time.Time) -> None:
+    def setValidityEnd(
+        self, objects: list[DiaObjectId], validityEnd: astropy.time.Time, raise_on_missing_id: bool = False
+    ) -> int:
         """Close validity interval for specified DiaObjects.
 
         Parameters
@@ -412,12 +414,20 @@ class Apdb(ABC):
             current validityEnd is NULL.
         validityEnd : `astropy.time.Time`
             Value for validityEnd.
+        raise_on_missing_id : `bool`, optional
+            If `True` then `LookupError` will be raised if any object in the
+            list is missing from the database.
+
+        Returns
+        -------
+        count : `int`
+            Actual number of records for which validityEnd was updated.
 
         Raises
         ------
         LookupError
-            Raised if some of the specified DiaObjects could not be found in
-            the database.
+            Raised if ``raise_on_missing_id`` is `True` and some of the
+            specified DiaObjects could not be found in the database.
 
         Notes
         -----
