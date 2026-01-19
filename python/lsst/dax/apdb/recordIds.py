@@ -119,7 +119,7 @@ class DiaSourceId:
             Instance of this class.
         """
         return cls(
-            diaSourceId=named_tuple.diaObjectId,
+            diaSourceId=named_tuple.diaSourceId,
             ra=named_tuple.ra,
             dec=named_tuple.dec,
             midpointMjdTai=named_tuple.midpointMjdTai,
