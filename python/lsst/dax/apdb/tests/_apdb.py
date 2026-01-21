@@ -495,8 +495,8 @@ class ApdbTest(TestCaseMixin, ABC):
         time_processed_column = makeTimestampColumn("time_processed", self.use_mjd)
         self.assertIn(time_processed_column, res.dtypes)
         dtype = res.dtypes[time_processed_column]
-        timestamp_type_name = "float64" if self.use_mjd else "datetime64[ns]"
-        self.assertEqual(dtype.name, timestamp_type_name)
+        timestamp_type_names = ("float64",) if self.use_mjd else ("datetime64[us]", "datetime64[ns]")
+        self.assertIn(dtype.name, timestamp_type_names)
         # Verify that returned time is sensible.
         self.assertTrue(all(time_before <= dt <= time_after for dt in res[time_processed_column]))
 
