@@ -23,6 +23,7 @@ from __future__ import annotations
 
 __all__ = ["ApdbCassandraSchema", "CreateTableOptions", "TableOptions"]
 
+import dataclasses
 import enum
 import logging
 from collections.abc import Mapping
@@ -118,6 +119,9 @@ class ExtraTables(enum.Enum):
 
     ApdbVisitDetector = "ApdbVisitDetector"
     """Records attempted processing of visit/detector."""
+
+    DiaObjectDedup = "DiaObjectDedup"
+    """DiaObject records used for deduplication."""
 
     def table_name(self, prefix: str = "", time_partition: int | None = None) -> str:
         """Return full table name.
@@ -224,7 +228,7 @@ class ApdbCassandraSchema:
         self._has_visit_detector_table = has_visit_detector_table
 
         self._apdb_tables = self._apdb_tables_schema(time_partition_tables)
-        self._extra_tables = self._extra_tables_schema()
+        self._extra_tables = self._extra_tables_schema(self._apdb_tables)
 
     def _apdb_tables_schema(self, time_partition_tables: bool) -> Mapping[ApdbTables, schema_model.Table]:
         """Generate schema for regular APDB tables."""
@@ -300,7 +304,9 @@ class ApdbCassandraSchema:
 
         return apdb_tables
 
-    def _extra_tables_schema(self) -> Mapping[ExtraTables, schema_model.Table]:
+    def _extra_tables_schema(
+        self, apdb_tables: Mapping[ApdbTables, schema_model.Table]
+    ) -> Mapping[ExtraTables, schema_model.Table]:
         """Generate schema for extra tables."""
         extra_tables: dict[ExtraTables, schema_model.Table] = {}
 
@@ -328,6 +334,49 @@ class ApdbCassandraSchema:
                 constraints=[],
                 annotations={"cassandra:partitioning_columns": ["visit", "detector"]},
             )
+
+        # DiaObjectDedup table contains a subset of columns of DiaObject, the
+        # table is used for deduplication, it is partitioned on some random
+        # key. This column list defines non-PK columns in this table, PK
+        # columns from DiaObject are the same as in DiaObject.
+        dedup_column_names = {"ra", "dec", "nDiaSources", "firstDiaSourceMjdTai"}
+        columns = [
+            schema_model.Column(
+                id="#dedup_part",
+                name="dedup_part",
+                datatype=felis.datamodel.DataType.short,
+                nullable=False,
+            )
+        ]
+        primary_keys = []
+        found_column_names = []
+        # Coly column definitions from DiaObject.
+        dia_object_table = apdb_tables[ApdbTables.DiaObject]
+        for column in dia_object_table.columns:
+            if column in dia_object_table.primary_key or column.name in dedup_column_names:
+                cloned_column = dataclasses.replace(column, table=None)
+                columns.append(cloned_column)
+                found_column_names.append(column.name)
+                if column in dia_object_table.primary_key:
+                    primary_keys.append(cloned_column)
+
+        # Check that we found all expected columns.
+        missing_columns = dedup_column_names - set(found_column_names)
+        if missing_columns:
+            raise LookupError(f"Expected columns not found in DiaObject table: {missing_columns}")
+
+        extra_tables[ExtraTables.DiaObjectDedup] = schema_model.Table(
+            id="#" + ExtraTables.DiaObjectDedup.value,
+            name=ExtraTables.DiaObjectDedup.table_name(self._prefix),
+            columns=columns,
+            primary_key=primary_keys,
+            indexes=[],
+            constraints=[],
+            annotations={
+                "cassandra:partitioning_columns": ["dedup_part"],
+                "cassandra:apdb_column_names": found_column_names,
+            },
+        )
 
         # This table maps DiaSource ID to its partitions in DiaSource table and
         # DiaSourceChunks tables.

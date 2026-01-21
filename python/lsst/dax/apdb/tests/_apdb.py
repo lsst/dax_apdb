@@ -42,12 +42,14 @@ from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 from .. import (
     Apdb,
     ApdbConfig,
-    ApdbReassignDiaSourceRecord,
+    ApdbReassignDiaSourceToSSObjectRecord,
     ApdbReplica,
     ApdbTableData,
     ApdbTables,
     ApdbUpdateRecord,
     ApdbWithdrawDiaSourceRecord,
+    DiaObjectId,
+    DiaSourceId,
     IncompatibleVersionError,
     ReplicaChunk,
     VersionTuple,
@@ -56,7 +58,8 @@ from .data_factory import (
     makeForcedSourceCatalog,
     makeObjectCatalog,
     makeSourceCatalog,
-    makeTimestampNow,
+    makeTimestamp,
+    makeTimestampColumn,
 )
 from .utils import TestCaseMixin
 
@@ -130,6 +133,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
     visit_time = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
 
+    processing_time = astropy.time.Time("2021-01-01T12:00:00", format="isot", scale="tai")
+
     fsrc_requires_id_list = False
     """Should be set to True if getDiaForcedSources requires object IDs"""
 
@@ -147,8 +152,8 @@ class ApdbTest(TestCaseMixin, ABC):
 
     # number of columns as defined in tests/config/schema.yaml
     table_column_count = {
-        ApdbTables.DiaObject: 7,
-        ApdbTables.DiaObjectLast: 5,
+        ApdbTables.DiaObject: 8,
+        ApdbTables.DiaObjectLast: 6,
         ApdbTables.DiaSource: 12,
         ApdbTables.DiaForcedSource: 8,
         ApdbTables.SSObject: 3,
@@ -338,7 +343,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # make catalog with Objects
-        catalog = makeObjectCatalog(region, 100, visit_time)
+        catalog = makeObjectCatalog(region, 100)
 
         # store catalog
         apdb.store(visit_time, catalog)
@@ -356,7 +361,7 @@ class ApdbTest(TestCaseMixin, ABC):
         region = self.make_region()
         visit_time = self.visit_time
         # make catalog with no Objects
-        catalog = makeObjectCatalog(region, 0, visit_time)
+        catalog = makeObjectCatalog(region, 0)
 
         with self.assertLogs("lsst.dax.apdb", level="DEBUG") as cm:
             apdb.store(visit_time, catalog)
@@ -380,11 +385,11 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # Store one object at two different positions.
         visit_time1 = self.visit_time
-        catalog1 = makeObjectCatalog(lonlat1, 1, visit_time1)
+        catalog1 = makeObjectCatalog(lonlat1, 1)
         apdb.store(visit_time1, catalog1)
 
         visit_time2 = visit_time1 + astropy.time.TimeDelta(120.0, format="sec")
-        catalog1 = makeObjectCatalog(lonlat2, 1, visit_time2)
+        catalog1 = makeObjectCatalog(lonlat2, 1)
         apdb.store(visit_time2, catalog1)
 
         # Make region covering both points.
@@ -405,7 +410,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
 
@@ -441,7 +446,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         catalog = makeForcedSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
 
@@ -472,11 +477,13 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # Cassandra has a millisecond precision, so subtract 1ms to allow for
         # truncated returned values.
-        time_before = makeTimestampNow(self.use_mjd, -1)
-        objects = makeObjectCatalog(region, 100, visit_time)
+        time_before = makeTimestamp(self.processing_time, self.use_mjd, -1)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
-        catalog = makeForcedSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
-        time_after = makeTimestampNow(self.use_mjd)
+        catalog = makeForcedSourceCatalog(
+            objects, visit_time, processing_time=self.processing_time, use_mjd=self.use_mjd
+        )
+        time_after = makeTimestamp(self.processing_time, self.use_mjd)
 
         apdb.store(visit_time, objects, forced_sources=catalog)
 
@@ -485,13 +492,282 @@ class ApdbTest(TestCaseMixin, ABC):
         assert res is not None
         self.assert_catalog(res, len(catalog), ApdbTables.DiaForcedSource)
 
-        time_processed_column = "timeProcessedMjdTai" if self.use_mjd else "time_processed"
+        time_processed_column = makeTimestampColumn("time_processed", self.use_mjd)
         self.assertIn(time_processed_column, res.dtypes)
         dtype = res.dtypes[time_processed_column]
-        timestamp_type_name = "float64" if self.use_mjd else "datetime64[ns]"
-        self.assertEqual(dtype.name, timestamp_type_name)
+        timestamp_type_names = ("float64",) if self.use_mjd else ("datetime64[us]", "datetime64[ns]")
+        self.assertIn(dtype.name, timestamp_type_names)
         # Verify that returned time is sensible.
         self.assertTrue(all(time_before <= dt <= time_after for dt in res[time_processed_column]))
+
+    def test_getDiaObjectsForDedup(self) -> None:
+        """Test getDiaObjectsForDedup() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region1 = self.make_region((1.0, 1.0, -1.0))
+        region2 = self.make_region((-1.0, 1.0, -1.0))
+        region3 = self.make_region((-1.0, -1.0, -1.0))
+        nobj = 100
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj * 2)
+        objects3 = makeObjectCatalog(region3, nobj, start_id=nobj * 4)
+
+        visits = [
+            (astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:10:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:20:00", format="isot", scale="tai"), objects3),
+        ]
+
+        for visit_time, objects in visits:
+            apdb.store(visit_time, objects)
+
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 300)
+
+        catalog = apdb.getDiaObjectsForDedup(visits[0][0])
+        self.assertEqual(len(catalog), 300)
+
+        catalog = apdb.getDiaObjectsForDedup(visits[1][0])
+        self.assertEqual(len(catalog), 200)
+
+        catalog = apdb.getDiaObjectsForDedup(visits[2][0])
+        self.assertEqual(len(catalog), 100)
+
+        time = astropy.time.Time("2021-01-01T00:30:00", format="isot", scale="tai")
+        catalog = apdb.getDiaObjectsForDedup(time)
+        self.assertEqual(len(catalog), 0)
+
+    def test_getDiaSourcesForDiaObjects(self) -> None:
+        """Test getDiaSourcesForDiaObjects() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        # Monkey-patch APDB instance to set current time.
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+
+        region1 = self.make_region((1.0, 1.0, -1.0))
+        region2 = self.make_region((-1.0, 1.0, -1.0))
+        region3 = self.make_region((-1.0, -1.0, -1.0))
+        nobj = 100
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj * 2)
+        objects3 = makeObjectCatalog(region3, nobj, start_id=nobj * 4)
+
+        visits = [
+            (astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai"), objects1),
+            (astropy.time.Time("2021-01-01T00:10:00", format="isot", scale="tai"), objects2),
+            (astropy.time.Time("2021-01-01T00:20:00", format="isot", scale="tai"), objects3),
+        ]
+
+        start_id = 1_000_000
+        for visit_time, objects in visits:
+            sources = makeSourceCatalog(objects, visit_time, start_id=start_id, use_mjd=self.use_mjd)
+            apdb.store(visit_time, objects, sources)
+            start_id += 1_000_000
+
+        # Take a small number of objects from different regions.
+        object_ids = [
+            DiaObjectId.from_named_tuple(next(objects1.itertuples())),
+            DiaObjectId.from_named_tuple(next(objects2.itertuples())),
+            DiaObjectId.from_named_tuple(next(objects3.itertuples())),
+        ]
+
+        catalog = apdb.getDiaSourcesForDiaObjects(object_ids, visits[0][0])
+        self.assertEqual(len(catalog), 3)
+        self.assertEqual(set(catalog["diaObjectId"]), {1, 200, 400})
+        self.assertEqual(set(catalog["diaSourceId"]), {1_000_000, 2_000_000, 3_000_000})
+
+        catalog = apdb.getDiaSourcesForDiaObjects(object_ids, visits[2][0])
+        self.assertEqual(len(catalog), 1)
+        self.assertEqual(set(catalog["diaObjectId"]), {400})
+        self.assertEqual(set(catalog["diaSourceId"]), {3_000_000})
+
+    def test_reassignDiaSourcesToDiaObjects(self) -> None:
+        """Test reassignDiaSourcesToDiaObjects() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        visit_time = self.visit_time
+        lonlat1 = LonLat.fromDegrees(0.0, 0.0)
+        lonlat2 = LonLat.fromDegrees(180.0, 0.0)
+        # regons around lonlat1/2
+        region1 = self.make_region(xyz=(1.0, 0.0, 0.0))
+        region2 = self.make_region(xyz=(-1.0, 0.0, 0.0))
+
+        # Store 3 objects and sources at the same position in each region.
+        objects = makeObjectCatalog(lonlat1, 3, start_id=100)
+        sources = makeSourceCatalog(objects, visit_time, start_id=1000, use_mjd=self.use_mjd)
+        apdb.store(visit_time, objects, sources)
+
+        objects = makeObjectCatalog(lonlat2, 3, start_id=200)
+        sources = makeSourceCatalog(objects, visit_time, start_id=2000, use_mjd=self.use_mjd)
+        apdb.store(visit_time, objects, sources)
+
+        # check that everything as we think it is.
+        objects = apdb.getDiaObjects(region1)
+        self.assertEqual(set(objects["diaObjectId"]), {100, 101, 102})
+        self.assertEqual(list(objects["nDiaSources"]), [1, 1, 1])
+        sources = apdb.getDiaSources(region1, [100, 101, 102], visit_time)
+        assert sources is not None
+        self.assertEqual(set(sources["diaSourceId"]), {1000, 1001, 1002})
+        self.assertEqual(set(sources["diaObjectId"]), {100, 101, 102})
+
+        # Reassign sources in region1 and increment/decrement nDiaSources.
+        midpointMjdTai = visit_time.tai.mjd
+        reassign = {
+            DiaSourceId(diaSourceId=1001, ra=0.0, dec=0.0, midpointMjdTai=midpointMjdTai): 100,
+            DiaSourceId(diaSourceId=1002, ra=0.0, dec=0.0, midpointMjdTai=midpointMjdTai): 100,
+        }
+        apdb.reassignDiaSourcesToDiaObjects(reassign)
+
+        objects = apdb.getDiaObjects(region1)
+        self.assertEqual(set(objects["nDiaSources"]), {0, 3})
+        sources = apdb.getDiaSources(region1, [100], visit_time)
+        assert sources is not None
+        self.assertEqual(set(sources["diaSourceId"]), {1000, 1001, 1002})
+        self.assertEqual(set(sources["diaObjectId"]), {100})
+
+        # Reassign but do not increment/decrement nDiaSources.
+        reassign = {
+            DiaSourceId(diaSourceId=2001, ra=180.0, dec=0.0, midpointMjdTai=midpointMjdTai): 200,
+            DiaSourceId(diaSourceId=2002, ra=180.0, dec=0.0, midpointMjdTai=midpointMjdTai): 200,
+        }
+        apdb.reassignDiaSourcesToDiaObjects(
+            reassign, increment_nDiaSources=False, decrement_nDiaSources=False
+        )
+
+        objects = apdb.getDiaObjects(region2)
+        self.assertEqual(set(objects["nDiaSources"]), {1})
+        sources = apdb.getDiaSources(region2, [200], visit_time)
+        assert sources is not None
+        self.assertEqual(set(sources["diaSourceId"]), {2000, 2001, 2002})
+        self.assertEqual(set(sources["diaObjectId"]), {200})
+
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            # Two reassignments for region1, three increments/decrements for
+            # that region, plus two reassignments for region2 without
+            # increments/decrements.
+            self.assertEqual(len(update_records), 2 + 3 + 2)
+
+    def test_setValidityEnd(self) -> None:
+        """Store DiaObjects and truncate validity for some."""
+        # don't care about sources.
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        region = self.make_region()
+        visit_time = self.visit_time
+
+        # make catalog with Objects
+        catalog = makeObjectCatalog(region, 100)
+
+        # store catalog
+        apdb.store(visit_time, catalog)
+
+        # read it back and check sizes
+        res = apdb.getDiaObjects(region)
+        self.assert_catalog(res, 100, self.getDiaObjects_table())
+
+        # Select first 10 objects.
+        object_ids = [DiaObjectId.from_named_tuple(row) for row in catalog.iloc[:10].itertuples()]
+        count = apdb.setValidityEnd(object_ids, self.processing_time)
+        self.assertEqual(count, 10)
+
+        res = apdb.getDiaObjects(region)
+        self.assert_catalog(res, 90, self.getDiaObjects_table())
+
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            # Check that there are 10 update records in replica tables.
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            self.assertEqual(len(update_records), 10)
+
+        # Check that empty list works.
+        count = apdb.setValidityEnd(object_ids, self.processing_time)
+        self.assertEqual(count, 0)
+
+        # Try with non-existing object.
+        object_ids = [DiaObjectId.from_named_tuple(row) for row in catalog.iloc[10:12].itertuples()]
+        object_ids += [DiaObjectId(diaObjectId=1_000_000, ra=0.0, dec=0.0)]
+        with self.assertRaises(LookupError):
+            apdb.setValidityEnd(object_ids, self.processing_time, raise_on_missing_id=True)
+
+        count = apdb.setValidityEnd(object_ids, self.processing_time)
+        self.assertEqual(count, 2)
+
+    def test_resetDedup(self) -> None:
+        """Test resetDedup method."""
+        # don't care about sources.
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region = self.make_region()
+
+        # make catalog with Objects
+        objects = makeObjectCatalog(region, 100)
+
+        visit_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+        dedup_time1 = astropy.time.Time("2021-01-01T12:00:00", format="isot", scale="tai")
+        visit_time2 = astropy.time.Time("2021-01-02T00:00:00", format="isot", scale="tai")
+        dedup_time2 = astropy.time.Time("2021-01-02T12:00:00", format="isot", scale="tai")
+
+        # store catalog
+        apdb.store(visit_time1, objects)
+
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 100)
+
+        catalog = apdb.getDiaObjectsForDedup(visit_time1)
+        self.assertEqual(len(catalog), 100)
+
+        apdb.resetDedup(dedup_time1)
+
+        catalog = apdb.getDiaObjectsForDedup(visit_time1)
+        self.assertEqual(len(catalog), self._count_after_reset_dedup(100))
+
+        apdb.store(visit_time2, objects)
+
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 100)
+
+        catalog = apdb.getDiaObjectsForDedup(dedup_time1)
+        self.assertEqual(len(catalog), 100)
+
+        apdb.resetDedup(dedup_time2)
+
+        catalog = apdb.getDiaObjectsForDedup(dedup_time1)
+        self.assertEqual(len(catalog), self._count_after_reset_dedup(100))
+
+        catalog = apdb.getDiaObjectsForDedup()
+        self.assertEqual(len(catalog), 0)
+
+    def _count_after_reset_dedup(self, count_before: int) -> int:
+        """Return the number of rows that will be returned by
+        getDiaObjectsForDedup() after resetDedup() was called. For SQL backend
+        deduplication data comes from a regular table, and it is not removed
+        by resetDedup().
+        """
+        raise NotImplementedError()
 
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
@@ -504,8 +780,8 @@ class ApdbTest(TestCaseMixin, ABC):
         region1 = self.make_region((1.0, 1.0, -1.0))
         region2 = self.make_region((-1.0, -1.0, -1.0))
         nobj = 100
-        objects1 = makeObjectCatalog(region1, nobj, visit_time)
-        objects2 = makeObjectCatalog(region2, nobj, visit_time, start_id=nobj * 2)
+        objects1 = makeObjectCatalog(region1, nobj)
+        objects2 = makeObjectCatalog(region2, nobj, start_id=nobj * 2)
 
         # With the default 10 minutes replica chunk window we should have 4
         # records.
@@ -621,7 +897,7 @@ class ApdbTest(TestCaseMixin, ABC):
 
         region = self.make_region()
         visit_time = self.visit_time
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
         apdb.store(visit_time, objects, sources)
@@ -652,43 +928,43 @@ class ApdbTest(TestCaseMixin, ABC):
         update_time_ns1 = 2_000_000_000_000_000_000
         update_time_ns2 = 2_000_000_001_000_000_000
         records = [
-            ApdbReassignDiaSourceRecord(
+            ApdbReassignDiaSourceToSSObjectRecord(
                 update_time_ns=update_time_ns1,
                 update_order=0,
                 diaSourceId=1,
-                diaObjectId=321,
                 ssObjectId=1,
                 ssObjectReassocTimeMjdTai=60000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
             ApdbWithdrawDiaSourceRecord(
                 update_time_ns=update_time_ns1,
                 update_order=1,
                 diaSourceId=123456,
-                diaObjectId=321,
                 timeWithdrawnMjdTai=61000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
-            ApdbReassignDiaSourceRecord(
+            ApdbReassignDiaSourceToSSObjectRecord(
                 update_time_ns=update_time_ns1,
                 update_order=3,
                 diaSourceId=2,
-                diaObjectId=3,
                 ssObjectId=3,
                 ssObjectReassocTimeMjdTai=60000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
             ApdbWithdrawDiaSourceRecord(
                 update_time_ns=update_time_ns2,
                 update_order=0,
                 diaSourceId=123456,
-                diaObjectId=321,
                 timeWithdrawnMjdTai=61000.0,
                 ra=45.0,
                 dec=-45.0,
+                midpointMjdTai=60000.0,
             ),
         ]
 
@@ -726,7 +1002,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
         one_sec = astropy.time.TimeDelta(1.0, format="sec")
 
-        objects = makeObjectCatalog(region, 100, visit_time0)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeSourceCatalog(objects, src_time1, 0, use_mjd=self.use_mjd)
         apdb.store(src_time1, objects, sources)
@@ -774,7 +1050,7 @@ class ApdbTest(TestCaseMixin, ABC):
         visit_time2 = astropy.time.Time("2021-12-27T00:00:03", format="isot", scale="tai")
         one_sec = astropy.time.TimeDelta(1.0, format="sec")
 
-        objects = makeObjectCatalog(region, 100, visit_time0)
+        objects = makeObjectCatalog(region, 100)
         oids = list(objects["diaObjectId"])
         sources = makeForcedSourceCatalog(objects, src_time1, 1, use_mjd=self.use_mjd)
         apdb.store(src_time1, objects, forced_sources=sources)
@@ -911,7 +1187,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         visit_time = self.visit_time
 
         # have to store Objects first
-        objects = makeObjectCatalog(region, 100, visit_time)
+        objects = makeObjectCatalog(region, 100)
         sources = makeSourceCatalog(objects, visit_time)
         fsources = makeForcedSourceCatalog(objects, visit_time)
         apdb.store(visit_time, objects, sources, fsources)

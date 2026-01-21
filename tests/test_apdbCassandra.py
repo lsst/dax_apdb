@@ -108,6 +108,9 @@ class ApdbCassandraTestCase(ApdbCassandraMixin, ApdbTest, unittest.TestCase):
         assert isinstance(apdb, ApdbCassandra), "Expecting ApdbCassandra instance"
         apdb._storeUpdateRecords(records, chunk, store_chunk=True)
 
+    def _count_after_reset_dedup(self, count_before: int) -> int:
+        return 0
+
 
 class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
     """A test case for ApdbCassandra class with per-month tables."""
@@ -126,13 +129,13 @@ class ApdbCassandraPerMonthTestCase(ApdbCassandraTestCase):
 
         # Visit time is beyond time_partition_end.
         visit_time = astropy.time.Time("2022-01-01", format="isot", scale="tai")
-        catalog = makeObjectCatalog(region, 100, visit_time)
+        catalog = makeObjectCatalog(region, 100)
         with self.assertRaisesRegex(ValueError, "time partitions that do not yet exist"):
             apdb.store(visit_time, catalog)
 
         # Writing to last partition makes a warning.
         visit_time = astropy.time.Time("2021-06-01", format="isot", scale="tai")
-        catalog = makeObjectCatalog(region, 100, visit_time)
+        catalog = makeObjectCatalog(region, 100)
         with self.assertWarnsRegex(UserWarning, "Writing into the last temporal partition"):
             apdb.store(visit_time, catalog)
 
@@ -154,7 +157,7 @@ class ApdbCassandraTestCaseDatetimeReplica(ApdbCassandraTestCaseReplica):
         # Schema for datetime case is also missing a validityTime column in
         # DiaObjectLast table.
         self.table_column_count = dict(self.table_column_count)
-        self.table_column_count[ApdbTables.DiaObjectLast] = 4
+        self.table_column_count[ApdbTables.DiaObjectLast] = 5
 
     def make_instance(self, **kwargs: Any) -> ApdbConfig:
         if "schema_file" in kwargs:

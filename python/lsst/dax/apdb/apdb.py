@@ -36,6 +36,7 @@ from lsst.sphgeom import Region
 from .apdbSchema import ApdbSchema, ApdbTables
 from .config import ApdbConfig
 from .factory import make_apdb
+from .recordIds import DiaObjectId, DiaSourceId
 from .schema_model import Table
 
 if TYPE_CHECKING:
@@ -238,6 +239,64 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def getDiaObjectsForDedup(self, since: astropy.time.Time | None = None) -> pandas.DataFrame:
+        """Return catalog of DiaObject stored in APDB since specified time.
+
+        This method should be used by deduplication algorithm to retrieve
+        DiaObject records added to APDB since previous deduplication (typically
+        during previous night). Returned catalog will have only a small subset
+        of DiaObject attributes required by deduplication algorithm.
+
+        Parameters
+        ----------
+        since : `astropy.time.Time`, optional
+            Starting search time (time of previous deduplication). If not
+            provided the time of the last deduplication stored in metadata
+            by `resetDedup` method is used.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaObject records, only a subset of attributes
+            will be returned.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def getDiaSourcesForDiaObjects(
+        self, objects: list[DiaObjectId], start_time: astropy.time.Time, max_dist_arcsec: float = 1.0
+    ) -> pandas.DataFrame:
+        """Return catalog of DiaSources associated with given DiaObjects.
+
+        Parameters
+        ----------
+        objects : `list` [`DiaObjectId`]
+            DiaObjects associated with returned DiaSources.
+        start_time : `astropy.time.Time`
+            Lower bound for ``midpointMjdTai`` for returned DiaSources.
+        max_dist_arcsec : `float`
+            Maximum expected distance in arcsec between DiaSource and
+            DiaObject. This parameter is used to optimize spatial queries in
+            cases when DiaObject is located near the partition boundary. If the
+            distance from DiaObject to the boundary is smaller than
+            ``max_dist_arcsec``, then the neighbor partition will be included
+            in search too.
+
+        Returns
+        -------
+        catalog : `pandas.DataFrame`
+            Catalog containing DiaSource records associated to given
+            DiaObjects.
+
+        Notes
+        -----
+        Primary purpose of this method is to support deduplication algorithm.
+        Its implementation is likely to be very slow and inefficient, it should
+        not be used for regular queries.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def containsVisitDetector(
         self,
         visit: int,
@@ -309,6 +368,87 @@ class Apdb(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def reassignDiaSourcesToDiaObjects(
+        self,
+        idMap: Mapping[DiaSourceId, int],
+        *,
+        increment_nDiaSources: bool = True,
+        decrement_nDiaSources: bool = True,
+    ) -> None:
+        """Re-assign DiaSources from one DiaObject to another, typically
+        during deduplication.
+
+        Parameters
+        ----------
+        idMap : `~collections.abc.Mapping` [`DiaSourceId`, `int`]
+            Mapping from DiaSource to their new ``diaObjectId``.
+        increment_nDiaSources : `bool`, optional
+            If `True` then increment the value of ``nDiaSources`` in DiaObjects
+            that DiaSources are reassigned to.
+        decrement_nDiaSources : `bool`, optional
+            If `True` then decrement the value of ``nDiaSources`` in DiaObjects
+            that DiaSources are reassigned from.
+
+        Raises
+        ------
+        LookupError
+            Raised if some of DiaSources or DiaObjects are not found.
+
+        Notes
+        -----
+        DiaSources initially could be associated with SSObjects. This method
+        needs to be called before `setValidityEnd`.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def setValidityEnd(
+        self, objects: list[DiaObjectId], validityEnd: astropy.time.Time, raise_on_missing_id: bool = False
+    ) -> int:
+        """Close validity interval for specified DiaObjects.
+
+        Parameters
+        ----------
+        objects : `list` [`DiaObjectId`]
+            DiaObjects which will have their validityEnd updated, if their
+            current validityEnd is NULL.
+        validityEnd : `astropy.time.Time`
+            Value for validityEnd.
+        raise_on_missing_id : `bool`, optional
+            If `True` then `LookupError` will be raised if any object in the
+            list is missing from the database.
+
+        Returns
+        -------
+        count : `int`
+            Actual number of records for which validityEnd was updated.
+
+        Raises
+        ------
+        LookupError
+            Raised if ``raise_on_missing_id`` is `True` and some of the
+            specified DiaObjects could not be found in the database.
+
+        Notes
+        -----
+        This method has to be called after `reassignDiaSourcesToDiaObjects`.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def resetDedup(self, dedup_time: astropy.time.Time | None = None) -> None:
+        """Delete deduplication-related data and remember deduplication time.
+        Deduplication data generated before ``dedup_time`` will be erased.
+
+        Parameters
+        ----------
+        dedup_time : `astropy.time.Time`, optional
+            Time of the last deduplication, current time is used if not
+            provided.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def reassignDiaSources(self, idMap: Mapping[int, int]) -> None:
         """Associate DiaSources with SSObjects, dis-associating them
         from DiaObjects.
@@ -322,15 +462,6 @@ class Apdb(ABC):
         ------
         ValueError
             Raised if DiaSource ID does not exist in the database.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def dailyJob(self) -> None:
-        """Implement daily activities like cleanup/vacuum.
-
-        What should be done during daily activities is determined by
-        specific implementation.
         """
         raise NotImplementedError()
 
@@ -369,3 +500,19 @@ class Apdb(ABC):
     def admin(self) -> ApdbAdmin:
         """Object providing adminitrative interface for APDB (`ApdbAdmin`)."""
         raise NotImplementedError()
+
+    def _current_time(self) -> astropy.time.Time:
+        """Return current system time.
+
+        Returns
+        -------
+        current_time : `astropy.time.Time`
+            Current time.
+
+        Notes
+        -----
+        This method exists primarily for testing purposes, it can be
+        monkey-patched in unit tests to return something else than current
+        system time, if necessary.
+        """
+        return astropy.time.Time.now()
