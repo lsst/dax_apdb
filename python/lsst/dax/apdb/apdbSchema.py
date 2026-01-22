@@ -35,33 +35,11 @@ from collections.abc import Mapping, MutableMapping
 from functools import cached_property
 
 import felis.datamodel
-import numpy
 
-from .schema_model import ExtraDataTypes, Schema, Table
+from .schema_model import Schema, Table
 from .versionTuple import VersionTuple
 
 _LOG = logging.getLogger(__name__)
-
-# In most cases column types are determined by Cassandra driver, but in some
-# cases we need to create Pandas Dataframe ourselves and we use this map to
-# infer types of columns from their YAML schema. Note that Cassandra saves
-# timestamps with millisecond precision, but pandas maps datetime type to
-# "datetime64[ns]".
-_dtype_map: Mapping[felis.datamodel.DataType | ExtraDataTypes, type | str] = {
-    felis.datamodel.DataType.double: numpy.float64,
-    felis.datamodel.DataType.float: numpy.float32,
-    felis.datamodel.DataType.timestamp: "datetime64[ns]",
-    felis.datamodel.DataType.long: numpy.int64,
-    felis.datamodel.DataType.int: numpy.int32,
-    felis.datamodel.DataType.short: numpy.int16,
-    felis.datamodel.DataType.byte: numpy.int8,
-    felis.datamodel.DataType.binary: object,
-    felis.datamodel.DataType.char: object,
-    felis.datamodel.DataType.text: object,
-    felis.datamodel.DataType.string: object,
-    felis.datamodel.DataType.unicode: object,
-    felis.datamodel.DataType.boolean: bool,
-}
 
 
 @enum.unique
@@ -147,29 +125,6 @@ class ApdbSchema:
                     ApdbTables.SSObject: ssp_tables[ApdbTables.SSObject],
                     ApdbTables.SSSource: ssp_tables[ApdbTables.SSSource],
                 }
-
-    def column_dtype(self, felis_type: felis.datamodel.DataType | ExtraDataTypes) -> type | str:
-        """Return Pandas data type for a given Felis column type.
-
-        Parameters
-        ----------
-        felis_type : `felis.datamodel.DataType`
-            Felis type, on of the enums defined in `felis.datamodel` module.
-
-        Returns
-        -------
-        column_dtype : `type` or `str`
-            Type that can be used for columns in Pandas.
-
-        Raises
-        ------
-        TypeError
-            Raised if type is cannot be handled.
-        """
-        try:
-            return _dtype_map[felis_type]
-        except KeyError:
-            raise TypeError(f"Unexpected Felis type: {felis_type}")
 
     def schemaVersion(self) -> VersionTuple:
         """Return schema version as defined in YAML schema file.

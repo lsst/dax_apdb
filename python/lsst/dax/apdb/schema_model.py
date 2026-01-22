@@ -84,6 +84,25 @@ _data_type_size: Mapping[DataTypes, int] = {
 }
 
 
+# The first entry in the returned mapping is for nullable columns,
+# the second entry is for non-nullable columns.
+_dtype_map: Mapping[felis.datamodel.DataType, tuple[str, str]] = {
+    felis.datamodel.DataType.double: ("float64", "float64"),
+    felis.datamodel.DataType.float: ("float32", "float32"),
+    felis.datamodel.DataType.timestamp: ("datetime64[ms]", "datetime64[ms]"),
+    felis.datamodel.DataType.long: ("Int64", "int64"),
+    felis.datamodel.DataType.int: ("Int32", "int32"),
+    felis.datamodel.DataType.short: ("Int16", "int16"),
+    felis.datamodel.DataType.byte: ("Int8", "int8"),
+    felis.datamodel.DataType.binary: ("object", "object"),
+    felis.datamodel.DataType.char: ("object", "object"),
+    felis.datamodel.DataType.text: ("object", "object"),
+    felis.datamodel.DataType.string: ("object", "object"),
+    felis.datamodel.DataType.unicode: ("object", "object"),
+    felis.datamodel.DataType.boolean: ("boolean", "bool"),
+}
+
+
 @dataclasses.dataclass
 class Column:
     """Column representation in schema."""
@@ -166,6 +185,13 @@ class Column:
         if self.length is not None:
             size *= self.length
         return size
+
+    @property
+    def pandas_type(self) -> str:
+        """Type of this column in pandas.DataFrame (`str`)."""
+        # We do not convert UUID columns to pandas.
+        assert isinstance(self.datatype, felis.datamodel.DataType)
+        return _dtype_map[self.datatype][int(not self.nullable)]
 
 
 @dataclasses.dataclass

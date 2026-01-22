@@ -1730,10 +1730,7 @@ class ApdbCassandra(Apdb):
         """
         table = self.schema.tableSchemas[table_name]
 
-        data = {
-            columnDef.name: pandas.Series(dtype=self.schema.column_dtype(columnDef.datatype))
-            for columnDef in table.columns
-        }
+        data = {columnDef.name: pandas.Series(dtype=columnDef.pandas_type) for columnDef in table.columns}
         return pandas.DataFrame(data)
 
     def _combine_where(
