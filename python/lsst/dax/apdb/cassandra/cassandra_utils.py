@@ -25,7 +25,6 @@ __all__ = [
     "ApdbCassandraTableData",
     "PreparedStatementCache",
     "literal",
-    "pandas_dataframe_factory",
     "quote_id",
     "raw_data_factory",
     "select_concurrent",
@@ -174,30 +173,6 @@ class PreparedStatementCache:
         return stmt
 
 
-def pandas_dataframe_factory(colnames: list[str], rows: list[tuple]) -> pandas.DataFrame:
-    """Create pandas DataFrame from Cassandra result set.
-
-    Parameters
-    ----------
-    colnames : `list` [ `str` ]
-        Names of the columns.
-    rows : `list` of `tuple`
-        Result rows.
-
-    Returns
-    -------
-    catalog : `pandas.DataFrame`
-        DataFrame with the result set.
-
-    Notes
-    -----
-    When using this method as row factory for Cassandra, the resulting
-    DataFrame should be accessed in a non-standard way using
-    `ResultSet._current_rows` attribute.
-    """
-    return pandas.DataFrame.from_records(rows, columns=colnames)
-
-
 def raw_data_factory(colnames: list[str], rows: list[tuple]) -> ApdbCassandraTableData:
     """Make 2-element tuple containing unmodified data: list of column names
     and list of rows.
@@ -298,28 +273,6 @@ def select_concurrent(
         if table_data is None:
             table_data = ApdbCassandraTableData([], [])
         return table_data
-
-    elif ep.row_factory is pandas_dataframe_factory:
-        # Merge multiple DataFrames into one
-        _LOG.debug("making pandas data frame out of set of data frames")
-        dataframes = []
-        for success, result in results:
-            if success:
-                dataframes.append(result._current_rows)
-            else:
-                _LOG.error("error returned by query: %s", result)
-                raise result
-        # Concatenate all frames, but skip empty ones.
-        non_empty = [df for df in dataframes if not df.empty]
-        if not non_empty:
-            # If all frames are empty, return the first one.
-            catalog = dataframes[0]
-        elif len(non_empty) == 1:
-            catalog = non_empty[0]
-        else:
-            catalog = pandas.concat(non_empty)
-        _LOG.debug("pandas catalog shape: %s", catalog.shape)
-        return catalog
 
     else:
         # Just concatenate all rows into a single collection.

@@ -72,6 +72,7 @@ from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema, CreateTableOptions, ExtraTables
 from .apdbMetadataCassandra import ApdbMetadataCassandra
 from .cassandra_utils import (
+    ApdbCassandraTableData,
     execute_concurrent,
     literal,
     quote_id,
@@ -427,15 +428,16 @@ class ApdbCassandra(Apdb):
         _LOG.debug("getDiaObjects: #queries: %s", len(statements))
 
         with self._timer("select_time", tags={"table": "DiaObject", "method": "getDiaObjects"}) as timer:
-            objects = cast(
-                pandas.DataFrame,
+            raw_objects = cast(
+                ApdbCassandraTableData,
                 select_concurrent(
                     context.session,
                     statements,
-                    "read_pandas_multi",
+                    "read_raw_multi",
                     config.connection_config.read_concurrency,
                 ),
             )
+            objects = raw_objects.to_pandas(context.schema._table_schema(ApdbTables.DiaObjectLast))
             timer.add_values(row_count=len(objects), num_sp_part=num_sp_part, num_queries=len(statements))
 
         _LOG.debug("found %s DiaObjects", objects.shape[0])
@@ -526,15 +528,16 @@ class ApdbCassandra(Apdb):
         with self._timer(
             "select_time", tags={"table": "DiaObjectDedup", "method": "getDiaObjectsForDedup"}
         ) as timer:
-            objects = cast(
-                pandas.DataFrame,
+            objects_raw = cast(
+                ApdbCassandraTableData,
                 select_concurrent(
                     context.session,
                     statements,
-                    "read_pandas_multi_dedup",
+                    "read_raw_multi_dedup",
                     config.connection_config.read_concurrency,
                 ),
             )
+            objects = objects_raw.to_pandas(context.schema._table_schema(ExtraTables.DiaObjectDedup))
             timer.add_values(row_count=len(objects), num_queries=num_part)
 
         _LOG.debug("found %s DiaObjectDedup records", objects.shape[0])
@@ -591,15 +594,16 @@ class ApdbCassandra(Apdb):
         with self._timer(
             "select_time", tags={"table": "DiaSource", "method": "getDiaSourcesForDiaObjects"}
         ) as timer:
-            catalog = cast(
-                pandas.DataFrame,
+            table_data_raw = cast(
+                ApdbCassandraTableData,
                 select_concurrent(
                     context.session,
                     statements,
-                    "read_pandas_multi",
+                    "read_raw_multi",
                     config.connection_config.read_concurrency,
                 ),
             )
+            catalog = table_data_raw.to_pandas(context.schema._table_schema(ApdbTables.DiaSource))
             timer.add_values(row_count_from_db=len(catalog), num_queries=len(statements))
 
             # precise filtering on midpointMjdTai
@@ -1164,15 +1168,16 @@ class ApdbCassandra(Apdb):
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
         with self._timer("select_time", tags={"table": table_name.name, "method": "_getSources"}) as timer:
-            catalog = cast(
-                pandas.DataFrame,
+            table_data_raw = cast(
+                ApdbCassandraTableData,
                 select_concurrent(
                     context.session,
                     statements,
-                    "read_pandas_multi",
+                    "read_raw_multi",
                     config.connection_config.read_concurrency,
                 ),
             )
+            catalog = table_data_raw.to_pandas(context.schema._table_schema(table_name))
             timer.add_values(
                 row_count_from_db=len(catalog), num_sp_part=num_sp_part, num_queries=len(statements)
             )
