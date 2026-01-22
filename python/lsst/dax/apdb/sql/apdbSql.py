@@ -67,7 +67,7 @@ from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
 from .apdbMetadataSql import ApdbMetadataSql
 from .apdbSqlAdmin import ApdbSqlAdmin
-from .apdbSqlReplica import ApdbSqlReplica
+from .apdbSqlReplica import ApdbSqlReplica, ApdbSqlTableData
 from .apdbSqlSchema import ApdbSqlSchema, ExtraTables
 from .config import ApdbSqlConfig
 
@@ -581,7 +581,10 @@ class ApdbSql(Apdb):
         # execute select
         with self._timer("select_time", tags={"table": "DiaObject"}) as timer:
             with self._engine.begin() as conn:
-                objects = pandas.read_sql_query(query, conn)
+                result = conn.execute(query)
+                column_defs = self._table_schema.tableSchemas[table_enum].columns
+                table_data = ApdbSqlTableData(result, column_defs)
+                objects = table_data.to_pandas()
             timer.add_values(row_count=len(objects))
         _LOG.debug("found %s DiaObjects", len(objects))
         return self._fix_result_timestamps(objects)
@@ -684,7 +687,10 @@ class ApdbSql(Apdb):
         # execute select
         with self._timer("select_time", tags={"table": "DiaObject"}) as timer:
             with self._engine.begin() as conn:
-                objects = pandas.read_sql_query(query, conn)
+                result = conn.execute(query)
+                column_defs = self._table_schema.tableSchemas[table_enum].columns
+                table_data = ApdbSqlTableData(result, column_defs)
+                objects = table_data.to_pandas()
             timer.add_values(row_count=len(objects))
         _LOG.debug("found %s DiaObjects", len(objects))
         return self._fix_result_timestamps(objects)
@@ -1050,7 +1056,10 @@ class ApdbSql(Apdb):
         # execute select
         with self._timer("DiaSource_select_time", tags={"table": "DiaSource"}) as timer:
             with self._engine.begin() as conn:
-                sources = pandas.read_sql_query(query, conn)
+                result = conn.execute(query)
+                column_defs = self._table_schema.tableSchemas[ApdbTables.DiaSource].columns
+                table_data = ApdbSqlTableData(result, column_defs)
+                sources = table_data.to_pandas()
             timer.add_values(row_counts=len(sources))
         _LOG.debug("found %s DiaSources", len(sources))
         return self._fix_result_timestamps(sources)
@@ -1101,13 +1110,16 @@ class ApdbSql(Apdb):
         """
         table = self._schema.get_table(table_enum)
         columns = self._schema.get_apdb_columns(table_enum)
+        column_defs = self._table_schema.tableSchemas[table_enum].columns
 
         sources: pandas.DataFrame | None = None
         if len(object_ids) <= 0:
             _LOG.debug("ID list is empty, just fetch empty result")
             query = sql.select(*columns).where(sql.literal(False))
             with self._engine.begin() as conn:
-                sources = pandas.read_sql_query(query, conn)
+                result = conn.execute(query)
+                table_data = ApdbSqlTableData(result, column_defs)
+                sources = table_data.to_pandas()
         else:
             data_frames: list[pandas.DataFrame] = []
             for ids in chunk_iterable(sorted(object_ids), 1000):
@@ -1127,7 +1139,9 @@ class ApdbSql(Apdb):
 
                 # execute select
                 with self._engine.begin() as conn:
-                    data_frames.append(pandas.read_sql_query(query, conn))
+                    result = conn.execute(query)
+                    table_data = ApdbSqlTableData(result, column_defs)
+                    data_frames.append(table_data.to_pandas())
 
             if len(data_frames) == 1:
                 sources = data_frames[0]

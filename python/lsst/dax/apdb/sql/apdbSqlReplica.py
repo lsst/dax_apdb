@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, cast
 
 import astropy.time
 import felis.datamodel
+import numpy
+import pandas
 import sqlalchemy
 from sqlalchemy import sql
 
@@ -38,7 +40,7 @@ from ..apdbReplica import ApdbReplica, ApdbTableData, ReplicaChunk
 from ..apdbSchema import ApdbTables
 from ..apdbUpdateRecord import ApdbUpdateRecord
 from ..monitor import MonAgent
-from ..schema_model import ExtraDataTypes
+from ..schema_model import Column, ExtraDataTypes
 from ..timer import Timer
 from ..versionTuple import VersionTuple
 from .apdbSqlSchema import ExtraTables
@@ -59,20 +61,60 @@ changes.
 
 
 class ApdbSqlTableData(ApdbTableData):
-    """Implementation of ApdbTableData that wraps sqlalchemy Result."""
+    """Implementation of ApdbTableData that wraps sqlalchemy Result.
 
-    def __init__(self, result: sqlalchemy.engine.Result, column_types: dict[str, felis.datamodel.DataType]):
-        self._column_defs = tuple((column, column_types[column]) for column in result.keys())
+    Parameters
+    ----------
+    result : `sqlalchemy.engine.Result`
+        Result returned from query.
+    column_defs : `list` [`..schema_model.Column`]
+        Column definitions, must include all columns appearing in the
+        ``result``.
+    """
+
+    def __init__(self, result: sqlalchemy.engine.Result, column_defs: list[Column]):
+        column_map = {column_def.name: column_def for column_def in column_defs}
+        self._column_defs = tuple(column_map[column_name] for column_name in result.keys())
+        column_types = []
+        for column_def in self._column_defs:
+            if isinstance(column_def.datatype, ExtraDataTypes):
+                raise TypeError("Unsupported column type {column_def.datatype} for column {column_def.name}")
+            column_types.append((column_def.name, column_def.datatype))
+        self._column_types = tuple(column_types)
         self._rows: list[tuple] = cast(list[tuple], list(result.fetchall()))
 
     def column_names(self) -> Sequence[str]:
-        return tuple(column_def[0] for column_def in self._column_defs)
+        return tuple(column_def.name for column_def in self._column_defs)
 
     def column_defs(self) -> Sequence[tuple[str, felis.datamodel.DataType]]:
-        return self._column_defs
+        return self._column_types
 
     def rows(self) -> Collection[tuple]:
         return self._rows
+
+    def to_pandas(self) -> pandas.DataFrame:
+        """Convert data to pandas DataFrame.
+
+        Returns
+        -------
+        dataframe : `pandas.DataFrame`
+            Resulting DataFrame.
+        """
+        if not self._rows:
+            # There could be columns that are not in the configured schema, use
+            # object column type for them.
+            column_data = {}
+            for column_def in self._column_defs:
+                column_data[column_def.name] = pandas.Series(dtype=column_def.pandas_type)
+            return pandas.DataFrame(column_data)
+
+        # To avoid nested loops convert everything to ndarray.
+        array = numpy.array(self._rows, dtype=object)
+        array = array.T
+        column_data = {}
+        for i, column_def in enumerate(self._column_defs):
+            column_data[column_def.name] = pandas.Series(array[i], dtype=column_def.pandas_type)
+        return pandas.DataFrame(column_data)
 
 
 class ApdbSqlReplica(ApdbReplica):
@@ -181,20 +223,16 @@ class ApdbSqlReplica(ApdbReplica):
         query = sql.select(chunk_id_column, *apdb_columns).select_from(join).where(where_clause)
 
         table_schema = self._schema.tableSchemas[table_enum]
-        # Regular tables should never have columns of ExtraDataTypes, this is
-        # just to make mypy happy.
-        column_types = {
-            column.name: column.datatype
-            for column in table_schema.columns
-            if not isinstance(column.datatype, ExtraDataTypes)
-        }
-        column_types["apdb_replica_chunk"] = felis.datamodel.DataType.long
+        chunk_column_def = Column(
+            name="apdb_replica_chunk", datatype=felis.datamodel.DataType.long, id="", nullable=False
+        )
+        column_defs = table_schema.columns + [chunk_column_def]
 
         # execute select
         with self._timer("table_chunk_select_time", tags={"table": table.name}) as timer:
             with self._engine.begin() as conn:
                 result = conn.execution_options(stream_results=True, max_row_buffer=10000).execute(query)
-                table_data = ApdbSqlTableData(result, column_types)
+                table_data = ApdbSqlTableData(result, column_defs)
                 timer.add_values(row_count=len(table_data.rows()))
                 return table_data
 
