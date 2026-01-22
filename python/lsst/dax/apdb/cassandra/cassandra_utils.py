@@ -53,6 +53,7 @@ except ImportError:
     CASSANDRA_IMPORTED = False
     EXEC_PROFILE_DEFAULT = object()
 
+from .. import schema_model
 from ..apdbReplica import ApdbTableData
 
 _LOG = logging.getLogger(__name__)
@@ -120,6 +121,37 @@ class ApdbCassandraTableData(ApdbTableData):
 
         for idx in drop_idx:
             del self._columns[idx]
+
+    def to_pandas(self, table: schema_model.Table) -> pandas.DataFrame:
+        """Convert data to pandas DataFrame.
+
+        Parameters
+        ----------
+        table : `schema_model.Table`
+            Table schema matching the data in this instance.
+
+        Returns
+        -------
+        dataframe : `pandas.DataFrame`
+            Resulting DataFrame.
+        """
+        column_types = {column_def.name: column_def.pandas_type for column_def in table.columns}
+
+        if not self._rows:
+            # There could be columns that are not in the configured schema, use
+            # object column type for them.
+            column_data = {}
+            for column in self._columns:
+                column_data[column] = pandas.Series(dtype=column_types.get(column, object))
+            return pandas.DataFrame(column_data)
+
+        # To avoid nested loops convert everything to ndarray.
+        array = np.array(self._rows, dtype=object)
+        array = array.T
+        column_data = {}
+        for i, column in enumerate(self._columns):
+            column_data[column] = pandas.Series(array[i], dtype=column_types.get(column, object))
+        return pandas.DataFrame(column_data)
 
     def __iter__(self) -> Iterator[tuple]:
         """Make it look like a row iterator, needed for some odd logic."""
