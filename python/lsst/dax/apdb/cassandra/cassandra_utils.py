@@ -31,6 +31,7 @@ __all__ = [
 ]
 
 import logging
+import warnings
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from datetime import datetime, timedelta
 from typing import Any
@@ -136,9 +137,18 @@ class ApdbCassandraTableData(ApdbTableData):
         """
         column_types = {column_def.name: column_def.pandas_type for column_def in table.columns}
 
+        # In rare cases there could be columns that are not in the configured
+        # schema, e.g. during schema migrations. Use object column type for
+        # them but also produce a warning.
+        extra_columns = [column for column in self._columns if column not in column_types]
+        if extra_columns:
+            warnings.warn(
+                f"Query result includes column(s) do not appear in schema for table {table.name}: "
+                f"{', '.join(extra_columns)}",
+                stacklevel=2,
+            )
+
         if not self._rows:
-            # There could be columns that are not in the configured schema, use
-            # object column type for them.
             column_data = {}
             for column in self._columns:
                 column_data[column] = pandas.Series(dtype=column_types.get(column, object))
