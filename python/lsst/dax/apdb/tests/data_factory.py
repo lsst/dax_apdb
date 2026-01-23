@@ -204,7 +204,7 @@ def makeSourceCatalog(
     df = pandas.DataFrame(
         {
             "diaSourceId": numpy.arange(start_id, start_id + nrows, dtype=numpy.int64),
-            "diaObjectId": objects["diaObjectId"],
+            "diaObjectId": pandas.Series(objects["diaObjectId"], dtype="Int64"),
             "visit": numpy.full(nrows, visit, dtype=numpy.int64),
             "detector": numpy.full(nrows, detector, dtype=numpy.int16),
             "parentDiaSourceId": 0,

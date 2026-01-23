@@ -467,6 +467,29 @@ class ApdbTest(TestCaseMixin, ABC):
         res = apdb.containsVisitDetector(visit=2, detector=42, region=region, visit_time=visit_time)
         self.assertFalse(res)
 
+    def test_null_integer_type(self) -> None:
+        """Test that integer column with NULLs correct type on select."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+
+        region = self.make_region()
+        visit_time = self.visit_time
+
+        # have to store Objects first
+        objects = makeObjectCatalog(region, 100)
+        sources = makeSourceCatalog(objects, visit_time, use_mjd=self.use_mjd)
+        # Reset some diaObjectIds to NULL.
+        sources.loc[0:10, "diaObjectId"] = None
+
+        # save the objects and sources
+        apdb.store(visit_time, objects, sources)
+
+        # read it back, no ID filtering
+        res = apdb.getDiaSources(region, None, visit_time)
+        self.assert_catalog(res, len(sources), ApdbTables.DiaSource)
+        assert res is not None, "Expecting catalog, not None"
+        self.assertEqual(res.dtypes["diaObjectId"], pandas.Int64Dtype())
+
     def test_timestamps(self) -> None:
         """Check that timestamp return type is as expected."""
         config = self.make_instance()
@@ -495,7 +518,9 @@ class ApdbTest(TestCaseMixin, ABC):
         time_processed_column = makeTimestampColumn("time_processed", self.use_mjd)
         self.assertIn(time_processed_column, res.dtypes)
         dtype = res.dtypes[time_processed_column]
-        timestamp_type_names = ("float64",) if self.use_mjd else ("datetime64[us]", "datetime64[ns]")
+        timestamp_type_names = (
+            ("float64",) if self.use_mjd else ("datetime64[ms]", "datetime64[us]", "datetime64[ns]")
+        )
         self.assertIn(dtype.name, timestamp_type_names)
         # Verify that returned time is sensible.
         self.assertTrue(all(time_before <= dt <= time_after for dt in res[time_processed_column]))

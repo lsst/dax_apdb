@@ -25,13 +25,13 @@ __all__ = [
     "ApdbCassandraTableData",
     "PreparedStatementCache",
     "literal",
-    "pandas_dataframe_factory",
     "quote_id",
     "raw_data_factory",
     "select_concurrent",
 ]
 
 import logging
+import warnings
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from datetime import datetime, timedelta
 from typing import Any
@@ -53,6 +53,7 @@ except ImportError:
     CASSANDRA_IMPORTED = False
     EXEC_PROFILE_DEFAULT = object()
 
+from .. import schema_model
 from ..apdbReplica import ApdbTableData
 
 _LOG = logging.getLogger(__name__)
@@ -121,6 +122,46 @@ class ApdbCassandraTableData(ApdbTableData):
         for idx in drop_idx:
             del self._columns[idx]
 
+    def to_pandas(self, table: schema_model.Table) -> pandas.DataFrame:
+        """Convert data to pandas DataFrame.
+
+        Parameters
+        ----------
+        table : `schema_model.Table`
+            Table schema matching the data in this instance.
+
+        Returns
+        -------
+        dataframe : `pandas.DataFrame`
+            Resulting DataFrame.
+        """
+        column_types = {column_def.name: column_def.pandas_type for column_def in table.columns}
+
+        # In rare cases there could be columns that are not in the configured
+        # schema, e.g. during schema migrations. Use object column type for
+        # them but also produce a warning.
+        extra_columns = [column for column in self._columns if column not in column_types]
+        if extra_columns:
+            warnings.warn(
+                f"Query result includes column(s) do not appear in schema for table {table.name}: "
+                f"{', '.join(extra_columns)}",
+                stacklevel=2,
+            )
+
+        if not self._rows:
+            column_data = {}
+            for column in self._columns:
+                column_data[column] = pandas.Series(dtype=column_types.get(column, object))
+            return pandas.DataFrame(column_data)
+
+        # To avoid nested loops convert everything to ndarray.
+        array = np.array(self._rows, dtype=object)
+        array = array.T
+        column_data = {}
+        for i, column in enumerate(self._columns):
+            column_data[column] = pandas.Series(array[i], dtype=column_types.get(column, object))
+        return pandas.DataFrame(column_data)
+
     def __iter__(self) -> Iterator[tuple]:
         """Make it look like a row iterator, needed for some odd logic."""
         return iter(self._rows)
@@ -140,30 +181,6 @@ class PreparedStatementCache:
             stmt = self._session.prepare(query)
             self._prepared_statements[query] = stmt
         return stmt
-
-
-def pandas_dataframe_factory(colnames: list[str], rows: list[tuple]) -> pandas.DataFrame:
-    """Create pandas DataFrame from Cassandra result set.
-
-    Parameters
-    ----------
-    colnames : `list` [ `str` ]
-        Names of the columns.
-    rows : `list` of `tuple`
-        Result rows.
-
-    Returns
-    -------
-    catalog : `pandas.DataFrame`
-        DataFrame with the result set.
-
-    Notes
-    -----
-    When using this method as row factory for Cassandra, the resulting
-    DataFrame should be accessed in a non-standard way using
-    `ResultSet._current_rows` attribute.
-    """
-    return pandas.DataFrame.from_records(rows, columns=colnames)
 
 
 def raw_data_factory(colnames: list[str], rows: list[tuple]) -> ApdbCassandraTableData:
@@ -266,28 +283,6 @@ def select_concurrent(
         if table_data is None:
             table_data = ApdbCassandraTableData([], [])
         return table_data
-
-    elif ep.row_factory is pandas_dataframe_factory:
-        # Merge multiple DataFrames into one
-        _LOG.debug("making pandas data frame out of set of data frames")
-        dataframes = []
-        for success, result in results:
-            if success:
-                dataframes.append(result._current_rows)
-            else:
-                _LOG.error("error returned by query: %s", result)
-                raise result
-        # Concatenate all frames, but skip empty ones.
-        non_empty = [df for df in dataframes if not df.empty]
-        if not non_empty:
-            # If all frames are empty, return the first one.
-            catalog = dataframes[0]
-        elif len(non_empty) == 1:
-            catalog = non_empty[0]
-        else:
-            catalog = pandas.concat(non_empty)
-        _LOG.debug("pandas catalog shape: %s", catalog.shape)
-        return catalog
 
     else:
         # Just concatenate all rows into a single collection.
