@@ -222,7 +222,7 @@ class SessionFactory:
             row_factory=raw_data_factory,
             load_balancing_policy=loadBalancePolicy,
         )
-        # Profile to use with select_concurrent to return paraw data,
+        # Profile to use with select_concurrent to return raw data,
         # this also has very long timeout, to be be use for querying
         # DiaObjectDedup table that can return a lot of data.
         read_raw_multi_dedup_profile = ExecutionProfile(
