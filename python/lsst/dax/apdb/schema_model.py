@@ -191,7 +191,10 @@ class Column:
         """Type of this column in pandas.DataFrame (`str`)."""
         # We do not convert UUID columns to pandas.
         assert isinstance(self.datatype, felis.datamodel.DataType)
-        return _dtype_map[self.datatype][int(not self.nullable)]
+        # TODO: We have cases of NULLs in existing data for non-nullable
+        # columns (in Cassandra). To avoid errors for such cases we allow all
+        # types to be nullable. We should revisit this at some later time.
+        return _dtype_map[self.datatype][0]
 
 
 @dataclasses.dataclass
