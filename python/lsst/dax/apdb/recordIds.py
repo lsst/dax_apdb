@@ -64,7 +64,9 @@ class DiaObjectId:
         object_id : `DiaObjectId`
             Instance of this class.
         """
-        return cls(diaObjectId=named_tuple.diaObjectId, ra=named_tuple.ra, dec=named_tuple.dec)
+        # Input tuple most likely comes from Pandas DataFrame, in that case
+        # items may have numpy types, need to convert them to Python types.
+        return cls(diaObjectId=int(named_tuple.diaObjectId), ra=named_tuple.ra, dec=named_tuple.dec)
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, DiaObjectId):
@@ -118,8 +120,10 @@ class DiaSourceId:
         object_id : `DiaSourceId`
             Instance of this class.
         """
+        # Input tuple most likely comes from Pandas DataFrame, in that case
+        # items may have numpy types, need to convert them to Python types.
         return cls(
-            diaSourceId=named_tuple.diaSourceId,
+            diaSourceId=int(named_tuple.diaSourceId),
             ra=named_tuple.ra,
             dec=named_tuple.dec,
             midpointMjdTai=named_tuple.midpointMjdTai,
@@ -183,10 +187,12 @@ class DiaForcedSourceId:
         object_id : `DiaForcedSourceId`
             Instance of this class.
         """
+        # Input tuple most likely comes from Pandas DataFrame, in that case
+        # items may have numpy types, need to convert them to Python types.
         return cls(
-            diaObjectId=named_tuple.diaObjectId,
-            visit=named_tuple.visit,
-            detector=named_tuple.detector,
+            diaObjectId=int(named_tuple.diaObjectId),
+            visit=int(named_tuple.visit),
+            detector=int(named_tuple.detector),
             ra=named_tuple.ra,
             dec=named_tuple.dec,
             midpointMjdTai=named_tuple.midpointMjdTai,

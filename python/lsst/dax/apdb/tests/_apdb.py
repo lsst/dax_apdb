@@ -639,11 +639,13 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertEqual(set(sources["diaSourceId"]), {1000, 1001, 1002})
         self.assertEqual(set(sources["diaObjectId"]), {100, 101, 102})
 
+        dia_source_ids = [DiaSourceId.from_named_tuple(row) for row in sources.itertuples()]
+
         # Reassign sources in region1 and increment/decrement nDiaSources.
-        midpointMjdTai = visit_time.tai.mjd
         reassign = {
-            DiaSourceId(diaSourceId=1001, ra=0.0, dec=0.0, midpointMjdTai=midpointMjdTai): 100,
-            DiaSourceId(diaSourceId=1002, ra=0.0, dec=0.0, midpointMjdTai=midpointMjdTai): 100,
+            dia_source_id: 100
+            for dia_source_id in dia_source_ids
+            if dia_source_id.diaSourceId in (1001, 1002)
         }
         apdb.reassignDiaSourcesToDiaObjects(reassign)
 
@@ -654,10 +656,16 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertEqual(set(sources["diaSourceId"]), {1000, 1001, 1002})
         self.assertEqual(set(sources["diaObjectId"]), {100})
 
+        sources = apdb.getDiaSources(region2, [201, 202], visit_time)
+        assert sources is not None
+        self.assertEqual(set(sources["diaSourceId"]), {2001, 2002})
+        dia_source_ids = [DiaSourceId.from_named_tuple(row) for row in sources.itertuples()]
+
         # Reassign but do not increment/decrement nDiaSources.
         reassign = {
-            DiaSourceId(diaSourceId=2001, ra=180.0, dec=0.0, midpointMjdTai=midpointMjdTai): 200,
-            DiaSourceId(diaSourceId=2002, ra=180.0, dec=0.0, midpointMjdTai=midpointMjdTai): 200,
+            dia_source_id: 200
+            for dia_source_id in dia_source_ids
+            if dia_source_id.diaSourceId in (2001, 2002)
         }
         apdb.reassignDiaSourcesToDiaObjects(
             reassign, increment_nDiaSources=False, decrement_nDiaSources=False
