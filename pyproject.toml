@@ -25,6 +25,7 @@ dependencies = [
     "astropy",
     "lsst-felis",
     "lsst-pex-config",
+    "lsst-sdm-schemas",
     "lsst-sphgeom",
     "lsst-utils",
     "numpy",
