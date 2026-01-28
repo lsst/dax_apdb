@@ -12,3 +12,4 @@ lsst-resources[s3] @ git+https://github.com/lsst/resources@main
 lsst-sphgeom @ git+https://github.com/lsst/sphgeom@main
 lsst-felis @ git+https://github.com/lsst/felis@main
 lsst-pex-config @ git+https://github.com/lsst/pex_config@main
+lsst-sdm-schemas @ git+https://github.com/lsst/sdm_schemas@main
