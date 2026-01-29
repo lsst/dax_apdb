@@ -760,14 +760,14 @@ class ApdbSql(Apdb):
 
     def reassignDiaSourcesToDiaObjects(
         self,
-        idMap: Mapping[DiaSourceId, int],
+        idMap: Mapping[DiaSourceId, DiaObjectId],
         *,
         increment_nDiaSources: bool = True,
         decrement_nDiaSources: bool = True,
     ) -> None:
         # docstring is inherited from a base class
 
-        new_object_ids = set(idMap.values())
+        new_object_ids = {obj.diaObjectId for obj in idMap.values()}
         source_ids = {source.diaSourceId for source in idMap}
 
         current_time = self._current_time()
@@ -795,11 +795,11 @@ class ApdbSql(Apdb):
 
             # Update DiaSources.
             source_table = self._schema.get_table(ApdbTables.DiaSource)
-            for source, diaObjectId in idMap.items():
+            for source, obj in idMap.items():
                 update = (
                     source_table.update()
                     .where(source_table.columns["diaSourceId"] == source.diaSourceId)
-                    .values(diaObjectId=diaObjectId)
+                    .values(diaObjectId=obj.diaObjectId)
                 )
                 conn.execute(update)
 
@@ -810,7 +810,7 @@ class ApdbSql(Apdb):
                             ra=source.ra,
                             dec=source.dec,
                             midpointMjdTai=source.midpointMjdTai,
-                            diaObjectId=diaObjectId,
+                            diaObjectId=obj.diaObjectId,
                             update_time_ns=current_time_ns,
                             update_order=update_order,
                         )
@@ -825,7 +825,7 @@ class ApdbSql(Apdb):
             # Things to increment/decrement.
             increments: Counter = Counter()
             if increment_nDiaSources:
-                increments.update(idMap.values())
+                increments.update(obj_id.diaObjectId for obj_id in idMap.values())
             if decrement_nDiaSources:
                 increments.subtract(original_object_ids[source_id.diaSourceId] for source_id in idMap)
 

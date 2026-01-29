@@ -370,7 +370,7 @@ class Apdb(ABC):
     @abstractmethod
     def reassignDiaSourcesToDiaObjects(
         self,
-        idMap: Mapping[DiaSourceId, int],
+        idMap: Mapping[DiaSourceId, DiaObjectId],
         *,
         increment_nDiaSources: bool = True,
         decrement_nDiaSources: bool = True,
@@ -380,8 +380,8 @@ class Apdb(ABC):
 
         Parameters
         ----------
-        idMap : `~collections.abc.Mapping` [`DiaSourceId`, `int`]
-            Mapping from DiaSource to their new ``diaObjectId``.
+        idMap : `~collections.abc.Mapping` [`DiaSourceId`, `DiaObjectId`]
+            Mapping from DiaSource to their new DiaObject.
         increment_nDiaSources : `bool`, optional
             If `True` then increment the value of ``nDiaSources`` in DiaObjects
             that DiaSources are reassigned to.
