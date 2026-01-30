@@ -1640,6 +1640,9 @@ class ApdbCassandra(Apdb):
         if not context.schema.replication_enabled:
             raise TypeError("Replication is not enabled for this APDB instance.")
 
+        if not context.has_update_record_chunks_table:
+            raise TypeError("ApdbUpdateRecordChunks does not exist, ApdbReplica schema has to be upgraded.")
+
         if store_chunk:
             self._storeReplicaChunk(chunk)
 
