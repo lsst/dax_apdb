@@ -23,7 +23,12 @@ from __future__ import annotations
 
 __all__ = ["SessionContext", "SessionFactory"]
 
+import contextlib
+import cProfile
+import io
 import logging
+import os
+import pstats
 from collections.abc import Mapping
 from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any
@@ -53,6 +58,25 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 _MON = MonAgent(__name__)
+
+_DO_PROFILE = os.environ.get("DAX_APDB_DM53808_PROFILE")
+
+
+def _profile_context() -> Any:
+    if _DO_PROFILE:
+        return cProfile.Profile()
+    else:
+        return contextlib.nullcontext()
+
+
+def _profile_cpu_threshold() -> float:
+    if _DO_PROFILE:
+        try:
+            return float(_DO_PROFILE)
+        except Exception:
+            return 2.5
+    else:
+        return 1_000_000.0
 
 
 def _dump_query(rf: Any) -> None:
@@ -131,17 +155,30 @@ class SessionFactory:
             "executor_threads": 10,
         }
         extra_parameters.update(self._config.connection_config.extra_parameters)
-        with Timer("cluster_connect", _MON):
-            cluster = Cluster(
-                execution_profiles=self._make_profiles(),
-                contact_points=self._config.contact_points,
-                port=self._config.connection_config.port,
-                address_translator=addressTranslator,
-                protocol_version=self._config.connection_config.protocol_version,
-                auth_provider=self._make_auth_provider(),
-                **extra_parameters,
+        with Timer("cluster_connect", _MON) as timer:
+            with _profile_context() as cluster_connect_prf:
+                cluster = Cluster(
+                    execution_profiles=self._make_profiles(),
+                    contact_points=self._config.contact_points,
+                    port=self._config.connection_config.port,
+                    address_translator=addressTranslator,
+                    protocol_version=self._config.connection_config.protocol_version,
+                    auth_provider=self._make_auth_provider(),
+                    **extra_parameters,
+                )
+                session = cluster.connect()
+
+        if cluster_connect_prf and timer.accumulated()[1] > _profile_cpu_threshold():
+            out = io.StringIO()
+            ps = (
+                pstats.Stats(cluster_connect_prf, stream=out)
+                .sort_stats(pstats.SortKey.CUMULATIVE)
+                .strip_dirs()
             )
-            session = cluster.connect()
+            ps.print_stats(10)
+            # Make it a single line.
+            text = out.getvalue().strip().replace("\n", "\\n")
+            _LOG.info(text)
 
         # Dump queries if debug level is enabled.
         if _LOG.isEnabledFor(logging.DEBUG):
