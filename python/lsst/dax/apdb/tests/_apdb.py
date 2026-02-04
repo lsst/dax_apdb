@@ -642,8 +642,9 @@ class ApdbTest(TestCaseMixin, ABC):
         dia_source_ids = [DiaSourceId.from_named_tuple(row) for row in sources.itertuples()]
 
         # Reassign sources in region1 and increment/decrement nDiaSources.
+        obj_id = DiaObjectId(diaObjectId=100, ra=0.0, dec=0.0)
         reassign = {
-            dia_source_id: 100
+            dia_source_id: obj_id
             for dia_source_id in dia_source_ids
             if dia_source_id.diaSourceId in (1001, 1002)
         }
@@ -662,8 +663,9 @@ class ApdbTest(TestCaseMixin, ABC):
         dia_source_ids = [DiaSourceId.from_named_tuple(row) for row in sources.itertuples()]
 
         # Reassign but do not increment/decrement nDiaSources.
+        obj_id = DiaObjectId(diaObjectId=200, ra=180.0, dec=0.0)
         reassign = {
-            dia_source_id: 200
+            dia_source_id: obj_id
             for dia_source_id in dia_source_ids
             if dia_source_id.diaSourceId in (2001, 2002)
         }
