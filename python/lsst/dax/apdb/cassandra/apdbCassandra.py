@@ -623,55 +623,12 @@ class ApdbCassandra(Apdb):
     ) -> bool:
         # docstring is inherited from a base class
         context = self._context
-        config = context.config
 
-        # If ApdbDetectorVisit table exists just check it.
-        if context.has_visit_detector_table:
-            table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
-            query = (
-                f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" WHERE visit = %s AND detector = %s'
-            )
-            with self._timer("contains_visit_detector_time", tags={"table": table_name}):
-                result = context.session.execute(query, (visit, detector))
-                return bool(result.one()[0])
-
-        # The order of checks corresponds to order in store(), on potential
-        # store failure earlier tables have higher probability containing
-        # stored records. With per-partition tables there will be many tables
-        # in the list, but it is unlikely that we'll use that setup in
-        # production.
-        sp_where, _ = context.partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
-        visit_detector_where = ("visit = ? AND detector = ?", (visit, detector))
-
-        # Sources are partitioned on their midPointMjdTai. To avoid precision
-        # issues add some fuzziness to visit time.
-        mjd_start = float(visit_time.tai.mjd) - 1.0 / 24
-        mjd_end = float(visit_time.tai.mjd) + 1.0 / 24
-
-        statements: list[tuple] = []
-        for table_type in ApdbTables.DiaSource, ApdbTables.DiaForcedSource:
-            tables, temporal_where = context.partitioner.temporal_where(
-                table_type, mjd_start, mjd_end, query_per_time_part=True, for_prepare=True
-            )
-            for table in tables:
-                prefix = f'SELECT apdb_part FROM "{self._keyspace}"."{table}"'
-                # Needs ALLOW FILTERING as there is no PK constraint.
-                suffix = "PER PARTITION LIMIT 1 LIMIT 1 ALLOW FILTERING"
-                statements += list(
-                    self._combine_where(prefix, sp_where, temporal_where, visit_detector_where, suffix)
-                )
-
-        with self._timer("contains_visit_detector_time", tags={"table": "DiaSource"}):
-            result = cast(
-                list[tuple[int] | None],
-                select_concurrent(
-                    context.session,
-                    statements,
-                    "read_tuples",
-                    config.connection_config.read_concurrency,
-                ),
-            )
-        return bool(result)
+        table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
+        query = f'SELECT count(*) FROM "{self._keyspace}"."{table_name}" WHERE visit = %s AND detector = %s'
+        with self._timer("contains_visit_detector_time", tags={"table": table_name}):
+            result = context.session.execute(query, (visit, detector))
+            return bool(result.one()[0])
 
     def store(
         self,
@@ -684,24 +641,23 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
-        if context.has_visit_detector_table:
-            # Store visit/detector in a special table, this has to be done
-            # before all other writes so if there is a failure at any point
-            # later we still have a record for attempted write.
-            visit_detector: set[tuple[int, int]] = set()
-            for df in sources, forced_sources:
-                if df is not None and not df.empty:
-                    df = df[["visit", "detector"]]
-                    for visit, detector in df.itertuples(index=False):
-                        visit_detector.add((visit, detector))
+        # Store visit/detector in a special table, this has to be done
+        # before all other writes so if there is a failure at any point
+        # later we still have a record for attempted write.
+        visit_detector: set[tuple[int, int]] = set()
+        for df in sources, forced_sources:
+            if df is not None and not df.empty:
+                df = df[["visit", "detector"]]
+                for visit, detector in df.itertuples(index=False):
+                    visit_detector.add((visit, detector))
 
-            if visit_detector:
-                # Typically there is only one entry, do not bother with
-                # concurrency.
-                table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
-                query = f'INSERT INTO "{self._keyspace}"."{table_name}" (visit, detector) VALUES (%s, %s)'
-                for item in visit_detector:
-                    context.session.execute(query, item, execution_profile="write")
+        if visit_detector:
+            # Typically there is only one entry, do not bother with
+            # concurrency.
+            table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
+            query = f'INSERT INTO "{self._keyspace}"."{table_name}" (visit, detector) VALUES (%s, %s)'
+            for item in visit_detector:
+                context.session.execute(query, item, execution_profile="write")
 
         objects = self._fix_input_timestamps(objects)
         if sources is not None:
@@ -1322,8 +1278,7 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
-        if context.has_dia_object_last_to_partition:
-            self._deleteMovingObjects(objs)
+        self._deleteMovingObjects(objs)
 
         validity_start_column = self._timestamp_column_name("validityStart")
         timestamp = self._timestamp_column_value(visit_time)

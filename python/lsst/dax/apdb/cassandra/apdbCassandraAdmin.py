@@ -477,12 +477,11 @@ class ApdbCassandraAdmin(ApdbAdmin):
                 context.session.execute(new_ddl)
 
         # Update metadata.
-        if context.has_time_partition_meta:
-            if forward:
-                part_range.end = max(partitions)
-            else:
-                part_range.start = min(partitions)
-            part_range.save_to_meta(context.metadata)
+        if forward:
+            part_range.end = max(partitions)
+        else:
+            part_range.start = min(partitions)
+        part_range.save_to_meta(context.metadata)
 
         return partitions
 
@@ -608,12 +607,11 @@ class ApdbCassandraAdmin(ApdbAdmin):
             context.session.execute(query)
 
         # Update metadata.
-        if context.has_time_partition_meta:
-            if after:
-                part_range.end = min(partitions) - 1
-            else:
-                part_range.start = max(partitions) + 1
-            part_range.save_to_meta(context.metadata)
+        if after:
+            part_range.end = min(partitions) - 1
+        else:
+            part_range.start = max(partitions) + 1
+        part_range.save_to_meta(context.metadata)
 
         return partitions
 
