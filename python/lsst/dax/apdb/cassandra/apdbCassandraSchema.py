@@ -215,7 +215,6 @@ class ApdbCassandraSchema:
         enable_replica: bool = False,
         replica_skips_diaobjects: bool = False,
         has_chunk_sub_partitions: bool = True,
-        has_visit_detector_table: bool = True,
     ):
         self._session = session
         self._keyspace = keyspace
@@ -225,7 +224,6 @@ class ApdbCassandraSchema:
         self._enable_replica = enable_replica
         self._replica_skips_diaobjects = replica_skips_diaobjects
         self._has_chunk_sub_partitions = has_chunk_sub_partitions
-        self._has_visit_detector_table = has_visit_detector_table
 
         self._apdb_tables = self._apdb_tables_schema(time_partition_tables)
         self._extra_tables = self._extra_tables_schema(self._apdb_tables)
@@ -310,30 +308,29 @@ class ApdbCassandraSchema:
         """Generate schema for extra tables."""
         extra_tables: dict[ExtraTables, schema_model.Table] = {}
 
-        if self._has_visit_detector_table:
-            columns = [
-                schema_model.Column(
-                    id="#visit",
-                    name="visit",
-                    datatype=felis.datamodel.DataType.long,
-                    nullable=False,
-                ),
-                schema_model.Column(
-                    id="#detector",
-                    name="detector",
-                    datatype=felis.datamodel.DataType.short,
-                    nullable=False,
-                ),
-            ]
-            extra_tables[ExtraTables.ApdbVisitDetector] = schema_model.Table(
-                id="#" + ExtraTables.ApdbVisitDetector.value,
-                name=ExtraTables.ApdbVisitDetector.table_name(self._prefix),
-                columns=columns,
-                primary_key=[],
-                indexes=[],
-                constraints=[],
-                annotations={"cassandra:partitioning_columns": ["visit", "detector"]},
-            )
+        columns = [
+            schema_model.Column(
+                id="#visit",
+                name="visit",
+                datatype=felis.datamodel.DataType.long,
+                nullable=False,
+            ),
+            schema_model.Column(
+                id="#detector",
+                name="detector",
+                datatype=felis.datamodel.DataType.short,
+                nullable=False,
+            ),
+        ]
+        extra_tables[ExtraTables.ApdbVisitDetector] = schema_model.Table(
+            id="#" + ExtraTables.ApdbVisitDetector.value,
+            name=ExtraTables.ApdbVisitDetector.table_name(self._prefix),
+            columns=columns,
+            primary_key=[],
+            indexes=[],
+            constraints=[],
+            annotations={"cassandra:partitioning_columns": ["visit", "detector"]},
+        )
 
         # DiaObjectDedup table contains a subset of columns of DiaObject, the
         # table is used for deduplication, it is partitioned on some random
@@ -841,9 +838,6 @@ class ApdbCassandraSchema:
     def _update_table_options(self, options: CreateTableOptions | None) -> CreateTableOptions | None:
         """Extend table options with options for internal tables."""
         # We want to add TTL option to ApdbVisitDetector table.
-        if not self._has_visit_detector_table:
-            return options
-
         if not options:
             options = CreateTableOptions()
 
