@@ -31,6 +31,7 @@ from lsst import sphgeom
 from ..apdbSchema import ApdbTables
 from ..pixelization import Pixelization
 from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
+from .queries import WhereClause
 
 
 class Partitioner:
@@ -114,8 +115,8 @@ class Partitioner:
         return (start, end)
 
     def spatial_where(
-        self, region: sphgeom.Region | None, *, use_ranges: bool = False, for_prepare: bool = False
-    ) -> tuple[list[tuple[str, tuple]], int]:
+        self, region: sphgeom.Region | None, *, use_ranges: bool = False
+    ) -> tuple[list[WhereClause], int]:
         """Generate expressions for spatial part of WHERE clause.
 
         Parameters
@@ -126,47 +127,46 @@ class Partitioner:
             If True then use pixel ranges ("apdb_part >= p1 AND apdb_part <=
             p2") instead of exact list of pixels. Should be set to True for
             large regions covering very many pixels.
-        for_prepare : `bool`, optional
-            If True then use placeholders for prepared statement (?), otherwise
-            produce regulr statement placeholders (%s).
 
         Returns
         -------
-        expressions : `list` [ `tuple` ]
+        expressions : `list` [ `WhereClause` ]
             Empty list is returned if ``region`` is `None`, otherwise a list
-            of one or more ``(expression: str, parameters: tuple)`` tuples.
+            of one or more `WhereClause`.
         partition_count : `int`
             Number of spatial partitions in the result.
         """
         if region is None:
             return [], 0
 
-        token = "?" if for_prepare else "%s"
-
         count = 0
-        expressions: list[tuple[str, tuple]] = []
+        expressions: list[WhereClause] = []
         if use_ranges:
             pixel_ranges = self.pixelization.envelope(region)
             for lower, upper in pixel_ranges:
                 upper -= 1
                 if lower == upper:
-                    expressions.append((f'"apdb_part" = {token}', (lower,)))
+                    expressions.append(WhereClause('"apdb_part" = {}', (lower,)))
                     count += 1
                 elif lower + 1 == upper:
-                    expressions.append((f'"apdb_part" = {token}', (lower,)))
-                    expressions.append((f'"apdb_part" = {token}', (upper,)))
+                    expressions.append(WhereClause('"apdb_part" = {}', (lower,)))
+                    expressions.append(WhereClause('"apdb_part" = {}', (upper,)))
                     count += 2
                 else:
                     count += upper - lower + 1
-                    expressions.append((f'"apdb_part" >= {token} AND "apdb_part" <= {token}', (lower, upper)))
+                    expressions.append(WhereClause('"apdb_part" >= {} AND "apdb_part" <= {}', (lower, upper)))
         else:
             pixels = self.pixelization.pixels(region)
             count = len(pixels)
             if self._config.partitioning.query_per_spatial_part:
-                expressions.extend((f'"apdb_part" = {token}', (pixel,)) for pixel in pixels)
+                expressions.extend(WhereClause('"apdb_part" = {}', (pixel,)) for pixel in pixels)
             else:
-                pixels_str = ",".join([str(pix) for pix in pixels])
-                expressions.append((f'"apdb_part" IN ({pixels_str})', ()))
+                # If the are many pixels then don't prepare statements.
+                can_prepare = len(pixels) <= 3
+                placeholders = ",".join(["{}"] * len(pixels))
+                expressions.append(
+                    WhereClause(f'"apdb_part" IN ({placeholders})', tuple(pixels), can_prepare=can_prepare)
+                )
 
         return expressions, count
 
@@ -177,9 +177,8 @@ class Partitioner:
         end_time: float | astropy.time.Time,
         *,
         query_per_time_part: bool | None = None,
-        for_prepare: bool = False,
         partitons_range: ApdbCassandraTimePartitionRange | None = None,
-    ) -> tuple[list[str], list[tuple[str, tuple]]]:
+    ) -> tuple[list[str], list[WhereClause]]:
         """Generate table names and expressions for temporal part of WHERE
         clauses.
 
@@ -193,9 +192,6 @@ class Partitioner:
             Starting Datetime of MJD value of the time range.
         query_per_time_part : `bool`, optional
             If None then use ``query_per_time_part`` from configuration.
-        for_prepare : `bool`, optional
-            If True then use placeholders for prepared statement (?), otherwise
-            produce regulr statement placeholders (%s).
         partitons_range : `ApdbCassandraTimePartitionRange` or `None`
             Partitions range to further restrict time range.
 
@@ -204,12 +200,11 @@ class Partitioner:
         tables : `list` [ `str` ]
             List of the table names to query. Empty list is returned when time
             range does not overlap ``partitons_range``.
-        expressions : `list` [ `tuple` ]
-            A list of zero or more ``(expression: str, parameters: tuple)``
-            tuples.
+        expressions : `list` [ `WhereClause` ]
+            A list of zero or more `WhereClause` instances.
         """
         tables: list[str]
-        temporal_where: list[tuple[str, tuple]] = []
+        temporal_where: list[WhereClause] = []
         # First and last partition.
         time_part_start = self.time_partition(start_time)
         time_part_end = self.time_partition(end_time)
@@ -226,14 +221,21 @@ class Partitioner:
         if self._config.partitioning.time_partition_tables:
             tables = [table.table_name(self._config.prefix, part) for part in time_parts]
         else:
-            token = "?" if for_prepare else "%s"
             tables = [table.table_name(self._config.prefix)]
             if query_per_time_part is None:
                 query_per_time_part = self._config.partitioning.query_per_time_part
             if query_per_time_part:
-                temporal_where = [(f'"apdb_time_part" = {token}', (time_part,)) for time_part in time_parts]
+                temporal_where = [
+                    WhereClause('"apdb_time_part" = {}', (time_part,)) for time_part in time_parts
+                ]
             else:
-                time_part_list = ",".join([str(part) for part in time_parts])
-                temporal_where = [(f'"apdb_time_part" IN ({time_part_list})', ())]
+                # If the are many partitions then don't prepare statements.
+                can_prepare = len(time_parts) <= 3
+                placeholders = ",".join(["{}"] * len(time_parts))
+                temporal_where = [
+                    WhereClause(
+                        f'"apdb_time_part" IN ({placeholders})', tuple(time_parts), can_prepare=can_prepare
+                    )
+                ]
 
         return tables, temporal_where

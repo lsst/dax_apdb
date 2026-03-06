@@ -42,7 +42,7 @@ from ..versionTuple import IncompatibleVersionError, VersionTuple
 from .apdbCassandraReplica import ApdbCassandraReplica
 from .apdbCassandraSchema import ApdbCassandraSchema
 from .apdbMetadataCassandra import ApdbMetadataCassandra
-from .cassandra_utils import PreparedStatementCache
+from .cassandra_utils import PreparedStatementCache, StatementFactory
 from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
 from .partitioner import Partitioner
 
@@ -157,6 +157,9 @@ class ConnectionContext:
 
         # Cache for prepared statements
         self.preparer = PreparedStatementCache(self.session)
+
+        # Statement factory,
+        self.stmt_factory = StatementFactory(self.session, self.preparer)
 
         self.partitioner = Partitioner(self.config)
 

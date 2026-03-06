@@ -31,6 +31,7 @@ from lsst.dax.apdb.cassandra import (
     ApdbCassandraTimePartitionRange,
 )
 from lsst.dax.apdb.cassandra.partitioner import Partitioner
+from lsst.dax.apdb.cassandra.queries import WhereClause
 from lsst.sphgeom import Box, UnitVector3d
 
 
@@ -101,48 +102,45 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         partitioner = self.make_partitioner()
         result, count = partitioner.spatial_where(region)
         self.assertEqual(count, 4)
-        self.assertEqual(result, [('"apdb_part" IN (12058622,12058623,12058624,12058625)', ())])
+        self.assertEqual(
+            result,
+            [
+                WhereClause(
+                    '"apdb_part" IN ({},{},{},{})',
+                    (12058622, 12058623, 12058624, 12058625),
+                    can_prepare=False,
+                )
+            ],
+        )
         result, count = partitioner.spatial_where(region, use_ranges=True)
         self.assertEqual(count, 4)
-        self.assertEqual(result, [('"apdb_part" >= %s AND "apdb_part" <= %s', (12058622, 12058625))])
+        self.assertEqual(
+            result, [WhereClause('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))]
+        )
 
         partitioner = self.make_partitioner(query_per_spatial_part=True)
         result, count = partitioner.spatial_where(region)
         self.assertEqual(count, 4)
-        self.assertEqual(
-            set(result),
-            {
-                ('"apdb_part" = %s', (12058622,)),
-                ('"apdb_part" = %s', (12058623,)),
-                ('"apdb_part" = %s', (12058624,)),
-                ('"apdb_part" = %s', (12058625,)),
-            },
-        )
-        result, count = partitioner.spatial_where(region, for_prepare=True)
+        self.assertIn(WhereClause('"apdb_part" = {}', (12058622,)), result)
+        self.assertIn(WhereClause('"apdb_part" = {}', (12058623,)), result)
+        self.assertIn(WhereClause('"apdb_part" = {}', (12058624,)), result)
+        self.assertIn(WhereClause('"apdb_part" = {}', (12058625,)), result)
+
+        result, count = partitioner.spatial_where(region, use_ranges=True)
         self.assertEqual(count, 4)
         self.assertEqual(
-            set(result),
-            {
-                ('"apdb_part" = ?', (12058622,)),
-                ('"apdb_part" = ?', (12058623,)),
-                ('"apdb_part" = ?', (12058624,)),
-                ('"apdb_part" = ?', (12058625,)),
-            },
+            result, [WhereClause('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))]
         )
-        result, count = partitioner.spatial_where(region, use_ranges=True, for_prepare=True)
-        self.assertEqual(count, 4)
-        self.assertEqual(result, [('"apdb_part" >= ? AND "apdb_part" <= ?', (12058622, 12058625))])
 
     def _check_temporal_where(
         self,
         tables: list[str],
-        where: list[tuple],
+        where: list[WhereClause],
         part_start: int,
         part_end: int,
         *,
         time_partition_tables: bool = False,
         query_per_time_part: bool = False,
-        for_prepare: bool = False,
     ) -> None:
         if part_start > part_end:
             self.assertEqual(tables, [])
@@ -152,14 +150,25 @@ class CassandraPartitionerTestCase(unittest.TestCase):
             self.assertEqual(tables, expect_tables)
             self.assertEqual(where, [])
         elif query_per_time_part:
-            where_str = '"apdb_time_part" = ?' if for_prepare else '"apdb_time_part" = %s'
-            expect_where = [(where_str, (part,)) for part in range(part_start, part_end + 1)]
+            where_str = '"apdb_time_part" = {}'
+            expect_where = [WhereClause(where_str, (part,)) for part in range(part_start, part_end + 1)]
             self.assertEqual(tables, ["DiaSource"])
             self.assertEqual(where, expect_where)
         else:
-            parts_str = ",".join(str(part) for part in range(part_start, part_end + 1))
+            num_part = part_end + 1 - part_start
+            placeholders = ",".join(["{}"] * num_part)
             self.assertEqual(tables, ["DiaSource"])
-            self.assertEqual(where, [(f'"apdb_time_part" IN ({parts_str})', ())])
+            can_prepare = num_part <= 3
+            self.assertEqual(
+                where,
+                [
+                    WhereClause(
+                        f'"apdb_time_part" IN ({placeholders})',
+                        tuple(range(part_start, part_end + 1)),
+                        can_prepare=can_prepare,
+                    )
+                ],
+            )
 
     def test_temporal_where(self) -> None:
         """Test temporal_where() method."""
@@ -181,9 +190,8 @@ class CassandraPartitionerTestCase(unittest.TestCase):
             start_time,
             end_time,
             query_per_time_part=True,
-            for_prepare=True,
         )
-        self._check_temporal_where(tables, where, 669, 674, query_per_time_part=True, for_prepare=True)
+        self._check_temporal_where(tables, where, 669, 674, query_per_time_part=True)
 
         partitioner = self.make_partitioner(query_per_time_part=True)
 
