@@ -192,10 +192,32 @@ class StatementFactory:
         self._session = session
         self._prepared_cache = cache
 
-    def __call__(
+    def __call__(self, query: Query, prepare: bool = False) -> PreparedStatement | SimpleStatement:
+        """Generate Cassandra statement from Query.
+
+        Parameters
+        ----------
+        query : `Query`
+            Query to convert to Cassandra statement.
+        prepare : `bool`, optional
+            if `True` then generate prepared statement (and only if
+            ``query.can_prepare`` is True).
+
+        Returns
+        -------
+        statement : `PreparedStatement` or `SimpleStatement`
+            Statement to execute.
+        """
+        if prepare and query.can_prepare and self._prepared_cache is not None:
+            stmt = self._prepared_cache.prepare(query.render("?"))
+        else:
+            stmt = SimpleStatement(query.render("%s"))
+        return stmt
+
+    def with_params(
         self, query: Query, prepare: bool = False
     ) -> tuple[PreparedStatement | SimpleStatement, tuple]:
-        """Generate Cassandra statement from Query.
+        """Generate Cassandra statement and its parameters from Query.
 
         Parameters
         ----------
@@ -212,10 +234,7 @@ class StatementFactory:
         parameters : `tuple`
             Parameters for this statement.
         """
-        if prepare and query.can_prepare and self._prepared_cache is not None:
-            stmt = self._prepared_cache.prepare(query.render("?"))
-        else:
-            stmt = SimpleStatement(query.render("%s"))
+        stmt = self(query, prepare)
         return stmt, query.parameters
 
 

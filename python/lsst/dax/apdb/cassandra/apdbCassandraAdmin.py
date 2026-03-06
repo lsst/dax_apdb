@@ -121,7 +121,7 @@ class ApdbCassandraAdmin(ApdbAdmin):
             table_name = ApdbTables.DiaSource.table_name()
             query = Select("system_schema", "tables", ["keyspace_name"], extra_clause="ALLOW FILTERING")
             query = query.where("table_name = {}", [table_name])
-            stmt, params = stmt_factory(query)
+            stmt, params = stmt_factory.with_params(query)
 
             result = session.execute(stmt, params)
             keyspaces = [row[0] for row in result.all()]
@@ -138,7 +138,7 @@ class ApdbCassandraAdmin(ApdbAdmin):
                 extra_clause="ALLOW FILTERING",
             )
             query = query.where("resource IN ({*})", resources)
-            stmt, params = stmt_factory(query)
+            stmt, params = stmt_factory.with_params(query)
 
             try:
                 result = session.execute(stmt, params)

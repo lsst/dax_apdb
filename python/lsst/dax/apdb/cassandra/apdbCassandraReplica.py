@@ -112,7 +112,7 @@ class ApdbCassandraReplica(ApdbReplica):
         # We want to avoid timezone mess so return timestamps as milliseconds.
         columns = (ColumnExpr("toUnixTimestamp(last_update_time)"), "apdb_replica_chunk", "unique_id")
         query = Select(config.keyspace, table_name, columns).where("partition = {}", [partition])
-        statement, params = context.stmt_factory(query, prepare=False)
+        statement, params = context.stmt_factory.with_params(query, prepare=False)
 
         with self._timer("chunks_select_time") as timer:
             result = context.session.execute(
@@ -209,7 +209,7 @@ class ApdbCassandraReplica(ApdbReplica):
             query = Select(config.keyspace, table_name, ("apdb_replica_chunk", "has_subchunks"))
             query = query.where("partition = {}", [partition])
             query = query.where("apdb_replica_chunk IN ({*})", chunks)
-            stmt, params = context.stmt_factory(query, prepare=False)
+            stmt, params = context.stmt_factory.with_params(query, prepare=False)
             result = context.session.execute(
                 stmt,
                 params,
@@ -245,7 +245,7 @@ class ApdbCassandraReplica(ApdbReplica):
                 table_name = context.schema.tableName(replica_table)
                 query = Select(config.keyspace, table_name, ["*"])
                 query = query.where("apdb_replica_chunk = {} AND apdb_replica_subchunk = {}", [0, 0])
-                statement, _ = context.stmt_factory(query, prepare=True)
+                statement = context.stmt_factory(query, prepare=True)
 
                 queries: list[tuple] = []
                 for chunk in chunks:
@@ -271,7 +271,7 @@ class ApdbCassandraReplica(ApdbReplica):
                 replica_table = ExtraTables.replica_chunk_tables(False)[table]
                 table_name = context.schema.tableName(replica_table)
                 query = Select(config.keyspace, table_name, ["*"]).where("apdb_replica_chunk = {}", [0])
-                statement, _ = context.stmt_factory(query, prepare=True)
+                statement = context.stmt_factory(query, prepare=True)
 
                 queries = []
                 for chunk in chunks:
@@ -339,7 +339,7 @@ class ApdbCassandraReplica(ApdbReplica):
             query = Select(config.keyspace, table_name, ["*"])
             query = query.where("apdb_replica_chunk = {}", [0])
             query = query.where("apdb_replica_subchunk IN ({*})", subchunks)
-            statement, _ = context.stmt_factory(query, prepare=False)
+            statement = context.stmt_factory(query, prepare=False)
 
             with self._timer("select_update_record_time", tags={"table": table_name}) as timer:
                 for chunk in chunks:

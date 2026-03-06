@@ -75,14 +75,13 @@ from .cassandra_utils import (
     ApdbCassandraTableData,
     execute_concurrent,
     literal,
-    quote_id,
     select_concurrent,
 )
 from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig, ApdbCassandraTimePartitionRange
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
 from .partitioner import Partitioner
-from .queries import ColumnExpr, Select, WhereClause
+from .queries import ColumnExpr, Insert, Select, WhereClause
 from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
@@ -416,8 +415,7 @@ class ApdbCassandra(Apdb):
         statements: list[tuple] = []
         for where_clause in sp_where:
             full_query = query.where(where_clause)
-            statement, params = context.stmt_factory(full_query, prepare=True)
-            statements.append((statement, params))
+            statements.append(context.stmt_factory.with_params(full_query, prepare=True))
         _LOG.debug("getDiaObjects: #queries: %s", len(statements))
 
         with self._timer("select_time", tags={"table": "DiaObject", "method": "getDiaObjects"}) as timer:
@@ -509,7 +507,7 @@ class ApdbCassandra(Apdb):
         if since is not None:
             query = query.where(f'"{validity_start_column}" >= {{}}', [0])
 
-        statement, params = context.stmt_factory(query, prepare=False)
+        statement = context.stmt_factory(query, prepare=False)
 
         num_part = config.partitioning.num_part_dedup
         statements = []
@@ -574,7 +572,9 @@ class ApdbCassandra(Apdb):
                 for id_chunk in chunk_iterable(diaObjectIds, 10_000):
                     id_where = WhereClause('"diaObjectId" IN ({*})', id_chunk)
                     for clause in WhereClause.combine(spatial_where, temporal_where, extra=id_where):
-                        statements.append(context.stmt_factory(query.where(clause), prepare=False))
+                        statements.append(
+                            context.stmt_factory.with_params(query.where(clause), prepare=False)
+                        )
 
         _LOG.debug("getDiaSourcesForDiaObjects #queries: %s", len(statements))
 
@@ -614,7 +614,7 @@ class ApdbCassandra(Apdb):
         table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
         query = Select(self._keyspace, table_name, [ColumnExpr("count(*)")])
         query = query.where("visit = {} AND detector = {}", (visit, detector))
-        stmt, params = context.stmt_factory(query, prepare=False)
+        stmt, params = context.stmt_factory.with_params(query, prepare=False)
 
         with self._timer("contains_visit_detector_time", tags={"table": table_name}):
             result = context.session.execute(stmt, params)
@@ -645,9 +645,10 @@ class ApdbCassandra(Apdb):
             # Typically there is only one entry, do not bother with
             # concurrency.
             table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
-            query = f'INSERT INTO "{self._keyspace}"."{table_name}" (visit, detector) VALUES (%s, %s)'
+            query = Insert(self._keyspace, table_name, ("visit", "detector"))
+            stmt = context.stmt_factory(query)
             for item in visit_detector:
-                context.session.execute(query, item, execution_profile="write")
+                context.session.execute(stmt, item, execution_profile="write")
 
         objects = self._fix_input_timestamps(objects)
         if sources is not None:
@@ -832,7 +833,7 @@ class ApdbCassandra(Apdb):
             query = Select(self._keyspace, table_name, ["apdb_part", "diaObjectId"])
             query = query.where("apdb_part = {}", [apdb_part])
             query = query.where('"diaObjectId" IN ({*})', diaObjectIds)
-            statements.append(context.stmt_factory(query, prepare=False))
+            statements.append(context.stmt_factory.with_params(query, prepare=False))
 
         with self._timer("select_time", tags={"table": table_name, "method": "setValidityEnd"}) as timer:
             records = cast(
@@ -926,7 +927,7 @@ class ApdbCassandra(Apdb):
         # Find latest timestamp in deduplication table.
         table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
         query = Select(self._keyspace, table_name, [ColumnExpr(f'MAX("{validity_start_column}")')])
-        stmt, _ = context.stmt_factory(query, prepare=False)
+        stmt = context.stmt_factory(query, prepare=False)
 
         result = context.session.execute(stmt, execution_profile="read_tuples")
         max_value = result.one()[0]
@@ -969,7 +970,7 @@ class ApdbCassandra(Apdb):
         query = Select(self._keyspace, table_name, columns)
         for ids in chunk_iterable(idMap.keys(), 1_000):
             full_query = query.where('"diaSourceId" IN ({*})', ids)
-            selects.append(context.stmt_factory(full_query, prepare=False))
+            selects.append(context.stmt_factory.with_params(full_query, prepare=False))
 
         # No need for DataFrame here, read data as tuples.
         result = cast(
@@ -1103,7 +1104,7 @@ class ApdbCassandra(Apdb):
         for table in tables:
             query = Select(self._keyspace, table, column_names)
             for clause in WhereClause.combine(sp_where, temporal_where):
-                statements.append(context.stmt_factory(query.where(clause), prepare=True))
+                statements.append(context.stmt_factory.with_params(query.where(clause), prepare=True))
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
         with self._timer("select_time", tags={"table": table_name.name, "method": "_getSources"}) as timer:
@@ -1151,12 +1152,11 @@ class ApdbCassandra(Apdb):
             columns.append("has_subchunks")
             values.append(True)
 
-        column_list = ", ".join(columns)
-        placeholders = ",".join(["%s"] * len(columns))
-        query = f'INSERT INTO "{self._keyspace}"."{table_name}" ({column_list}) VALUES ({placeholders})'
+        query = Insert(self._keyspace, table_name, columns)
+        stmt = context.stmt_factory(query)
 
         context.session.execute(
-            query,
+            stmt,
             values,
             timeout=config.connection_config.write_timeout,
             execution_profile="write",
@@ -1174,7 +1174,7 @@ class ApdbCassandra(Apdb):
             id_chunk_list = tuple(id_chunk)
             query = Select(self._keyspace, table_name, ("diaObjectId", "apdb_part"))
             query = query.where('"diaObjectId" IN ({*})', id_chunk_list)
-            queries.append(context.stmt_factory(query, prepare=False))
+            queries.append(context.stmt_factory.with_params(query, prepare=False))
             object_count += len(id_chunk_list)
 
         with self._timer("query_object_last_partitions", tags={"table": table_name}) as timer:
@@ -1227,8 +1227,8 @@ class ApdbCassandra(Apdb):
 
         # Add all new records to the map.
         table_name = context.schema.tableName(ExtraTables.DiaObjectLastToPartition)
-        query = f'INSERT INTO "{self._keyspace}"."{table_name}" ("diaObjectId", apdb_part) VALUES (?,?)'
-        statement = context.preparer.prepare(query)
+        insert = Insert(self._keyspace, table_name, ("diaObjectId", "apdb_part"))
+        statement = context.stmt_factory(insert, prepare=True)
 
         queries = []
         for oid, new_part in new_partitions.items():
@@ -1492,9 +1492,6 @@ class ApdbCassandra(Apdb):
         if missing_columns:
             raise ValueError(f"Primary key columns are missing from catalog: {missing_columns}")
 
-        qfields = [quote_id(field) for field in fields]
-        qfields_str = ",".join(qfields)
-
         batch_size = self._batch_size(table_name)
 
         with self._timer("insert_build_time", tags={"table": table_name.name}):
@@ -1532,9 +1529,8 @@ class ApdbCassandra(Apdb):
 
             table = context.schema.tableName(table_name, time_part)
 
-            holders = ",".join(["?"] * len(qfields))
-            query = f'INSERT INTO "{self._keyspace}"."{table}" ({qfields_str}) VALUES ({holders})'
-            statement = context.preparer.prepare(query)
+            query = Insert(self._keyspace, table, fields)
+            statement = context.stmt_factory(query, prepare=True)
             # Cassandra has 64k limit on batch size, normally that should be
             # enough but some tests generate too many forced sources.
             queries = []
@@ -1611,10 +1607,9 @@ class ApdbCassandra(Apdb):
             columns.append("apdb_replica_subchunk")
 
         table_name = context.schema.tableName(ExtraTables.ApdbUpdateRecordChunks)
-        placeholders = ", ".join(["%s"] * len(columns))
-        columns_str = ", ".join(columns)
-        query = f'INSERT INTO "{self._keyspace}"."{table_name}" ({columns_str}) VALUES ({placeholders})'
-        queries = [(query, row) for row in rows]
+        query = Insert(self._keyspace, table_name, columns)
+        stmt = context.stmt_factory(query)
+        queries = [(stmt, row) for row in rows]
 
         with self._timer("store_update_record", tags={"table": table_name}) as timer:
             execute_concurrent(context.session, queries, execution_profile="write")
@@ -1782,7 +1777,7 @@ class ApdbCassandra(Apdb):
             for table in tables:
                 query = Select(self._keyspace, table, columns)
                 for clause in WhereClause.combine(spatial_where, temporal_where, extra=id_where):
-                    statements.append(context.stmt_factory(query.where(clause), prepare=True))
+                    statements.append(context.stmt_factory.with_params(query.where(clause), prepare=True))
 
         with self._timer(
             "select_time", tags={"table": "DiaSource", "method": "_get_diasource_data"}
@@ -1824,7 +1819,7 @@ class ApdbCassandra(Apdb):
             query = Select(self._keyspace, table_name, columns)
             query = query.where("apdb_part = {}", [apdb_part])
             query = query.where('"diaObjectId" IN ({*})', diaObjectIds)
-            statements.append(context.stmt_factory(query, prepare=False))
+            statements.append(context.stmt_factory.with_params(query, prepare=False))
 
         with self._timer(
             "select_time", tags={"table": "DiaObjectLast", "method": "_get_diaobject_data"}

@@ -28,7 +28,7 @@ from typing import Any
 
 from ..apdbMetadata import ApdbMetadata
 from .cassandra_utils import StatementFactory, quote_id
-from .queries import ColumnExpr, Select, WhereClause
+from .queries import ColumnExpr, Insert, Select, WhereClause
 
 
 class ApdbMetadataCassandra(ApdbMetadata):
@@ -56,7 +56,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
         # Docstring is inherited.
         query = Select(self._keyspace, self._table, ["value"])
         query = query.where(WhereClause("meta_part = {} AND name = {}", (self._part, key)))
-        stmt, params = self._stmt_factory(query)
+        stmt, params = self._stmt_factory.with_params(query)
         result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         if (row := result.one()) is not None:
             return row[0]
@@ -67,11 +67,12 @@ class ApdbMetadataCassandra(ApdbMetadata):
         # Docstring is inherited.
         if not key or not value:
             raise ValueError("name and value cannot be empty")
-        query = f"INSERT INTO {self._table_clause} (meta_part, name, value) VALUES (%s, %s, %s)"
+        query = Insert(self._keyspace, self._table, ("meta_part", "name", "value"))
+        stmt = self._stmt_factory(query)
         if not force and self.get(key) is not None:
             raise KeyError(f"Metadata key {key!r} already exists")
         # Race is still possible between check and insert.
-        self._session.execute(query, (self._part, key, value), execution_profile=self._write_profile)
+        self._session.execute(stmt, (self._part, key, value), execution_profile=self._write_profile)
 
     def delete(self, key: str) -> bool:
         # Docstring is inherited.
@@ -89,7 +90,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
         # Docstring is inherited.
         query = Select(self._keyspace, self._table, ("name", "value"))
         query = query.where(WhereClause("meta_part = {}", (self._part,)))
-        stmt, params = self._stmt_factory(query)
+        stmt, params = self._stmt_factory.with_params(query)
         result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         for row in result:
             yield tuple(row)
@@ -98,7 +99,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
         # Docstring is inherited.
         query = Select(self._keyspace, self._table, [ColumnExpr("count(*)")])
         query = query.where("meta_part = {}", [self._part])
-        stmt, params = self._stmt_factory(query)
+        stmt, params = self._stmt_factory.with_params(query)
         result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         row = result.one()
         return row[0] == 0

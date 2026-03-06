@@ -300,3 +300,58 @@ class Select(Query):
     def __str__(self) -> str:
         """Generate query string with placeholders for parameters."""
         return self.render()
+
+
+class Insert(Query):
+    """Class representing INSERT query.
+
+    Parameters
+    ----------
+    keyspace : `str`
+        Keyspace name.
+    table : `str`
+        Table name.
+    columns : `~collections.abc.Iterable` [`str`]
+        Names of the columns to return.
+    can_prepare : `bool`, optional
+        If `False` then the statement should not be prepared.
+    """
+
+    def __init__(
+        self,
+        keyspace: str,
+        table: str,
+        columns: Iterable[str],
+        *,
+        can_prepare: bool = True,
+    ):
+        # Check that number of placeholders matches number of parameters.
+        self._keyspace = keyspace
+        self._table = table
+        self._columns = tuple(columns)
+        self._can_prepare = can_prepare
+
+    @property
+    def can_prepare(self) -> bool:
+        """If `False` then this query should not be prepared."""
+        return self._can_prepare
+
+    @property
+    def parameters(self) -> tuple:
+        """Complete list of all query parameters."""
+        return ()
+
+    def render(self, placeholder: str | None = None) -> str:
+        """Generate query string with placeholders for parameters."""
+        columns = ",".join(_quote_id(column) for column in self._columns)
+        query = (
+            f"INSERT INTO {_quote_id(self._keyspace)}.{_quote_id(self._table)} ({columns}) "
+            f"VALUES ({CSP(len(self._columns))})"
+        )
+        if placeholder:
+            query = query.replace("{}", placeholder)
+        return query
+
+    def __str__(self) -> str:
+        """Generate query string with placeholders for parameters."""
+        return self.render()

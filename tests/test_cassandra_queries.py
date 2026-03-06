@@ -21,7 +21,7 @@
 
 import unittest
 
-from lsst.dax.apdb.cassandra.queries import ColumnExpr, Select, WhereClause
+from lsst.dax.apdb.cassandra.queries import ColumnExpr, Insert, Select, WhereClause
 
 
 class CassandraWhereClauseTestCase(unittest.TestCase):
@@ -96,7 +96,7 @@ class CassandraWhereClauseTestCase(unittest.TestCase):
 
 
 class SelectQueryTestCase(unittest.TestCase):
-    """A test case for WhereClause class."""
+    """A test case for Select class."""
 
     def test_basic(self) -> None:
         """Test simple construction."""
@@ -144,6 +144,24 @@ class SelectQueryTestCase(unittest.TestCase):
             query.where("x = {}", 10, can_prepare=False)  # type: ignore[call-overload]
         with self.assertRaisesRegex(TypeError, "Unexpected arguments"):
             query.where("x = {}", 10, 20)  # type: ignore[call-overload]
+
+
+class InsertQueryTestCase(unittest.TestCase):
+    """A test case for Insert class."""
+
+    def test_basic(self) -> None:
+        """Test simple construction."""
+        query = Insert("keyspace", "table", ["x", "y"])
+        self.assertEqual(str(query), "INSERT INTO keyspace.table (x,y) VALUES ({},{})")
+        query = Insert("Keyspace", "Table", ["X", "Y"])
+        self.assertEqual(str(query), 'INSERT INTO "Keyspace"."Table" ("X","Y") VALUES ({},{})')
+
+    def test_render(self) -> None:
+        """Test render() method."""
+        query = Insert("keyspace", "table", ["x", "y"])
+        self.assertEqual(query.render(), "INSERT INTO keyspace.table (x,y) VALUES ({},{})")
+        self.assertEqual(query.render("?"), "INSERT INTO keyspace.table (x,y) VALUES (?,?)")
+        self.assertEqual(query.render("%s"), "INSERT INTO keyspace.table (x,y) VALUES (%s,%s)")
 
 
 if __name__ == "__main__":
