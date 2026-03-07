@@ -21,7 +21,7 @@
 
 import unittest
 
-from lsst.dax.apdb.cassandra.queries import ColumnExpr, Delete, Insert, Select, WhereClause
+from lsst.dax.apdb.cassandra.queries import ColumnExpr, Delete, Insert, Select, Update, WhereClause
 
 
 class CassandraWhereClauseTestCase(unittest.TestCase):
@@ -112,10 +112,10 @@ class SelectQueryTestCase(unittest.TestCase):
     def test_where(self) -> None:
         """Test WHERE clause."""
         query = Select("keyspace", "table", ["*"], extra_clause="LIMIT 1")
-        query = query.where(WhereClause("x = {}", (10,)))
+        query = query.where("x = {}", (10,))
         self.assertEqual(str(query), "SELECT * FROM keyspace.table WHERE x = {} LIMIT 1")
         self.assertEqual(query.parameters, (10,))
-        query = query.where(WhereClause("y IN ({*})", [100, 101]))
+        query = query.where("y IN ({*})", [100, 101])
         self.assertEqual(str(query), "SELECT * FROM keyspace.table WHERE x = {} AND y IN ({},{}) LIMIT 1")
         self.assertEqual(query.parameters, (10, 100, 101))
         query = query.where("z = {}", [1000], can_prepare=False)
@@ -134,7 +134,7 @@ class SelectQueryTestCase(unittest.TestCase):
         self.assertFalse(query.can_prepare)
 
         query = Select("keyspace", "table", ["*"], can_prepare=False)
-        query = query.where(WhereClause("x = {}", (10,)))
+        query = query.where("x = {}", (10,))
         self.assertFalse(query.can_prepare)
 
     def test_render(self) -> None:
@@ -149,8 +149,6 @@ class SelectQueryTestCase(unittest.TestCase):
         query = Select("keyspace", "table", ["*"])
         with self.assertRaisesRegex(TypeError, "Unexpected arguments"):
             query.where()  # type: ignore[call-overload]
-        with self.assertRaisesRegex(TypeError, "No keyword arguments expected"):
-            query.where(WhereClause("x = {}", (10,)), can_prepare=False)  # type: ignore[call-overload]
         with self.assertRaisesRegex(TypeError, "Unexpected keyword arguments"):
             query.where("x = {}", (10,), cannot_prepare=False)  # type: ignore[call-overload]
         with self.assertRaisesRegex(TypeError, "Unexpected arguments"):
@@ -193,10 +191,12 @@ class DeleteQueryTestCase(unittest.TestCase):
         query = Delete("keyspace", "table")
         query = query.where("x = {}", (10,))
         self.assertEqual(str(query), "DELETE FROM keyspace.table WHERE x = {}")
+        self.assertEqual(query.parameters, (10,))
 
         query = Delete("Keyspace", "Table")
         query = query.where('"Y" = {}', (10,))
         self.assertEqual(str(query), 'DELETE FROM "Keyspace"."Table" WHERE "Y" = {}')
+        self.assertEqual(query.parameters, (10,))
 
     def test_can_prepare(self) -> None:
         """Test can_prepare handling."""
@@ -225,6 +225,60 @@ class DeleteQueryTestCase(unittest.TestCase):
             query.render()
         with self.assertRaisesRegex(TypeError, "Unexpected arguments"):
             query.where()  # type: ignore[call-overload]
+
+
+class UpdateQueryTestCase(unittest.TestCase):
+    """A test case for Update class."""
+
+    def test_basic(self) -> None:
+        """Test simple construction."""
+        query = Update("keyspace", "table")
+        query = query.where("x = {}", (10,))
+        query = query.values("x = {}", (100,))
+        self.assertEqual(str(query), "UPDATE keyspace.table SET x = {} WHERE x = {}")
+        self.assertEqual(query.parameters, (100, 10))
+
+        query = Update("Keyspace", "Table")
+        query = query.values('"Y" = {}', (20,))
+        query = query.where('"Y" = {}', (10,))
+        self.assertEqual(str(query), 'UPDATE "Keyspace"."Table" SET "Y" = {} WHERE "Y" = {}')
+        self.assertEqual(query.parameters, (20, 10))
+
+    def test_can_prepare(self) -> None:
+        """Test can_prepare handling."""
+        query = Update("keyspace", "table")
+        query = query.where("x = {}", (10,))
+        query = query.values("x = {}", (100,))
+        self.assertTrue(query.can_prepare)
+
+        query = query.where("y = {}", (10,), can_prepare=False)
+        self.assertFalse(query.can_prepare)
+
+        query = Update("keyspace", "table", can_prepare=False)
+        query = query.where("x = {}", (10,))
+        query = query.values("x = {}", (100,))
+        self.assertFalse(query.can_prepare)
+
+    def test_render(self) -> None:
+        """Test render() method."""
+        query = Update("keyspace", "table", where_clause=WhereClause("x = {} AND y = {}", (10, 200)))
+        query = query.values("x = {}", (100,))
+        query = query.values("y = {}", (20,))
+        self.assertEqual(query.parameters, (100, 20, 10, 200))
+        self.assertEqual(query.render(), "UPDATE keyspace.table SET x = {}, y = {} WHERE x = {} AND y = {}")
+        self.assertEqual(query.render("?"), "UPDATE keyspace.table SET x = ?, y = ? WHERE x = ? AND y = ?")
+        self.assertEqual(
+            query.render("%s"), "UPDATE keyspace.table SET x = %s, y = %s WHERE x = %s AND y = %s"
+        )
+
+    def test_errors(self) -> None:
+        """Test exceptions."""
+        query = Update("keyspace", "table")
+        with self.assertRaisesRegex(RuntimeError, "UPDATE statement without WHERE clause"):
+            query.render()
+        query = query.where("x = {}", (10,))
+        with self.assertRaisesRegex(RuntimeError, "UPDATE statement without SET clause"):
+            query.render()
 
 
 if __name__ == "__main__":

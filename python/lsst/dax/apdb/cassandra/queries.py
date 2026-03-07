@@ -126,15 +126,19 @@ class WhereClause:
             return bool(self.parameters)
         return self._can_prepare
 
+    def join(self, other: WhereClause, separator: str) -> WhereClause:
+        """Combine two clauses using given separator."""
+        return WhereClause(
+            expression=f"{self.expression}{separator}{other.expression}",
+            parameters=self.parameters + other.parameters,
+            can_prepare=self.can_prepare and other.can_prepare,
+        )
+
     def __and__(self, other: object) -> WhereClause:
         """Combine two clauses using AND expression."""
         if not isinstance(other, WhereClause):
             return NotImplemented
-        return WhereClause(
-            expression=f"{self.expression} AND {other.expression}",
-            parameters=self.parameters + other.parameters,
-            can_prepare=self.can_prepare and other.can_prepare,
-        )
+        return self.join(other, " AND ")
 
     def __eq__(self, other: object) -> bool:
         """Compare two clauses for equality."""
@@ -421,6 +425,114 @@ class Delete(Query):
         result = f"DELETE FROM {_quote_id(self._keyspace)}.{_quote_id(self._table)}"
         if self._where_clause is not None:
             result += " WHERE " + self._where_clause.expression
+        if placeholder:
+            result = result.replace("{}", placeholder)
+        return result
+
+
+class Update(Query):
+    """Class representing UPDATE query.
+
+    Parameters
+    ----------
+    keyspace : `str`
+        Keyspace name.
+    table : `str`
+        Table name.
+    where_clause : `WhereClause`, optional
+        WHERE clause to be added to the query.
+    values : `WhereClause`, optional
+        SET clause to be added to the query.
+    can_prepare : `bool`, optional
+        If `False` then the statement should not be prepared.
+    """
+
+    def __init__(
+        self,
+        keyspace: str,
+        table: str,
+        *,
+        where_clause: WhereClause | None = None,
+        values: WhereClause | None = None,
+        can_prepare: bool = True,
+    ):
+        self._keyspace = keyspace
+        self._table = table
+        self._where_clause = where_clause
+        self._values = values
+        self._can_prepare = can_prepare
+
+    @property
+    def can_prepare(self) -> bool:
+        """If `False` then this query should not be prepared."""
+        if self._where_clause:
+            return self._where_clause.can_prepare and self._can_prepare
+        else:
+            return self._can_prepare
+
+    @property
+    def parameters(self) -> tuple:
+        """Complete list of all query parameters."""
+        set_params = () if self._values is None else self._values.parameters
+        where_params = () if self._where_clause is None else self._where_clause.parameters
+        return set_params + where_params
+
+    @overload
+    def where(self, where_clause: WhereClause) -> Update: ...
+
+    @overload
+    def where(
+        self, expression: str, parameters: Iterable = (), *, can_prepare: bool | None = None
+    ) -> Update: ...
+
+    def where(self, *args: Any, **kwargs: Any) -> Update:
+        """Add another WhereClause to the query."""
+        where_clause = WhereClause._from_args(*args, **kwargs)
+        if self._where_clause is None:
+            where = where_clause
+        else:
+            where = self._where_clause & where_clause
+        return Update(
+            keyspace=self._keyspace,
+            table=self._table,
+            where_clause=where,
+            values=self._values,
+            can_prepare=self._can_prepare,
+        )
+
+    def values(self, expression: str, parameters: Iterable = ()) -> Update:
+        """Define SET clause.
+
+        Parameters
+        ----------
+        expression : `str`
+            SET clause, e.g. "x = {}, y = 10".
+        parameters : `~collections.abc.Iterable`
+        """
+        new_clause = WhereClause(expression, parameters)
+        if self._values is None:
+            values = new_clause
+        else:
+            values = self._values.join(new_clause, ", ")
+        return Update(
+            keyspace=self._keyspace,
+            table=self._table,
+            where_clause=self._where_clause,
+            values=values,
+            can_prepare=self._can_prepare,
+        )
+
+    def render(self, placeholder: str | None = None) -> str:
+        """Generate query string with placeholders for parameters."""
+        # UPDATE without WHERE is very likely an error.
+        if self._where_clause is None:
+            raise RuntimeError("UPDATE statement without WHERE clause is dangerous.")
+        if self._values is None:
+            raise RuntimeError("UPDATE statement without SET clause.")
+
+        result = f"UPDATE {_quote_id(self._keyspace)}.{_quote_id(self._table)} SET "
+        result += self._values.expression
+        result += " WHERE " + self._where_clause.expression
         if placeholder:
             result = result.replace("{}", placeholder)
         return result

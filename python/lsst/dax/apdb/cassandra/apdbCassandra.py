@@ -81,7 +81,7 @@ from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig, ApdbCass
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
 from .partitioner import Partitioner
-from .queries import ColumnExpr, Delete, Insert, Select, WhereClause
+from .queries import ColumnExpr, Delete, Insert, Select, Update, WhereClause
 from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
@@ -723,7 +723,6 @@ class ApdbCassandra(Apdb):
         current_time_ns = int(current_time.unix_tai * 1e9)
 
         # Update DiaSources.
-        table_name = context.schema.tableName(ApdbTables.DiaSource)
         statements: list[tuple] = []
         for source_id, diaObjectId in idMap.items():
             source_row = found_sources_by_id[source_id.diaSourceId]
@@ -731,17 +730,23 @@ class ApdbCassandra(Apdb):
             time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
 
             if config.partitioning.time_partition_tables:
-                statement = context.preparer.prepare(
-                    f'UPDATE "{self._keyspace}"."{table_name}_{time_part}" SET "diaObjectId" = ? '
-                    'WHERE apdb_part = ? AND "diaSourceId" = ?'
+                table_name = context.schema.tableName(ApdbTables.DiaSource, time_part)
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values('"diaObjectId" = {}', [diaObjectId])
+                    .where('apdb_part = {} AND "diaSourceId" = {}', (apdb_part, source_id.diaSourceId))
                 )
-                statements.append((statement, (diaObjectId, apdb_part, source_id.diaSourceId)))
             else:
-                statement = context.preparer.prepare(
-                    f'UPDATE "{self._keyspace}"."{table_name}" SET "diaObjectId" = ? '
-                    'WHERE apdb_part = ? AND apdb_time_part = ? AND "diaSourceId" = ?'
+                table_name = context.schema.tableName(ApdbTables.DiaSource)
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values('"diaObjectId" = {}', [diaObjectId])
+                    .where(
+                        'apdb_part = {} AND apdb_time_part = {} AND "diaSourceId" = {}',
+                        (apdb_part, time_part, source_id.diaSourceId),
+                    )
                 )
-                statements.append((statement, (diaObjectId, apdb_part, time_part, source_id.diaSourceId)))
+            statements.append(context.stmt_factory.with_params(update, prepare=True))
 
             if context.schema.replication_enabled:
                 update_records.append(
@@ -758,7 +763,7 @@ class ApdbCassandra(Apdb):
                 update_order += 1
 
         with self._timer(
-            "update_time", tags={"table": table_name, "method": "reassignDiaSourcesToDiaObjects"}
+            "update_time", tags={"table": "DiaSource", "method": "reassignDiaSourcesToDiaObjects"}
         ) as timer:
             execute_concurrent(context.session, statements, execution_profile="write")
             timer.add_values(num_queries=len(statements))
@@ -768,10 +773,12 @@ class ApdbCassandra(Apdb):
         # update records.
         if increment_nDiaSources or decrement_nDiaSources:
             table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
-            statement = context.preparer.prepare(
-                f'UPDATE "{self._keyspace}"."{table_name}" SET "nDiaSources" = ? '
-                'WHERE apdb_part = ? AND "diaObjectId" = ?'
+            update = (
+                Update(self._keyspace, table_name)
+                .values('"nDiaSources" = {}', [-1])
+                .where('apdb_part = {} AND "diaObjectId" = {}', (-1, -1))
             )
+            statement = context.stmt_factory(update, prepare=True)
             statements = []
 
             # Calculate increments/decrements for all affected DiaObjects.
@@ -999,24 +1006,30 @@ class ApdbCassandra(Apdb):
         queries: list[tuple[cassandra.query.PreparedStatement, tuple]] = []
         for diaSourceId, ssObjectId in idMap.items():
             apdb_part, apdb_time_part = id2partitions[diaSourceId]
-            values: tuple
             if config.partitioning.time_partition_tables:
                 table_name = context.schema.tableName(ApdbTables.DiaSource, apdb_time_part)
-                query_str = (
-                    f'UPDATE "{self._keyspace}"."{table_name}"'
-                    f' SET "ssObjectId" = ?, "diaObjectId" = NULL, "{reassign_time_column}" = ?'
-                    ' WHERE "apdb_part" = ? AND "diaSourceId" = ?'
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values(
+                        f'"ssObjectId" = {{}}, "diaObjectId" = NULL, "{reassign_time_column}" = {{}}',
+                        (ssObjectId, reassignTime),
+                    )
+                    .where('apdb_part = {} AND "diaSourceId" = {}', (apdb_part, diaSourceId))
                 )
-                values = (ssObjectId, reassignTime, apdb_part, diaSourceId)
             else:
                 table_name = context.schema.tableName(ApdbTables.DiaSource)
-                query_str = (
-                    f'UPDATE "{self._keyspace}"."{table_name}"'
-                    f' SET "ssObjectId" = ?, "diaObjectId" = NULL, "{reassign_time_column}" = ?'
-                    ' WHERE "apdb_part" = ? AND "apdb_time_part" = ? AND "diaSourceId" = ?'
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values(
+                        f'"ssObjectId" = {{}}, "diaObjectId" = NULL, "{reassign_time_column}" = {{}}',
+                        (ssObjectId, reassignTime),
+                    )
+                    .where(
+                        'apdb_part = {} AND "apdb_time_part" = {} AND "diaSourceId" = {}',
+                        (apdb_part, apdb_time_part, diaSourceId),
+                    )
                 )
-                values = (ssObjectId, reassignTime, apdb_part, apdb_time_part, diaSourceId)
-            queries.append((context.preparer.prepare(query_str), values))
+            queries.append(context.stmt_factory.with_params(update, prepare=True))
 
         # TODO: (DM-50190) Replication for updated records is not implemented.
         if id2chunk_id:
