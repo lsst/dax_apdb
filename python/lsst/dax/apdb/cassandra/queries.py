@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-__all__ = ["ColumnExpr", "Query", "Select", "WhereClause"]
+__all__ = ["ColumnExpr", "QExpr", "Query", "Select"]
 
 import abc
 import itertools
@@ -84,22 +84,22 @@ class Query(abc.ABC):
         return self.render()
 
 
-class WhereClause:
-    """Class representing a part of WHERE clause consisting of text
-    and corresponding parameters.
+class QExpr:
+    """Class representing a part of query string, such as WHEREexpression or
+    column list.
 
     Parameters
     ----------
     expression : `str`
-        Clause expression, arbitrary text with placeholders for parameters
+        An expression, arbitrary text with placeholders for parameters
         represented by ``{}``. If expression contains "{*}" string it will be
         replaced by comma-separated placeholders matching the number of
         parameters.
     parameters : `tuple`, optional
-        Parameter values, order must match expression.
+        Parameter values, order must match placeholders in expression.
     can_prepare : `bool`, optional
-        If `False` then the statement which includes this clause should not be
-        prepared. If not specified as True or False then it is determined by
+        If `False` then the statement which includes this expression should not
+        be prepared. If not specified as True or False then it is determined by
         the presence of parameters, assumed to be False if no parameters are
         present.
     """
@@ -126,23 +126,23 @@ class WhereClause:
             return bool(self.parameters)
         return self._can_prepare
 
-    def join(self, other: WhereClause, separator: str) -> WhereClause:
+    def join(self, other: QExpr, separator: str) -> QExpr:
         """Combine two clauses using given separator."""
-        return WhereClause(
+        return QExpr(
             expression=f"{self.expression}{separator}{other.expression}",
             parameters=self.parameters + other.parameters,
             can_prepare=self.can_prepare and other.can_prepare,
         )
 
-    def __and__(self, other: object) -> WhereClause:
+    def __and__(self, other: object) -> QExpr:
         """Combine two clauses using AND expression."""
-        if not isinstance(other, WhereClause):
+        if not isinstance(other, QExpr):
             return NotImplemented
         return self.join(other, " AND ")
 
     def __eq__(self, other: object) -> bool:
         """Compare two clauses for equality."""
-        if not isinstance(other, WhereClause):
+        if not isinstance(other, QExpr):
             return NotImplemented
         return (
             self.expression == other.expression
@@ -151,28 +151,28 @@ class WhereClause:
         )
 
     def __str__(self) -> str:
-        return f"WhereClause({self.expression!r}, {self.parameters}, {self._can_prepare})"
+        return f"QExpr({self.expression!r}, {self.parameters}, {self._can_prepare})"
 
     def __repr__(self) -> str:
         return str(self)
 
     @staticmethod
-    def combine(*products: list[WhereClause], extra: WhereClause | None = None) -> Generator[WhereClause]:
+    def combine(*products: list[QExpr], extra: QExpr | None = None) -> Generator[QExpr]:
         """Combine multiple clauses using AND expression.
 
         Parameters
         ----------
-        *products : `Iterable` [ `WhereClause` ]
+        *products : `Iterable` [ `QExpr` ]
             One or more iterables of clauses to be combined. The result will
             include all combinations of clauses from these iterables. If any of
             the products is empty it is ignored.
-        extra : `WhereClause`, optional
+        extra : `QExpr`, optional
             An extra clause to be added to each combination of clauses from
             ``products``. If `None` then no extra clause is added.
 
         Yields
         ------
-        clause : `WhereClause`
+        clause : `QExpr`
             Combined clause for one of the combinations of clauses from
             ``products`` and the extra clause if it is not `None`.
         """
@@ -189,14 +189,14 @@ class WhereClause:
                 yield result
 
     @classmethod
-    def _from_args(cls, *args: Any, **kwargs: Any) -> WhereClause:
-        """Construct WhereClause from a bunch of parameters that can be passed
+    def _from_args(cls, *args: Any, **kwargs: Any) -> QExpr:
+        """Construct QExpr from a bunch of parameters that can be passed
         to Select.where().
         """
         match args:
-            case (WhereClause() as clause,):
+            case (QExpr() as clause,):
                 if kwargs:
-                    raise TypeError("No keyword arguments expected when WhereClause is passed")
+                    raise TypeError("No keyword arguments expected when QExpr is passed")
                 return clause
             case (str() as expr,):
                 params = ()
@@ -223,7 +223,7 @@ class Select(Query):
         Table name.
     columns : `~collections.abc.Iterable` [`str`]
         Names of the columns to return.
-    where_clause : `WhereClause`, optional
+    where_clause : `QExpr`, optional
         WHERE clause to be added to the query.
     extra_clause : `str`, optional
         Extra clause to be added to the query, e.g. for GROUP BY or ORDER BY.
@@ -237,7 +237,7 @@ class Select(Query):
         table: str,
         columns: Iterable[str],
         *,
-        where_clause: WhereClause | None = None,
+        where_clause: QExpr | None = None,
         extra_clause: str | None = None,
         can_prepare: bool = True,
     ):
@@ -264,7 +264,7 @@ class Select(Query):
         return ()
 
     @overload
-    def where(self, where_clause: WhereClause) -> Select: ...
+    def where(self, where_clause: QExpr) -> Select: ...
 
     @overload
     def where(
@@ -272,8 +272,8 @@ class Select(Query):
     ) -> Select: ...
 
     def where(self, *args: Any, **kwargs: Any) -> Select:
-        """Add another WhereClause to the query."""
-        where_clause = WhereClause._from_args(*args, **kwargs)
+        """Add another QExpr to the query."""
+        where_clause = QExpr._from_args(*args, **kwargs)
         if self._where_clause is None:
             where = where_clause
         else:
@@ -360,7 +360,7 @@ class Delete(Query):
         Keyspace name.
     table : `str`
         Table name.
-    where_clause : `WhereClause`, optional
+    where_clause : `QExpr`, optional
         WHERE clause to be added to the query.
     can_prepare : `bool`, optional
         If `False` then the statement should not be prepared.
@@ -371,7 +371,7 @@ class Delete(Query):
         keyspace: str,
         table: str,
         *,
-        where_clause: WhereClause | None = None,
+        where_clause: QExpr | None = None,
         can_prepare: bool = True,
     ):
         self._keyspace = keyspace
@@ -395,7 +395,7 @@ class Delete(Query):
         return ()
 
     @overload
-    def where(self, where_clause: WhereClause) -> Delete: ...
+    def where(self, where_clause: QExpr) -> Delete: ...
 
     @overload
     def where(
@@ -403,8 +403,8 @@ class Delete(Query):
     ) -> Delete: ...
 
     def where(self, *args: Any, **kwargs: Any) -> Delete:
-        """Add another WhereClause to the query."""
-        where_clause = WhereClause._from_args(*args, **kwargs)
+        """Add another QExpr to the query."""
+        where_clause = QExpr._from_args(*args, **kwargs)
         if self._where_clause is None:
             where = where_clause
         else:
@@ -439,9 +439,9 @@ class Update(Query):
         Keyspace name.
     table : `str`
         Table name.
-    where_clause : `WhereClause`, optional
+    where_clause : `QExpr`, optional
         WHERE clause to be added to the query.
-    values : `WhereClause`, optional
+    values : `QExpr`, optional
         SET clause to be added to the query.
     can_prepare : `bool`, optional
         If `False` then the statement should not be prepared.
@@ -452,8 +452,8 @@ class Update(Query):
         keyspace: str,
         table: str,
         *,
-        where_clause: WhereClause | None = None,
-        values: WhereClause | None = None,
+        where_clause: QExpr | None = None,
+        values: QExpr | None = None,
         can_prepare: bool = True,
     ):
         self._keyspace = keyspace
@@ -478,7 +478,7 @@ class Update(Query):
         return set_params + where_params
 
     @overload
-    def where(self, where_clause: WhereClause) -> Update: ...
+    def where(self, where_clause: QExpr) -> Update: ...
 
     @overload
     def where(
@@ -486,8 +486,8 @@ class Update(Query):
     ) -> Update: ...
 
     def where(self, *args: Any, **kwargs: Any) -> Update:
-        """Add another WhereClause to the query."""
-        where_clause = WhereClause._from_args(*args, **kwargs)
+        """Add another QExpr to the query."""
+        where_clause = QExpr._from_args(*args, **kwargs)
         if self._where_clause is None:
             where = where_clause
         else:
@@ -509,7 +509,7 @@ class Update(Query):
             SET clause, e.g. "x = {}, y = 10".
         parameters : `~collections.abc.Iterable`
         """
-        new_clause = WhereClause(expression, parameters)
+        new_clause = QExpr(expression, parameters)
         if self._values is None:
             values = new_clause
         else:

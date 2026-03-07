@@ -31,7 +31,7 @@ from lsst.dax.apdb.cassandra import (
     ApdbCassandraTimePartitionRange,
 )
 from lsst.dax.apdb.cassandra.partitioner import Partitioner
-from lsst.dax.apdb.cassandra.queries import WhereClause
+from lsst.dax.apdb.cassandra.queries import QExpr
 from lsst.sphgeom import Box, UnitVector3d
 
 
@@ -105,7 +105,7 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         self.assertEqual(
             result,
             [
-                WhereClause(
+                QExpr(
                     '"apdb_part" IN ({},{},{},{})',
                     (12058622, 12058623, 12058624, 12058625),
                     can_prepare=False,
@@ -114,28 +114,24 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         )
         result, count = partitioner.spatial_where(region, use_ranges=True)
         self.assertEqual(count, 4)
-        self.assertEqual(
-            result, [WhereClause('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))]
-        )
+        self.assertEqual(result, [QExpr('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))])
 
         partitioner = self.make_partitioner(query_per_spatial_part=True)
         result, count = partitioner.spatial_where(region)
         self.assertEqual(count, 4)
-        self.assertIn(WhereClause('"apdb_part" = {}', (12058622,)), result)
-        self.assertIn(WhereClause('"apdb_part" = {}', (12058623,)), result)
-        self.assertIn(WhereClause('"apdb_part" = {}', (12058624,)), result)
-        self.assertIn(WhereClause('"apdb_part" = {}', (12058625,)), result)
+        self.assertIn(QExpr('"apdb_part" = {}', (12058622,)), result)
+        self.assertIn(QExpr('"apdb_part" = {}', (12058623,)), result)
+        self.assertIn(QExpr('"apdb_part" = {}', (12058624,)), result)
+        self.assertIn(QExpr('"apdb_part" = {}', (12058625,)), result)
 
         result, count = partitioner.spatial_where(region, use_ranges=True)
         self.assertEqual(count, 4)
-        self.assertEqual(
-            result, [WhereClause('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))]
-        )
+        self.assertEqual(result, [QExpr('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))])
 
     def _check_temporal_where(
         self,
         tables: list[str],
-        where: list[WhereClause],
+        where: list[QExpr],
         part_start: int,
         part_end: int,
         *,
@@ -151,7 +147,7 @@ class CassandraPartitionerTestCase(unittest.TestCase):
             self.assertEqual(where, [])
         elif query_per_time_part:
             where_str = '"apdb_time_part" = {}'
-            expect_where = [WhereClause(where_str, (part,)) for part in range(part_start, part_end + 1)]
+            expect_where = [QExpr(where_str, (part,)) for part in range(part_start, part_end + 1)]
             self.assertEqual(tables, ["DiaSource"])
             self.assertEqual(where, expect_where)
         else:
@@ -162,7 +158,7 @@ class CassandraPartitionerTestCase(unittest.TestCase):
             self.assertEqual(
                 where,
                 [
-                    WhereClause(
+                    QExpr(
                         f'"apdb_time_part" IN ({placeholders})',
                         tuple(range(part_start, part_end + 1)),
                         can_prepare=can_prepare,

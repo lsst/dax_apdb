@@ -81,7 +81,7 @@ from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig, ApdbCass
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
 from .partitioner import Partitioner
-from .queries import ColumnExpr, Delete, Insert, Select, Update, WhereClause
+from .queries import ColumnExpr, Delete, Insert, QExpr, Select, Update
 from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
@@ -566,12 +566,12 @@ class ApdbCassandra(Apdb):
         # Make a bunch of queries.
         statements = []
         for apdb_part, diaObjectIds in partitioned_object_ids.items():
-            spatial_where = [WhereClause("apdb_part = {}", (apdb_part,))]
+            spatial_where = [QExpr("apdb_part = {}", (apdb_part,))]
             for table in tables:
                 query = Select(self._keyspace, table, column_names, extra_clause="ALLOW FILTERING")
                 for id_chunk in chunk_iterable(diaObjectIds, 10_000):
-                    id_where = WhereClause('"diaObjectId" IN ({*})', id_chunk)
-                    for clause in WhereClause.combine(spatial_where, temporal_where, extra=id_where):
+                    id_where = QExpr('"diaObjectId" IN ({*})', id_chunk)
+                    for clause in QExpr.combine(spatial_where, temporal_where, extra=id_where):
                         statements.append(
                             context.stmt_factory.with_params(query.where(clause), prepare=False)
                         )
@@ -1118,7 +1118,7 @@ class ApdbCassandra(Apdb):
         statements: list[tuple] = []
         for table in tables:
             query = Select(self._keyspace, table, column_names)
-            for clause in WhereClause.combine(sp_where, temporal_where):
+            for clause in QExpr.combine(sp_where, temporal_where):
                 statements.append(context.stmt_factory.with_params(query.where(clause), prepare=True))
         _LOG.debug("_getSources %s: #queries: %s", table_name, len(statements))
 
@@ -1788,11 +1788,11 @@ class ApdbCassandra(Apdb):
                 query_per_time_part=True,
             )
 
-            id_where = WhereClause('"diaSourceId" = {}', (source_id.diaSourceId,))
+            id_where = QExpr('"diaSourceId" = {}', (source_id.diaSourceId,))
 
             for table in tables:
                 query = Select(self._keyspace, table, columns)
-                for clause in WhereClause.combine(spatial_where, temporal_where, extra=id_where):
+                for clause in QExpr.combine(spatial_where, temporal_where, extra=id_where):
                     statements.append(context.stmt_factory.with_params(query.where(clause), prepare=True))
 
         with self._timer(

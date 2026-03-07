@@ -21,25 +21,25 @@
 
 import unittest
 
-from lsst.dax.apdb.cassandra.queries import ColumnExpr, Delete, Insert, Select, Update, WhereClause
+from lsst.dax.apdb.cassandra.queries import ColumnExpr, Delete, Insert, QExpr, Select, Update
 
 
-class CassandraWhereClauseTestCase(unittest.TestCase):
-    """A test case for WhereClause class."""
+class QExprTestCase(unittest.TestCase):
+    """A test case for QExpr class."""
 
     def test_basic(self) -> None:
         """Test construction of the class."""
-        clause = WhereClause("x = 100")
+        clause = QExpr("x = 100")
         self.assertEqual(clause.expression, "x = 100")
         self.assertEqual(clause.parameters, ())
         self.assertFalse(clause.can_prepare)
 
-        clause = WhereClause("x = {}", (100,))
+        clause = QExpr("x = {}", (100,))
         self.assertEqual(clause.expression, "x = {}")
         self.assertEqual(clause.parameters, (100,))
         self.assertTrue(clause.can_prepare)
 
-        clause = WhereClause("x = 100", can_prepare=False)
+        clause = QExpr("x = 100", can_prepare=False)
         self.assertEqual(clause.expression, "x = 100")
         self.assertEqual(clause.parameters, ())
         self.assertFalse(clause.can_prepare)
@@ -47,15 +47,15 @@ class CassandraWhereClauseTestCase(unittest.TestCase):
     def test_error(self) -> None:
         """Test for exceptions."""
         with self.assertRaisesRegex(ValueError, "Number of placeholders .* does not match"):
-            WhereClause("x = 100", (1,))
+            QExpr("x = 100", (1,))
         with self.assertRaisesRegex(ValueError, "Number of placeholders .* does not match"):
-            WhereClause("x = {} and y = {}", (1,))
+            QExpr("x = {} and y = {}", (1,))
 
     def test_combine(self) -> None:
         """Test combination of clauses."""
-        clause1 = WhereClause("x = {}", (10,))
-        clause2 = WhereClause("y = {}", (100,))
-        clause3 = WhereClause("z = {}", (1000,), can_prepare=False)
+        clause1 = QExpr("x = {}", (10,))
+        clause2 = QExpr("y = {}", (100,))
+        clause3 = QExpr("z = {}", (1000,), can_prepare=False)
 
         clause = clause1 & clause2
         self.assertEqual(clause.expression, "x = {} AND y = {}")
@@ -69,11 +69,11 @@ class CassandraWhereClauseTestCase(unittest.TestCase):
 
     def test_combine_products(self) -> None:
         """Test combination of clauses."""
-        clauses1 = [WhereClause("x = {}", (10,)), WhereClause("x = {}", (20,))]
-        clauses2 = [WhereClause("y = {}", (100,)), WhereClause("y = {}", (200,))]
-        extra = WhereClause("z = 1000")  # can_prepare will be False
+        clauses1 = [QExpr("x = {}", (10,)), QExpr("x = {}", (20,))]
+        clauses2 = [QExpr("y = {}", (100,)), QExpr("y = {}", (200,))]
+        extra = QExpr("z = 1000")  # can_prepare will be False
 
-        clauses = list(WhereClause.combine(clauses1, clauses2))
+        clauses = list(QExpr.combine(clauses1, clauses2))
         self.assertEqual(len(clauses), 4)
         self.assertEqual(clauses[0].expression, "x = {} AND y = {}")
         self.assertEqual(clauses[0].parameters, (10, 100))
@@ -85,7 +85,7 @@ class CassandraWhereClauseTestCase(unittest.TestCase):
         self.assertEqual(clauses[3].parameters, (20, 200))
         self.assertTrue(clauses[3].can_prepare)
 
-        clauses = list(WhereClause.combine(clauses1, [], extra=extra))
+        clauses = list(QExpr.combine(clauses1, [], extra=extra))
         self.assertEqual(len(clauses), 2)
         self.assertEqual(clauses[0].expression, "x = {} AND z = 1000")
         self.assertEqual(clauses[0].parameters, (10,))
@@ -139,7 +139,7 @@ class SelectQueryTestCase(unittest.TestCase):
 
     def test_render(self) -> None:
         """Test render() method."""
-        query = Select("keyspace", "table", ["*"], where_clause=WhereClause("x = {} AND y = {}", (10, 100)))
+        query = Select("keyspace", "table", ["*"], where_clause=QExpr("x = {} AND y = {}", (10, 100)))
         self.assertEqual(query.render(), "SELECT * FROM keyspace.table WHERE x = {} AND y = {}")
         self.assertEqual(query.render("?"), "SELECT * FROM keyspace.table WHERE x = ? AND y = ?")
         self.assertEqual(query.render("%s"), "SELECT * FROM keyspace.table WHERE x = %s AND y = %s")
@@ -213,7 +213,7 @@ class DeleteQueryTestCase(unittest.TestCase):
 
     def test_render(self) -> None:
         """Test render() method."""
-        query = Delete("keyspace", "table", where_clause=WhereClause("x = {} AND y = {}", (10, 100)))
+        query = Delete("keyspace", "table", where_clause=QExpr("x = {} AND y = {}", (10, 100)))
         self.assertEqual(query.render(), "DELETE FROM keyspace.table WHERE x = {} AND y = {}")
         self.assertEqual(query.render("?"), "DELETE FROM keyspace.table WHERE x = ? AND y = ?")
         self.assertEqual(query.render("%s"), "DELETE FROM keyspace.table WHERE x = %s AND y = %s")
@@ -261,7 +261,7 @@ class UpdateQueryTestCase(unittest.TestCase):
 
     def test_render(self) -> None:
         """Test render() method."""
-        query = Update("keyspace", "table", where_clause=WhereClause("x = {} AND y = {}", (10, 200)))
+        query = Update("keyspace", "table", where_clause=QExpr("x = {} AND y = {}", (10, 200)))
         query = query.values("x = {}", (100,))
         query = query.values("y = {}", (20,))
         self.assertEqual(query.parameters, (100, 20, 10, 200))

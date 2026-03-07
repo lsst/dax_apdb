@@ -28,7 +28,7 @@ from typing import Any
 
 from ..apdbMetadata import ApdbMetadata
 from .cassandra_utils import StatementFactory
-from .queries import ColumnExpr, Delete, Insert, Select, WhereClause
+from .queries import ColumnExpr, Delete, Insert, QExpr, Select
 
 
 class ApdbMetadataCassandra(ApdbMetadata):
@@ -54,7 +54,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
     def get(self, key: str, default: str | None = None) -> str | None:
         # Docstring is inherited.
         query = Select(self._keyspace, self._table, ["value"])
-        query = query.where(WhereClause("meta_part = {} AND name = {}", (self._part, key)))
+        query = query.where(QExpr("meta_part = {} AND name = {}", (self._part, key)))
         stmt, params = self._stmt_factory.with_params(query)
         result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         if (row := result.one()) is not None:
@@ -89,7 +89,7 @@ class ApdbMetadataCassandra(ApdbMetadata):
     def items(self) -> Generator[tuple[str, str], None, None]:
         # Docstring is inherited.
         query = Select(self._keyspace, self._table, ("name", "value"))
-        query = query.where(WhereClause("meta_part = {}", (self._part,)))
+        query = query.where(QExpr("meta_part = {}", (self._part,)))
         stmt, params = self._stmt_factory.with_params(query)
         result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         for row in result:
