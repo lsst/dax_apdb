@@ -237,7 +237,6 @@ class Select(Query):
         extra_clause: str | None = None,
         can_prepare: bool = True,
     ):
-        # Check that number of placeholders matches number of parameters.
         self._keyspace = keyspace
         self._table = table
         self._columns = tuple(columns)
@@ -297,10 +296,6 @@ class Select(Query):
             result = result.replace("{}", placeholder)
         return result
 
-    def __str__(self) -> str:
-        """Generate query string with placeholders for parameters."""
-        return self.render()
-
 
 class Insert(Query):
     """Class representing INSERT query.
@@ -325,7 +320,6 @@ class Insert(Query):
         *,
         can_prepare: bool = True,
     ):
-        # Check that number of placeholders matches number of parameters.
         self._keyspace = keyspace
         self._table = table
         self._columns = tuple(columns)
@@ -352,6 +346,81 @@ class Insert(Query):
             query = query.replace("{}", placeholder)
         return query
 
-    def __str__(self) -> str:
+
+class Delete(Query):
+    """Class representing DELETE query.
+
+    Parameters
+    ----------
+    keyspace : `str`
+        Keyspace name.
+    table : `str`
+        Table name.
+    where_clause : `WhereClause`, optional
+        WHERE clause to be added to the query.
+    can_prepare : `bool`, optional
+        If `False` then the statement should not be prepared.
+    """
+
+    def __init__(
+        self,
+        keyspace: str,
+        table: str,
+        *,
+        where_clause: WhereClause | None = None,
+        can_prepare: bool = True,
+    ):
+        self._keyspace = keyspace
+        self._table = table
+        self._where_clause = where_clause
+        self._can_prepare = can_prepare
+
+    @property
+    def can_prepare(self) -> bool:
+        """If `False` then this query should not be prepared."""
+        if self._where_clause:
+            return self._where_clause.can_prepare and self._can_prepare
+        else:
+            return self._can_prepare
+
+    @property
+    def parameters(self) -> tuple:
+        """Complete list of all query parameters."""
+        if self._where_clause is not None:
+            return self._where_clause.parameters
+        return ()
+
+    @overload
+    def where(self, where_clause: WhereClause) -> Delete: ...
+
+    @overload
+    def where(
+        self, expression: str, parameters: Iterable = (), *, can_prepare: bool | None = None
+    ) -> Delete: ...
+
+    def where(self, *args: Any, **kwargs: Any) -> Delete:
+        """Add another WhereClause to the query."""
+        where_clause = WhereClause._from_args(*args, **kwargs)
+        if self._where_clause is None:
+            where = where_clause
+        else:
+            where = self._where_clause & where_clause
+        return Delete(
+            keyspace=self._keyspace,
+            table=self._table,
+            where_clause=where,
+            can_prepare=self._can_prepare,
+        )
+
+    def render(self, placeholder: str | None = None) -> str:
         """Generate query string with placeholders for parameters."""
-        return self.render()
+        # DELETE without WHERE is very likely an error.
+        if self._where_clause is None:
+            raise RuntimeError("DELETE statement without WHERE clause is dangerous.")
+
+        result = f"DELETE FROM {_quote_id(self._keyspace)}.{_quote_id(self._table)}"
+        if self._where_clause is not None:
+            result += " WHERE " + self._where_clause.expression
+        if placeholder:
+            result = result.replace("{}", placeholder)
+        return result

@@ -21,7 +21,7 @@
 
 import unittest
 
-from lsst.dax.apdb.cassandra.queries import ColumnExpr, Insert, Select, WhereClause
+from lsst.dax.apdb.cassandra.queries import ColumnExpr, Delete, Insert, Select, WhereClause
 
 
 class CassandraWhereClauseTestCase(unittest.TestCase):
@@ -124,6 +124,19 @@ class SelectQueryTestCase(unittest.TestCase):
         )
         self.assertEqual(query.parameters, (10, 100, 101, 1000))
 
+    def test_can_prepare(self) -> None:
+        """Test can_prepare handling."""
+        query = Select("keyspace", "table", ["*"])
+        query = query.where("x = {}", (10,))
+        self.assertTrue(query.can_prepare)
+
+        query = query.where("y = {}", (10,), can_prepare=False)
+        self.assertFalse(query.can_prepare)
+
+        query = Select("keyspace", "table", ["*"], can_prepare=False)
+        query = query.where(WhereClause("x = {}", (10,)))
+        self.assertFalse(query.can_prepare)
+
     def test_render(self) -> None:
         """Test render() method."""
         query = Select("keyspace", "table", ["*"], where_clause=WhereClause("x = {} AND y = {}", (10, 100)))
@@ -156,12 +169,62 @@ class InsertQueryTestCase(unittest.TestCase):
         query = Insert("Keyspace", "Table", ["X", "Y"])
         self.assertEqual(str(query), 'INSERT INTO "Keyspace"."Table" ("X","Y") VALUES ({},{})')
 
+    def test_can_prepare(self) -> None:
+        """Test can_prepare handling."""
+        query = Insert("keyspace", "table", ["x", "y"])
+        self.assertTrue(query.can_prepare)
+
+        query = Insert("keyspace", "table", ["x", "y"], can_prepare=False)
+        self.assertFalse(query.can_prepare)
+
     def test_render(self) -> None:
         """Test render() method."""
         query = Insert("keyspace", "table", ["x", "y"])
         self.assertEqual(query.render(), "INSERT INTO keyspace.table (x,y) VALUES ({},{})")
         self.assertEqual(query.render("?"), "INSERT INTO keyspace.table (x,y) VALUES (?,?)")
         self.assertEqual(query.render("%s"), "INSERT INTO keyspace.table (x,y) VALUES (%s,%s)")
+
+
+class DeleteQueryTestCase(unittest.TestCase):
+    """A test case for Delete class."""
+
+    def test_basic(self) -> None:
+        """Test simple construction."""
+        query = Delete("keyspace", "table")
+        query = query.where("x = {}", (10,))
+        self.assertEqual(str(query), "DELETE FROM keyspace.table WHERE x = {}")
+
+        query = Delete("Keyspace", "Table")
+        query = query.where('"Y" = {}', (10,))
+        self.assertEqual(str(query), 'DELETE FROM "Keyspace"."Table" WHERE "Y" = {}')
+
+    def test_can_prepare(self) -> None:
+        """Test can_prepare handling."""
+        query = Delete("keyspace", "table")
+        query = query.where("x = {}", (10,))
+        self.assertTrue(query.can_prepare)
+
+        query = query.where("y = {}", (10,), can_prepare=False)
+        self.assertFalse(query.can_prepare)
+
+        query = Delete("keyspace", "table", can_prepare=False)
+        query = query.where("x = {}", (10,))
+        self.assertFalse(query.can_prepare)
+
+    def test_render(self) -> None:
+        """Test render() method."""
+        query = Delete("keyspace", "table", where_clause=WhereClause("x = {} AND y = {}", (10, 100)))
+        self.assertEqual(query.render(), "DELETE FROM keyspace.table WHERE x = {} AND y = {}")
+        self.assertEqual(query.render("?"), "DELETE FROM keyspace.table WHERE x = ? AND y = ?")
+        self.assertEqual(query.render("%s"), "DELETE FROM keyspace.table WHERE x = %s AND y = %s")
+
+    def test_errors(self) -> None:
+        """Test exceptions."""
+        query = Delete("keyspace", "table")
+        with self.assertRaisesRegex(RuntimeError, "DELETE statement without WHERE clause"):
+            query.render()
+        with self.assertRaisesRegex(TypeError, "Unexpected arguments"):
+            query.where()  # type: ignore[call-overload]
 
 
 if __name__ == "__main__":

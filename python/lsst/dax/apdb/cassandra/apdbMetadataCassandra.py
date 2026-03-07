@@ -27,8 +27,8 @@ from collections.abc import Generator
 from typing import Any
 
 from ..apdbMetadata import ApdbMetadata
-from .cassandra_utils import StatementFactory, quote_id
-from .queries import ColumnExpr, Insert, Select, WhereClause
+from .cassandra_utils import StatementFactory
+from .queries import ColumnExpr, Delete, Insert, Select, WhereClause
 
 
 class ApdbMetadataCassandra(ApdbMetadata):
@@ -50,7 +50,6 @@ class ApdbMetadataCassandra(ApdbMetadata):
         self._write_profile = write_profile
         self._part = 0  # Partition for all rows
         self._stmt_factory = StatementFactory(session)
-        self._table_clause = f"{quote_id(keyspace)}.{quote_id(table_name)}"
 
     def get(self, key: str, default: str | None = None) -> str | None:
         # Docstring is inherited.
@@ -78,12 +77,13 @@ class ApdbMetadataCassandra(ApdbMetadata):
         # Docstring is inherited.
         if not key:
             raise ValueError("name cannot be empty")
-        query = f"DELETE FROM {self._table_clause} WHERE meta_part = %s AND name = %s"
+        query = Delete(self._keyspace, self._table).where("meta_part = {} AND name = {}", (self._part, key))
+        stmt, params = self._stmt_factory.with_params(query)
         # Cassandra cannot tell how many rows are deleted, just check if row
         # exists now.
         exists = self.get(key) is not None
         # Race is still possible between check and remove.
-        self._session.execute(query, (self._part, key), execution_profile=self._write_profile)
+        self._session.execute(stmt, params, execution_profile=self._write_profile)
         return exists
 
     def items(self) -> Generator[tuple[str, str], None, None]:

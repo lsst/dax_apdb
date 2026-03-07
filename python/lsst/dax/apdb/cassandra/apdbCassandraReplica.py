@@ -43,7 +43,7 @@ from .cassandra_utils import (
     execute_concurrent,
     select_concurrent,
 )
-from .queries import ColumnExpr, Select
+from .queries import ColumnExpr, Delete, Select
 
 if TYPE_CHECKING:
     from .apdbCassandra import ApdbCassandra
@@ -160,10 +160,9 @@ class ApdbCassandraReplica(ApdbReplica):
             return
 
         table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
-        query = (
-            f'DELETE FROM "{config.keyspace}"."{table_name}" WHERE partition = ? AND apdb_replica_chunk = ?'
-        )
-        statement = context.preparer.prepare(query)
+        query = Delete(config.keyspace, table_name)
+        query = query.where("partition = {} AND apdb_replica_chunk = {}", (-1, -1))
+        statement = context.stmt_factory(query)
 
         queries = [(statement, param) for param in repl_table_params]
         with self._timer("chunks_delete_time") as timer:
@@ -176,10 +175,11 @@ class ApdbCassandraReplica(ApdbReplica):
             tables.append(ExtraTables.ApdbUpdateRecordChunks)
         for table in tables:
             table_name = context.schema.tableName(table)
-            query = f'DELETE FROM "{config.keyspace}"."{table_name}" WHERE apdb_replica_chunk = ?'
+            query = Delete(config.keyspace, table_name)
+            query = query.where("apdb_replica_chunk = {}", (-1,))
             if context.has_chunk_sub_partitions:
-                query += " AND apdb_replica_subchunk = ?"
-            statement = context.preparer.prepare(query)
+                query = query.where("apdb_replica_subchunk = {}", (-1,))
+            statement = context.stmt_factory(query)
 
             queries = [(statement, param) for param in chunk_table_params]
             with self._timer("table_chunk_detele_time", tags={"table": table_name}) as timer:

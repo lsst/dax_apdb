@@ -81,7 +81,7 @@ from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig, ApdbCass
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
 from .partitioner import Partitioner
-from .queries import ColumnExpr, Insert, Select, WhereClause
+from .queries import ColumnExpr, Delete, Insert, Select, WhereClause
 from .sessionFactory import SessionContext, SessionFactory
 
 if TYPE_CHECKING:
@@ -870,20 +870,19 @@ class ApdbCassandra(Apdb):
         # Remove all matching rows from DiaObjectLast.
         statements = []
         for apdb_part, diaObjectIds in grouped_object_ids.items():
-            id_str = ",".join(str(diaObjectId) for diaObjectId in diaObjectIds)
-            query_str = (
-                f'DELETE FROM "{self._keyspace}"."{table_name}" '
-                f'WHERE apdb_part = %s AND "diaObjectId" IN ({id_str})'
+            delete = (
+                Delete(self._keyspace, table_name)
+                .where("apdb_part = {}", [apdb_part])
+                .where('"diaObjectId" IN ({*})', diaObjectIds)
             )
-            statement = cassandra.query.SimpleStatement(query_str)
-            statements.append((statement, (apdb_part,)))
+            statements.append(context.stmt_factory.with_params(delete))
 
         # Also remove from DiaObjectLastToPartition.
         reverse_table_name = context.schema.tableName(ExtraTables.DiaObjectLastToPartition)
-        id_str = ",".join(str(diaObjectId) for _, diaObjectId in records)
-        query_str = f'DELETE FROM "{self._keyspace}"."{reverse_table_name}" WHERE "diaObjectId" IN ({id_str})'
-        statement = cassandra.query.SimpleStatement(query_str)
-        statements.append((statement, ()))
+        delete = Delete(self._keyspace, reverse_table_name).where(
+            '"diaObjectId" IN ({*})', [rec[1] for rec in records]
+        )
+        statements.append(context.stmt_factory.with_params(delete))
 
         with self._timer("delete_time", tags={"table": table_name, "method": "setValidityEnd"}) as timer:
             execute_concurrent(context.session, statements, execution_profile="write")
@@ -942,8 +941,11 @@ class ApdbCassandra(Apdb):
             context.session.execute(query_str, execution_profile="write")
         else:
             dedup_time_value = self._timestamp_column_value(dedup_time)
-            query_str = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE "{validity_start_column}" < %s'
-            context.session.execute(query_str, (dedup_time_value,), execution_profile="write")
+            delete = Delete(self._keyspace, table_name).where(
+                f'"{validity_start_column}" < {{}}', [dedup_time_value]
+            )
+            stmt, params = context.stmt_factory.with_params(delete)
+            context.session.execute(stmt, params, execution_profile="write")
 
         # Store dedup time.
         data = {"dedup_time_iso_tai": dedup_time.tai.to_value("iso")}
@@ -1216,8 +1218,9 @@ class ApdbCassandra(Apdb):
         if moved_oids:
             # Delete old records from DiaObjectLast.
             table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
-            query = f'DELETE FROM "{self._keyspace}"."{table_name}" WHERE apdb_part = ? AND "diaObjectId" = ?'
-            statement = context.preparer.prepare(query)
+            query = Delete(self._keyspace, table_name)
+            query = query.where('apdb_part = {} AND "diaObjectId" = {}', (-1, -1))
+            statement = context.stmt_factory(query, prepare=True)
             queries = []
             for oid, (old_part, _) in moved_oids.items():
                 queries.append((statement, (old_part, oid)))
