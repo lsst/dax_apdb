@@ -31,6 +31,7 @@ from lsst import sphgeom
 from ..apdbSchema import ApdbTables
 from ..pixelization import Pixelization
 from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
+from .queries import Column as C  # noqa: N817
 from .queries import QExpr
 
 
@@ -146,27 +147,24 @@ class Partitioner:
             for lower, upper in pixel_ranges:
                 upper -= 1
                 if lower == upper:
-                    expressions.append(QExpr('"apdb_part" = {}', (lower,)))
+                    expressions.append(C("apdb_part") == lower)
                     count += 1
                 elif lower + 1 == upper:
-                    expressions.append(QExpr('"apdb_part" = {}', (lower,)))
-                    expressions.append(QExpr('"apdb_part" = {}', (upper,)))
+                    expressions.append(C("apdb_part") == lower)
+                    expressions.append(C("apdb_part") == upper)
                     count += 2
                 else:
                     count += upper - lower + 1
-                    expressions.append(QExpr('"apdb_part" >= {} AND "apdb_part" <= {}', (lower, upper)))
+                    expressions.append((C("apdb_part") >= lower) & (C("apdb_part") <= upper))
         else:
             pixels = self.pixelization.pixels(region)
             count = len(pixels)
             if self._config.partitioning.query_per_spatial_part:
-                expressions.extend(QExpr('"apdb_part" = {}', (pixel,)) for pixel in pixels)
+                expressions.extend((C("apdb_part") == pixel) for pixel in pixels)
             else:
                 # If the are many pixels then don't prepare statements.
                 can_prepare = len(pixels) <= 3
-                placeholders = ",".join(["{}"] * len(pixels))
-                expressions.append(
-                    QExpr(f'"apdb_part" IN ({placeholders})', tuple(pixels), can_prepare=can_prepare)
-                )
+                expressions.append(C("apdb_part").in_(pixels, can_prepare=can_prepare))
 
         return expressions, count
 
@@ -229,9 +227,6 @@ class Partitioner:
             else:
                 # If the are many partitions then don't prepare statements.
                 can_prepare = len(time_parts) <= 3
-                placeholders = ",".join(["{}"] * len(time_parts))
-                temporal_where = [
-                    QExpr(f'"apdb_time_part" IN ({placeholders})', tuple(time_parts), can_prepare=can_prepare)
-                ]
+                temporal_where = [C("apdb_time_part").in_(time_parts, can_prepare=can_prepare)]
 
         return tables, temporal_where

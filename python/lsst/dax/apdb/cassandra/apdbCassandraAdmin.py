@@ -47,6 +47,7 @@ from ..monitor import MonAgent
 from ..timer import Timer
 from .cassandra_utils import StatementFactory, execute_concurrent, quote_id
 from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
+from .queries import Column as C  # noqa: N817
 from .queries import Delete, Select
 from .sessionFactory import SessionContext
 
@@ -120,7 +121,7 @@ class ApdbCassandraAdmin(ApdbAdmin):
             # Get names of all keyspaces containing DiaSource table
             table_name = ApdbTables.DiaSource.table_name()
             query = Select("system_schema", "tables", ["keyspace_name"], extra_clause="ALLOW FILTERING")
-            query = query.where("table_name = {}", [table_name])
+            query = query.where(C("table_name") == table_name)
             stmt, params = stmt_factory.with_params(query)
 
             result = session.execute(stmt, params)
@@ -137,7 +138,7 @@ class ApdbCassandraAdmin(ApdbAdmin):
                 ("resource", "role", "permissions"),
                 extra_clause="ALLOW FILTERING",
             )
-            query = query.where("resource IN ({*})", resources)
+            query = query.where(C("resource").in_(resources))
             stmt, params = stmt_factory.with_params(query)
 
             try:
@@ -233,8 +234,8 @@ class ApdbCassandraAdmin(ApdbAdmin):
             for oid_chunk in chunk_iterable(oids, 1000):
                 query = (
                     Delete(keyspace, "DiaObjectLast")
-                    .where("apdb_part = {}", [apdb_part])
-                    .where('"diaObjectId" IN ({*})', oid_chunk)
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("diaObjectId").in_(oid_chunk))
                 )
                 object_deletes.append(context.stmt_factory.with_params(query))
 
@@ -265,23 +266,23 @@ class ApdbCassandraAdmin(ApdbAdmin):
                         table_name = context.schema.tableName(ApdbTables.DiaObject, time_part)
                         query = (
                             Delete(keyspace, table_name)
-                            .where("apdb_part = {}", [apdb_part])
-                            .where('"diaObjectId" IN ({*})', oid_chunk)
+                            .where(C("apdb_part") == apdb_part)
+                            .where(C("diaObjectId").in_(oid_chunk))
                         )
                         object_deletes.append(context.stmt_factory.with_params(query))
                     else:
                         table_name = context.schema.tableName(ApdbTables.DiaObject)
                         query = (
                             Delete(keyspace, table_name)
-                            .where("apdb_part = {}", [apdb_part])
-                            .where("apdb_time_part = {}", [time_part])
-                            .where('"diaObjectId" IN ({*})', oid_chunk)
+                            .where(C("apdb_part") == apdb_part)
+                            .where(C("apdb_time_part") == time_part)
+                            .where(C("diaObjectId").in_(oid_chunk))
                         )
                         object_deletes.append(context.stmt_factory.with_params(query))
 
         # Delete from DiaObjectLastToPartition table.
         for oid_chunk in chunk_iterable(sorted(object_ids), 1000):
-            query = Delete(keyspace, "DiaObjectLastToPartition").where('"diaObjectId" IN ({*})', oid_chunk)
+            query = Delete(keyspace, "DiaObjectLastToPartition").where(C("diaObjectId").in_(oid_chunk))
             object_deletes.append(context.stmt_factory.with_params(query))
 
         # Group sources by partition.
@@ -301,17 +302,17 @@ class ApdbCassandraAdmin(ApdbAdmin):
                     table_name = context.schema.tableName(ApdbTables.DiaSource, apdb_time_part)
                     query = (
                         Delete(keyspace, table_name)
-                        .where("apdb_part = {}", [apdb_part])
-                        .where('"diaSourceId" IN ({*})', id_chunk)
+                        .where(C("apdb_part") == apdb_part)
+                        .where(C("diaSourceId").in_(id_chunk))
                     )
                     source_deletes.append(context.stmt_factory.with_params(query))
                 else:
                     table_name = context.schema.tableName(ApdbTables.DiaSource)
                     query = (
                         Delete(keyspace, table_name)
-                        .where("apdb_part = {}", [apdb_part])
-                        .where("apdb_time_part = {}", [apdb_time_part])
-                        .where('"diaSourceId" IN ({*})', id_chunk)
+                        .where(C("apdb_part") == apdb_part)
+                        .where(C("apdb_time_part") == apdb_time_part)
+                        .where(C("diaSourceId").in_(id_chunk))
                     )
                     source_deletes.append(context.stmt_factory.with_params(query))
 
@@ -336,7 +337,7 @@ class ApdbCassandraAdmin(ApdbAdmin):
                     table_name = context.schema.tableName(ApdbTables.DiaForcedSource, apdb_time_part)
                     query = (
                         Delete(keyspace, table_name)
-                        .where("apdb_part = {}", [apdb_part])
+                        .where(C("apdb_part") == apdb_part)
                         .where(f'("diaObjectId", visit, detector) IN ({cl_str})')
                     )
                     forced_source_deletes.append(context.stmt_factory.with_params(query))
@@ -344,8 +345,8 @@ class ApdbCassandraAdmin(ApdbAdmin):
                     table_name = context.schema.tableName(ApdbTables.DiaForcedSource)
                     query = (
                         Delete(keyspace, table_name)
-                        .where("apdb_part = {}", [apdb_part])
-                        .where("apdb_time_part = {}", [apdb_time_part])
+                        .where(C("apdb_part") == apdb_part)
+                        .where(C("apdb_time_part") == apdb_time_part)
                         .where(f'("diaObjectId", visit, detector) IN ({cl_str})')
                     )
                     forced_source_deletes.append(context.stmt_factory.with_params(query))

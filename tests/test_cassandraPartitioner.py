@@ -106,7 +106,7 @@ class CassandraPartitionerTestCase(unittest.TestCase):
             result,
             [
                 QExpr(
-                    '"apdb_part" IN ({},{},{},{})',
+                    "apdb_part IN ({},{},{},{})",
                     (12058622, 12058623, 12058624, 12058625),
                     can_prepare=False,
                 )
@@ -114,19 +114,19 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         )
         result, count = partitioner.spatial_where(region, use_ranges=True)
         self.assertEqual(count, 4)
-        self.assertEqual(result, [QExpr('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))])
+        self.assertEqual(result, [QExpr("apdb_part >= {} AND apdb_part <= {}", (12058622, 12058625))])
 
         partitioner = self.make_partitioner(query_per_spatial_part=True)
         result, count = partitioner.spatial_where(region)
         self.assertEqual(count, 4)
-        self.assertIn(QExpr('"apdb_part" = {}', (12058622,)), result)
-        self.assertIn(QExpr('"apdb_part" = {}', (12058623,)), result)
-        self.assertIn(QExpr('"apdb_part" = {}', (12058624,)), result)
-        self.assertIn(QExpr('"apdb_part" = {}', (12058625,)), result)
+        self.assertIn(QExpr("apdb_part = {}", (12058622,)), result)
+        self.assertIn(QExpr("apdb_part = {}", (12058623,)), result)
+        self.assertIn(QExpr("apdb_part = {}", (12058624,)), result)
+        self.assertIn(QExpr("apdb_part = {}", (12058625,)), result)
 
         result, count = partitioner.spatial_where(region, use_ranges=True)
         self.assertEqual(count, 4)
-        self.assertEqual(result, [QExpr('"apdb_part" >= {} AND "apdb_part" <= {}', (12058622, 12058625))])
+        self.assertEqual(result, [QExpr("apdb_part >= {} AND apdb_part <= {}", (12058622, 12058625))])
 
     def _check_temporal_where(
         self,
@@ -159,7 +159,7 @@ class CassandraPartitionerTestCase(unittest.TestCase):
                 where,
                 [
                     QExpr(
-                        f'"apdb_time_part" IN ({placeholders})',
+                        f"apdb_time_part IN ({placeholders})",
                         tuple(range(part_start, part_end + 1)),
                         can_prepare=can_prepare,
                     )

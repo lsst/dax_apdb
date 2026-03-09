@@ -21,7 +21,7 @@
 
 import unittest
 
-from lsst.dax.apdb.cassandra.queries import ColumnExpr, Delete, Insert, QExpr, Select, Update
+from lsst.dax.apdb.cassandra.queries import Column, ColumnExpr, Delete, Insert, QExpr, Select, Update
 
 
 class QExprTestCase(unittest.TestCase):
@@ -93,6 +93,41 @@ class QExprTestCase(unittest.TestCase):
         self.assertEqual(clauses[1].expression, "x = {} AND z = 1000")
         self.assertEqual(clauses[1].parameters, (20,))
         self.assertFalse(clauses[1].can_prepare)
+
+
+class ColumnTestCase(unittest.TestCase):
+    """A test case for Column class."""
+
+    def test_basic(self) -> None:
+        """Test simple construction."""
+        c = Column("name")
+        self.assertEqual(str(c), "name")
+
+        c = Column("Name")
+        self.assertEqual(str(c), '"Name"')
+
+    def test_cmp(self) -> None:
+        """Test comparisons."""
+        c1 = Column("name")
+        c2 = Column("Instrument")
+        self.assertEqual(c1 == 100, QExpr("name = {}", [100]))
+        self.assertEqual("🔭" == c2, QExpr('"Instrument" = {}', ["🔭"]))
+        self.assertEqual(c1 != 100, QExpr("name != {}", [100]))
+        self.assertEqual("🔭" != c2, QExpr('"Instrument" != {}', ["🔭"]))
+        self.assertEqual(c1 < 100, QExpr("name < {}", [100]))
+        self.assertEqual("🔭" < c2, QExpr('"Instrument" > {}', ["🔭"]))
+        self.assertEqual(c1 <= 100, QExpr("name <= {}", [100]))
+        self.assertEqual("🔭" <= c2, QExpr('"Instrument" >= {}', ["🔭"]))
+        self.assertEqual(c1 > 100, QExpr("name > {}", [100]))
+        self.assertEqual("🔭" > c2, QExpr('"Instrument" < {}', ["🔭"]))
+        self.assertEqual(c1 >= 100, QExpr("name >= {}", [100]))
+        self.assertEqual("🔭" >= c2, QExpr('"Instrument" <= {}', ["🔭"]))
+
+    def test_in(self) -> None:
+        """Test IN operator."""
+        c = Column("name")
+        expr = c.in_([1, 2, 3])
+        self.assertEqual(expr, QExpr("name IN ({},{},{})", (1, 2, 3)))
 
 
 class SelectQueryTestCase(unittest.TestCase):
@@ -234,21 +269,21 @@ class UpdateQueryTestCase(unittest.TestCase):
         """Test simple construction."""
         query = Update("keyspace", "table")
         query = query.where("x = {}", (10,))
-        query = query.values("x = {}", (100,))
+        query = query.values(QExpr("x = {}", (100,)))
         self.assertEqual(str(query), "UPDATE keyspace.table SET x = {} WHERE x = {}")
         self.assertEqual(query.parameters, (100, 10))
 
         query = Update("Keyspace", "Table")
-        query = query.values('"Y" = {}', (20,))
+        query = query.values(Column("Y").update(20), Column("Z").update(30))
         query = query.where('"Y" = {}', (10,))
-        self.assertEqual(str(query), 'UPDATE "Keyspace"."Table" SET "Y" = {} WHERE "Y" = {}')
-        self.assertEqual(query.parameters, (20, 10))
+        self.assertEqual(str(query), 'UPDATE "Keyspace"."Table" SET "Y" = {}, "Z" = {} WHERE "Y" = {}')
+        self.assertEqual(query.parameters, (20, 30, 10))
 
     def test_can_prepare(self) -> None:
         """Test can_prepare handling."""
         query = Update("keyspace", "table")
         query = query.where("x = {}", (10,))
-        query = query.values("x = {}", (100,))
+        query = query.values(Column("x").update(100))
         self.assertTrue(query.can_prepare)
 
         query = query.where("y = {}", (10,), can_prepare=False)
@@ -256,14 +291,14 @@ class UpdateQueryTestCase(unittest.TestCase):
 
         query = Update("keyspace", "table", can_prepare=False)
         query = query.where("x = {}", (10,))
-        query = query.values("x = {}", (100,))
+        query = query.values(Column("x").update(100))
         self.assertFalse(query.can_prepare)
 
     def test_render(self) -> None:
         """Test render() method."""
         query = Update("keyspace", "table", where_clause=QExpr("x = {} AND y = {}", (10, 200)))
-        query = query.values("x = {}", (100,))
-        query = query.values("y = {}", (20,))
+        query = query.values(Column("x").update(100))
+        query = query.values(Column("y").update(20))
         self.assertEqual(query.parameters, (100, 20, 10, 200))
         self.assertEqual(query.render(), "UPDATE keyspace.table SET x = {}, y = {} WHERE x = {} AND y = {}")
         self.assertEqual(query.render("?"), "UPDATE keyspace.table SET x = ?, y = ? WHERE x = ? AND y = ?")

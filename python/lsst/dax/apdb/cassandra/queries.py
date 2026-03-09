@@ -147,7 +147,7 @@ class QExpr:
         return (
             self.expression == other.expression
             and self.parameters == other.parameters
-            and self._can_prepare == other._can_prepare
+            and self.can_prepare == other.can_prepare
         )
 
     def __str__(self) -> str:
@@ -210,6 +210,44 @@ class QExpr:
             raise TypeError(f"Unexpected keyword arguments: {kwargs}")
 
         return cls(expr, params, can_prepare=can_prepare)
+
+
+class Column:
+    """Class representing a table column, its main purpose is to generate
+    expressions (`QExpr`).
+    """
+
+    def __init__(self, column: str):
+        self._column = column
+
+    def __str__(self) -> str:
+        return _quote_id(self._column)
+
+    def __eq__(self, other: Any) -> QExpr:  # type: ignore[override]
+        return QExpr(f"{self} = {{}}", [other])
+
+    def __ne__(self, other: Any) -> QExpr:  # type: ignore[override]
+        return QExpr(f"{self} != {{}}", [other])
+
+    def __lt__(self, other: Any) -> QExpr:
+        return QExpr(f"{self} < {{}}", [other])
+
+    def __le__(self, other: Any) -> QExpr:
+        return QExpr(f"{self} <= {{}}", [other])
+
+    def __gt__(self, other: Any) -> QExpr:
+        return QExpr(f"{self} > {{}}", [other])
+
+    def __ge__(self, other: Any) -> QExpr:
+        return QExpr(f"{self} >= {{}}", [other])
+
+    def in_(self, other: Iterable, *, can_prepare: bool | None = None) -> QExpr:
+        """Generate IN operator."""
+        return QExpr(f"{self} IN ({{*}})", other, can_prepare=can_prepare)
+
+    def update(self, other: Any) -> QExpr:
+        """Generate column = value expression for UPDATE statement."""
+        return QExpr(f"{self} = {{}}", [other])
 
 
 class Select(Query):
@@ -500,20 +538,22 @@ class Update(Query):
             can_prepare=self._can_prepare,
         )
 
-    def values(self, expression: str, parameters: Iterable = ()) -> Update:
+    def values(self, *updates: QExpr) -> Update:
         """Define SET clause.
 
         Parameters
         ----------
-        expression : `str`
-            SET clause, e.g. "x = {}, y = 10".
-        parameters : `~collections.abc.Iterable`
+        updates : `QExpr`
+            One ot more SET clauses, e.g. "x = {}", "y = 10".
         """
-        new_clause = QExpr(expression, parameters)
-        if self._values is None:
-            values = new_clause
-        else:
-            values = self._values.join(new_clause, ", ")
+        if not updates:
+            return self
+        values = self._values
+        if values is None:
+            values = updates[0]
+            updates = updates[1:]
+        for update in updates:
+            values = values.join(update, ", ")
         return Update(
             keyspace=self._keyspace,
             table=self._table,

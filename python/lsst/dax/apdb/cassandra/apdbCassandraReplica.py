@@ -43,6 +43,7 @@ from .cassandra_utils import (
     execute_concurrent,
     select_concurrent,
 )
+from .queries import Column as C  # noqa: N817
 from .queries import ColumnExpr, Delete, Select
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ class ApdbCassandraReplica(ApdbReplica):
         table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
         # We want to avoid timezone mess so return timestamps as milliseconds.
         columns = (ColumnExpr("toUnixTimestamp(last_update_time)"), "apdb_replica_chunk", "unique_id")
-        query = Select(config.keyspace, table_name, columns).where("partition = {}", [partition])
+        query = Select(config.keyspace, table_name, columns).where(C("partition") == partition)
         statement, params = context.stmt_factory.with_params(query, prepare=False)
 
         with self._timer("chunks_select_time") as timer:
@@ -161,7 +162,8 @@ class ApdbCassandraReplica(ApdbReplica):
 
         table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
         query = Delete(config.keyspace, table_name)
-        query = query.where("partition = {} AND apdb_replica_chunk = {}", (-1, -1))
+        query = query.where(C("partition") == -1)
+        query = query.where(C("apdb_replica_chunk") == -1)
         statement = context.stmt_factory(query)
 
         queries = [(statement, param) for param in repl_table_params]
@@ -176,9 +178,9 @@ class ApdbCassandraReplica(ApdbReplica):
         for table in tables:
             table_name = context.schema.tableName(table)
             query = Delete(config.keyspace, table_name)
-            query = query.where("apdb_replica_chunk = {}", (-1,))
+            query = query.where(C("apdb_replica_chunk") == -1)
             if context.has_chunk_sub_partitions:
-                query = query.where("apdb_replica_subchunk = {}", (-1,))
+                query = query.where(C("apdb_replica_subchunk") == -1)
             statement = context.stmt_factory(query)
 
             queries = [(statement, param) for param in chunk_table_params]
@@ -207,8 +209,8 @@ class ApdbCassandraReplica(ApdbReplica):
             table_name = context.schema.tableName(ExtraTables.ApdbReplicaChunks)
             partition = 0
             query = Select(config.keyspace, table_name, ("apdb_replica_chunk", "has_subchunks"))
-            query = query.where("partition = {}", [partition])
-            query = query.where("apdb_replica_chunk IN ({*})", chunks)
+            query = query.where(C("partition") == partition)
+            query = query.where(C("apdb_replica_chunk").in_(chunks))
             stmt, params = context.stmt_factory.with_params(query, prepare=False)
             result = context.session.execute(
                 stmt,
@@ -244,7 +246,8 @@ class ApdbCassandraReplica(ApdbReplica):
                 replica_table = ExtraTables.replica_chunk_tables(True)[table]
                 table_name = context.schema.tableName(replica_table)
                 query = Select(config.keyspace, table_name, ["*"])
-                query = query.where("apdb_replica_chunk = {} AND apdb_replica_subchunk = {}", [0, 0])
+                query = query.where(C("apdb_replica_chunk") == 0)
+                query = query.where(C("apdb_replica_subchunk") == 0)
                 statement = context.stmt_factory(query, prepare=True)
 
                 queries: list[tuple] = []
@@ -270,7 +273,7 @@ class ApdbCassandraReplica(ApdbReplica):
             if have_non_subchunks:
                 replica_table = ExtraTables.replica_chunk_tables(False)[table]
                 table_name = context.schema.tableName(replica_table)
-                query = Select(config.keyspace, table_name, ["*"]).where("apdb_replica_chunk = {}", [0])
+                query = Select(config.keyspace, table_name, ["*"]).where(C("apdb_replica_chunk") == 0)
                 statement = context.stmt_factory(query, prepare=True)
 
                 queries = []
@@ -337,8 +340,8 @@ class ApdbCassandraReplica(ApdbReplica):
         if context.has_chunk_sub_partitions:
             subchunks = list(range(config.replica_sub_chunk_count))
             query = Select(config.keyspace, table_name, ["*"])
-            query = query.where("apdb_replica_chunk = {}", [0])
-            query = query.where("apdb_replica_subchunk IN ({*})", subchunks)
+            query = query.where(C("apdb_replica_chunk") == 0)
+            query = query.where(C("apdb_replica_subchunk").in_(subchunks))
             statement = context.stmt_factory(query, prepare=False)
 
             with self._timer("select_update_record_time", tags={"table": table_name}) as timer:
@@ -354,7 +357,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
         else:
             query = Select(config.keyspace, table_name, ["*"])
-            query = query.where("apdb_replica_chunk IN ({*})", chunks)
+            query = query.where(C("apdb_replica_chunk").in_(chunks))
             statement, params = context.stmt_factory(query, prepare=False)
 
             with self._timer("select_update_record_time", tags={"table": table_name}) as timer:

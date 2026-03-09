@@ -81,6 +81,7 @@ from .config import ApdbCassandraConfig, ApdbCassandraConnectionConfig, ApdbCass
 from .connectionContext import ConnectionContext, DbVersions
 from .exceptions import CassandraMissingError
 from .partitioner import Partitioner
+from .queries import Column as C  # noqa: N817
 from .queries import ColumnExpr, Delete, Insert, QExpr, Select, Update
 from .sessionFactory import SessionContext, SessionFactory
 
@@ -503,9 +504,9 @@ class ApdbCassandra(Apdb):
 
         table_name = context.schema.tableName(ExtraTables.DiaObjectDedup)
         query = Select(self._keyspace, table_name, column_names, extra_clause="ALLOW FILTERING")
-        query = query.where("dedup_part = {}", [0])
+        query = query.where(C("dedup_part") == 0)
         if since is not None:
-            query = query.where(f'"{validity_start_column}" >= {{}}', [0])
+            query = query.where(C(validity_start_column) >= 0)
 
         statement = context.stmt_factory(query, prepare=False)
 
@@ -566,11 +567,11 @@ class ApdbCassandra(Apdb):
         # Make a bunch of queries.
         statements = []
         for apdb_part, diaObjectIds in partitioned_object_ids.items():
-            spatial_where = [QExpr("apdb_part = {}", (apdb_part,))]
+            spatial_where = [C("apdb_part") == apdb_part]
             for table in tables:
                 query = Select(self._keyspace, table, column_names, extra_clause="ALLOW FILTERING")
                 for id_chunk in chunk_iterable(diaObjectIds, 10_000):
-                    id_where = QExpr('"diaObjectId" IN ({*})', id_chunk)
+                    id_where = C("diaObjectId").in_(id_chunk)
                     for clause in QExpr.combine(spatial_where, temporal_where, extra=id_where):
                         statements.append(
                             context.stmt_factory.with_params(query.where(clause), prepare=False)
@@ -613,7 +614,7 @@ class ApdbCassandra(Apdb):
 
         table_name = context.schema.tableName(ExtraTables.ApdbVisitDetector)
         query = Select(self._keyspace, table_name, [ColumnExpr("count(*)")])
-        query = query.where("visit = {} AND detector = {}", (visit, detector))
+        query = query.where((C("visit") == visit) & (C("detector") == detector))
         stmt, params = context.stmt_factory.with_params(query, prepare=False)
 
         with self._timer("contains_visit_detector_time", tags={"table": table_name}):
@@ -733,18 +734,18 @@ class ApdbCassandra(Apdb):
                 table_name = context.schema.tableName(ApdbTables.DiaSource, time_part)
                 update = (
                     Update(self._keyspace, table_name)
-                    .values('"diaObjectId" = {}', [diaObjectId])
-                    .where('apdb_part = {} AND "diaSourceId" = {}', (apdb_part, source_id.diaSourceId))
+                    .values(C("diaObjectId").update(diaObjectId))
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("diaSourceId") == source_id.diaSourceId)
                 )
             else:
                 table_name = context.schema.tableName(ApdbTables.DiaSource)
                 update = (
                     Update(self._keyspace, table_name)
-                    .values('"diaObjectId" = {}', [diaObjectId])
-                    .where(
-                        'apdb_part = {} AND apdb_time_part = {} AND "diaSourceId" = {}',
-                        (apdb_part, time_part, source_id.diaSourceId),
-                    )
+                    .values(C("diaObjectId").update(diaObjectId))
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("apdb_time_part") == time_part)
+                    .where(C("diaSourceId") == source_id.diaSourceId)
                 )
             statements.append(context.stmt_factory.with_params(update, prepare=True))
 
@@ -775,8 +776,9 @@ class ApdbCassandra(Apdb):
             table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
             update = (
                 Update(self._keyspace, table_name)
-                .values('"nDiaSources" = {}', [-1])
-                .where('apdb_part = {} AND "diaObjectId" = {}', (-1, -1))
+                .values(C("nDiaSources").update(-1))
+                .where(C("apdb_part") == -1)
+                .where(C("diaObjectId") == -1)
             )
             statement = context.stmt_factory(update, prepare=True)
             statements = []
@@ -838,8 +840,8 @@ class ApdbCassandra(Apdb):
         statements: list[tuple] = []
         for apdb_part, diaObjectIds in partitioned_object_ids.items():
             query = Select(self._keyspace, table_name, ["apdb_part", "diaObjectId"])
-            query = query.where("apdb_part = {}", [apdb_part])
-            query = query.where('"diaObjectId" IN ({*})', diaObjectIds)
+            query = query.where(C("apdb_part") == apdb_part)
+            query = query.where(C("diaObjectId").in_(diaObjectIds))
             statements.append(context.stmt_factory.with_params(query, prepare=False))
 
         with self._timer("select_time", tags={"table": table_name, "method": "setValidityEnd"}) as timer:
@@ -879,15 +881,15 @@ class ApdbCassandra(Apdb):
         for apdb_part, diaObjectIds in grouped_object_ids.items():
             delete = (
                 Delete(self._keyspace, table_name)
-                .where("apdb_part = {}", [apdb_part])
-                .where('"diaObjectId" IN ({*})', diaObjectIds)
+                .where(C("apdb_part") == apdb_part)
+                .where(C("diaObjectId").in_(diaObjectIds))
             )
             statements.append(context.stmt_factory.with_params(delete))
 
         # Also remove from DiaObjectLastToPartition.
         reverse_table_name = context.schema.tableName(ExtraTables.DiaObjectLastToPartition)
         delete = Delete(self._keyspace, reverse_table_name).where(
-            '"diaObjectId" IN ({*})', [rec[1] for rec in records]
+            C("diaObjectId").in_([rec[1] for rec in records])
         )
         statements.append(context.stmt_factory.with_params(delete))
 
@@ -948,9 +950,7 @@ class ApdbCassandra(Apdb):
             context.session.execute(query_str, execution_profile="write")
         else:
             dedup_time_value = self._timestamp_column_value(dedup_time)
-            delete = Delete(self._keyspace, table_name).where(
-                f'"{validity_start_column}" < {{}}', [dedup_time_value]
-            )
+            delete = Delete(self._keyspace, table_name).where(C(validity_start_column) < dedup_time_value)
             stmt, params = context.stmt_factory.with_params(delete)
             context.session.execute(stmt, params, execution_profile="write")
 
@@ -978,7 +978,7 @@ class ApdbCassandra(Apdb):
         columns = ["diaSourceId", "apdb_part", "apdb_time_part", "apdb_replica_chunk"]
         query = Select(self._keyspace, table_name, columns)
         for ids in chunk_iterable(idMap.keys(), 1_000):
-            full_query = query.where('"diaSourceId" IN ({*})', ids)
+            full_query = query.where(C("diaSourceId").in_(ids))
             selects.append(context.stmt_factory.with_params(full_query, prepare=False))
 
         # No need for DataFrame here, read data as tuples.
@@ -1011,23 +1011,25 @@ class ApdbCassandra(Apdb):
                 update = (
                     Update(self._keyspace, table_name)
                     .values(
-                        f'"ssObjectId" = {{}}, "diaObjectId" = NULL, "{reassign_time_column}" = {{}}',
-                        (ssObjectId, reassignTime),
+                        C("ssObjectId").update(ssObjectId),
+                        C("diaObjectId").update(None),
+                        C(reassign_time_column).update(reassignTime),
                     )
-                    .where('apdb_part = {} AND "diaSourceId" = {}', (apdb_part, diaSourceId))
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("diaSourceId") == diaSourceId)
                 )
             else:
                 table_name = context.schema.tableName(ApdbTables.DiaSource)
                 update = (
                     Update(self._keyspace, table_name)
                     .values(
-                        f'"ssObjectId" = {{}}, "diaObjectId" = NULL, "{reassign_time_column}" = {{}}',
-                        (ssObjectId, reassignTime),
+                        C("ssObjectId").update(ssObjectId),
+                        C("diaObjectId").update(None),
+                        C(reassign_time_column).update(reassignTime),
                     )
-                    .where(
-                        'apdb_part = {} AND "apdb_time_part" = {} AND "diaSourceId" = {}',
-                        (apdb_part, apdb_time_part, diaSourceId),
-                    )
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("apdb_time_part") == apdb_time_part)
+                    .where(C("diaSourceId") == diaSourceId)
                 )
             queries.append(context.stmt_factory.with_params(update, prepare=True))
 
@@ -1188,7 +1190,7 @@ class ApdbCassandra(Apdb):
         for id_chunk in chunk_iterable(ids, 10_000):
             id_chunk_list = tuple(id_chunk)
             query = Select(self._keyspace, table_name, ("diaObjectId", "apdb_part"))
-            query = query.where('"diaObjectId" IN ({*})', id_chunk_list)
+            query = query.where(C("diaObjectId").in_(id_chunk_list))
             queries.append(context.stmt_factory.with_params(query, prepare=False))
             object_count += len(id_chunk_list)
 
@@ -1833,8 +1835,8 @@ class ApdbCassandra(Apdb):
         statements: list[tuple] = []
         for apdb_part, diaObjectIds in ids_by_partition.items():
             query = Select(self._keyspace, table_name, columns)
-            query = query.where("apdb_part = {}", [apdb_part])
-            query = query.where('"diaObjectId" IN ({*})', diaObjectIds)
+            query = query.where(C("apdb_part") == apdb_part)
+            query = query.where(C("diaObjectId").in_(diaObjectIds))
             statements.append(context.stmt_factory.with_params(query, prepare=False))
 
         with self._timer(
