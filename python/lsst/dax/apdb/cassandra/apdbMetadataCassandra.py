@@ -27,7 +27,9 @@ from collections.abc import Generator
 from typing import Any
 
 from ..apdbMetadata import ApdbMetadata
-from .cassandra_utils import PreparedStatementCache, quote_id
+from .cassandra_utils import StatementFactory
+from .queries import Column as C  # noqa: N817
+from .queries import ColumnExpr, Delete, Insert, Select
 
 
 class ApdbMetadataCassandra(ApdbMetadata):
@@ -43,18 +45,19 @@ class ApdbMetadataCassandra(ApdbMetadata):
 
     def __init__(self, session: Any, table_name: str, keyspace: str, read_profile: str, write_profile: str):
         self._session = session
+        self._keyspace = keyspace
+        self._table = table_name
         self._read_profile = read_profile
         self._write_profile = write_profile
         self._part = 0  # Partition for all rows
-        self._preparer = PreparedStatementCache(session)
-        self._table_clause = f"{quote_id(keyspace)}.{quote_id(table_name)}"
+        self._stmt_factory = StatementFactory(session)
 
     def get(self, key: str, default: str | None = None) -> str | None:
         # Docstring is inherited.
-        query = f"SELECT value FROM {self._table_clause} WHERE meta_part = ? AND name = ?"
-        result = self._session.execute(
-            self._preparer.prepare(query), (self._part, key), execution_profile=self._read_profile
-        )
+        query = Select(self._keyspace, self._table, ["value"])
+        query = query.where((C("meta_part") == self._part) & (C("name") == key))
+        stmt, params = self._stmt_factory.with_params(query)
+        result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         if (row := result.one()) is not None:
             return row[0]
         else:
@@ -64,42 +67,42 @@ class ApdbMetadataCassandra(ApdbMetadata):
         # Docstring is inherited.
         if not key or not value:
             raise ValueError("name and value cannot be empty")
-        query = f"INSERT INTO {self._table_clause} (meta_part, name, value) VALUES (?, ?, ?)"
+        query = Insert(self._keyspace, self._table, ("meta_part", "name", "value"))
+        stmt = self._stmt_factory(query)
         if not force and self.get(key) is not None:
             raise KeyError(f"Metadata key {key!r} already exists")
         # Race is still possible between check and insert.
-        self._session.execute(
-            self._preparer.prepare(query), (self._part, key, value), execution_profile=self._write_profile
-        )
+        self._session.execute(stmt, (self._part, key, value), execution_profile=self._write_profile)
 
     def delete(self, key: str) -> bool:
         # Docstring is inherited.
         if not key:
             raise ValueError("name cannot be empty")
-        query = f"DELETE FROM {self._table_clause} WHERE meta_part = ? AND name = ?"
+        query = (
+            Delete(self._keyspace, self._table).where(C("meta_part") == self._part).where(C("name") == key)
+        )
+        stmt, params = self._stmt_factory.with_params(query)
         # Cassandra cannot tell how many rows are deleted, just check if row
         # exists now.
         exists = self.get(key) is not None
         # Race is still possible between check and remove.
-        self._session.execute(
-            self._preparer.prepare(query), (self._part, key), execution_profile=self._write_profile
-        )
+        self._session.execute(stmt, params, execution_profile=self._write_profile)
         return exists
 
     def items(self) -> Generator[tuple[str, str], None, None]:
         # Docstring is inherited.
-        query = f"SELECT name, value FROM {self._table_clause} WHERE meta_part = ?"
-        result = self._session.execute(
-            self._preparer.prepare(query), (self._part,), execution_profile=self._read_profile
-        )
+        query = Select(self._keyspace, self._table, ("name", "value"))
+        query = query.where(C("meta_part") == self._part)
+        stmt, params = self._stmt_factory.with_params(query)
+        result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         for row in result:
             yield tuple(row)
 
     def empty(self) -> bool:
         # Docstring is inherited.
-        query = f"SELECT count(*) FROM {self._table_clause} WHERE meta_part = ?"
-        result = self._session.execute(
-            self._preparer.prepare(query), (self._part,), execution_profile=self._read_profile
-        )
+        query = Select(self._keyspace, self._table, [ColumnExpr("count(*)")])
+        query = query.where(C("meta_part") == self._part)
+        stmt, params = self._stmt_factory.with_params(query)
+        result = self._session.execute(stmt, params, execution_profile=self._read_profile)
         row = result.one()
         return row[0] == 0

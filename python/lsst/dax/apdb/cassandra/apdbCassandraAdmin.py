@@ -45,8 +45,10 @@ from ..apdbAdmin import ApdbAdmin, DiaForcedSourceLocator, DiaObjectLocator, Dia
 from ..apdbSchema import ApdbTables
 from ..monitor import MonAgent
 from ..timer import Timer
-from .cassandra_utils import execute_concurrent, quote_id
+from .cassandra_utils import StatementFactory, execute_concurrent, quote_id
 from .config import ApdbCassandraConfig, ApdbCassandraTimePartitionRange
+from .queries import Column as C  # noqa: N817
+from .queries import Delete, Select
 from .sessionFactory import SessionContext
 
 if TYPE_CHECKING:
@@ -114,24 +116,33 @@ class ApdbCassandraAdmin(ApdbAdmin):
         # database.
         config = ApdbCassandraConfig(contact_points=(host,), keyspace="*")
         with SessionContext(config) as session:
+            stmt_factory = StatementFactory(session)
+
             # Get names of all keyspaces containing DiaSource table
             table_name = ApdbTables.DiaSource.table_name()
-            query = "select keyspace_name from system_schema.tables where table_name = %s ALLOW FILTERING"
-            result = session.execute(query, (table_name,))
+            query = Select("system_schema", "tables", ["keyspace_name"], extra_clause="ALLOW FILTERING")
+            query = query.where(C("table_name") == table_name)
+            stmt, params = stmt_factory.with_params(query)
+
+            result = session.execute(stmt, params)
             keyspaces = [row[0] for row in result.all()]
 
             if not keyspaces:
                 return []
 
             # Retrieve roles for each keyspace.
-            template = ", ".join(["%s"] * len(keyspaces))
-            query = (
-                "SELECT resource, role, permissions FROM system_auth.role_permissions "
-                f"WHERE resource IN ({template}) ALLOW FILTERING"
-            )
             resources = [f"data/{keyspace}" for keyspace in keyspaces]
+            query = Select(
+                "system_auth",
+                "role_permissions",
+                ("resource", "role", "permissions"),
+                extra_clause="ALLOW FILTERING",
+            )
+            query = query.where(C("resource").in_(resources))
+            stmt, params = stmt_factory.with_params(query)
+
             try:
-                result = session.execute(query, resources)
+                result = session.execute(stmt, params)
                 # If anonymous access is enabled then result will be empty,
                 # set infos to have empty permissions dict in that case.
                 infos = {keyspace: DatabaseInfo(name=keyspace, permissions={}) for keyspace in keyspaces}
@@ -221,14 +232,12 @@ class ApdbCassandraAdmin(ApdbAdmin):
             oids = sorted(oids)
             object_count += len(oids)
             for oid_chunk in chunk_iterable(oids, 1000):
-                oids_str = ",".join(str(oid) for oid in oid_chunk)
-                object_deletes.append(
-                    (
-                        f'DELETE FROM "{keyspace}"."DiaObjectLast" '
-                        f'WHERE apdb_part = {apdb_part} and "diaObjectId" IN ({oids_str});',
-                        (),
-                    )
+                query = (
+                    Delete(keyspace, "DiaObjectLast")
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("diaObjectId").in_(oid_chunk))
                 )
+                object_deletes.append(context.stmt_factory.with_params(query))
 
         # If DiaObject is in use then delete from that too.
         if has_dia_object_table:
@@ -253,37 +262,28 @@ class ApdbCassandraAdmin(ApdbAdmin):
                         oids_by_partition[(apdb_part, time_part)].append(oid)
             for (apdb_part, time_part), oids in oids_by_partition.items():
                 for oid_chunk in chunk_iterable(oids, 1000):
-                    oids_str = ",".join(str(oid) for oid in oid_chunk)
                     if config.partitioning.time_partition_tables:
                         table_name = context.schema.tableName(ApdbTables.DiaObject, time_part)
-                        object_deletes.append(
-                            (
-                                f'DELETE FROM "{keyspace}"."{table_name}" '
-                                f'WHERE apdb_part = {apdb_part} AND "diaObjectId" IN ({oids_str})',
-                                (),
-                            )
+                        query = (
+                            Delete(keyspace, table_name)
+                            .where(C("apdb_part") == apdb_part)
+                            .where(C("diaObjectId").in_(oid_chunk))
                         )
+                        object_deletes.append(context.stmt_factory.with_params(query))
                     else:
                         table_name = context.schema.tableName(ApdbTables.DiaObject)
-                        object_deletes.append(
-                            (
-                                f'DELETE FROM "{keyspace}"."{table_name}" '
-                                f"WHERE apdb_part = {apdb_part} AND apdb_time_part = {time_part} "
-                                f'AND "diaObjectId" IN ({oids_str})',
-                                (),
-                            )
+                        query = (
+                            Delete(keyspace, table_name)
+                            .where(C("apdb_part") == apdb_part)
+                            .where(C("apdb_time_part") == time_part)
+                            .where(C("diaObjectId").in_(oid_chunk))
                         )
+                        object_deletes.append(context.stmt_factory.with_params(query))
 
         # Delete from DiaObjectLastToPartition table.
         for oid_chunk in chunk_iterable(sorted(object_ids), 1000):
-            oids_str = ",".join(str(oid) for oid in oid_chunk)
-            object_deletes.append(
-                (
-                    f'DELETE FROM "{keyspace}"."DiaObjectLastToPartition" '
-                    f'WHERE "diaObjectId" IN ({oids_str})',
-                    (),
-                )
-            )
+            query = Delete(keyspace, "DiaObjectLastToPartition").where(C("diaObjectId").in_(oid_chunk))
+            object_deletes.append(context.stmt_factory.with_params(query))
 
         # Group sources by partition.
         source_partitions = defaultdict(list)
@@ -298,26 +298,23 @@ class ApdbCassandraAdmin(ApdbAdmin):
             source_ids = sorted(source.diaSourceId for source in source_list)
             source_count += len(source_ids)
             for id_chunk in chunk_iterable(source_ids, 1000):
-                ids_str = ",".join(str(id) for id in id_chunk)
                 if config.partitioning.time_partition_tables:
                     table_name = context.schema.tableName(ApdbTables.DiaSource, apdb_time_part)
-                    source_deletes.append(
-                        (
-                            f'DELETE FROM "{keyspace}"."{table_name}" '
-                            f'WHERE apdb_part = {apdb_part} and "diaSourceId" IN ({ids_str})',
-                            (),
-                        )
+                    query = (
+                        Delete(keyspace, table_name)
+                        .where(C("apdb_part") == apdb_part)
+                        .where(C("diaSourceId").in_(id_chunk))
                     )
+                    source_deletes.append(context.stmt_factory.with_params(query))
                 else:
                     table_name = context.schema.tableName(ApdbTables.DiaSource)
-                    source_deletes.append(
-                        (
-                            f'DELETE FROM "{keyspace}"."{table_name}" '
-                            f"WHERE apdb_part = {apdb_part} AND apdb_time_part = {apdb_time_part} "
-                            f'AND "diaSourceId" IN ({ids_str})',
-                            (),
-                        )
+                    query = (
+                        Delete(keyspace, table_name)
+                        .where(C("apdb_part") == apdb_part)
+                        .where(C("apdb_time_part") == apdb_time_part)
+                        .where(C("diaSourceId").in_(id_chunk))
                     )
+                    source_deletes.append(context.stmt_factory.with_params(query))
 
         # Group forced sources by partition.
         forced_source_partitions = defaultdict(list)
@@ -338,25 +335,21 @@ class ApdbCassandraAdmin(ApdbAdmin):
                 cl_str = ",".join(f"({oid}, {v}, {d})" for oid, v, d in key_chunk)
                 if config.partitioning.time_partition_tables:
                     table_name = context.schema.tableName(ApdbTables.DiaForcedSource, apdb_time_part)
-                    forced_source_deletes.append(
-                        (
-                            f'DELETE FROM "{keyspace}"."{table_name}" '
-                            f"WHERE apdb_part = {apdb_part}"
-                            f'AND ("diaObjectId", visit, detector) IN ({cl_str})',
-                            (),
-                        )
+                    query = (
+                        Delete(keyspace, table_name)
+                        .where(C("apdb_part") == apdb_part)
+                        .where(f'("diaObjectId", visit, detector) IN ({cl_str})')
                     )
+                    forced_source_deletes.append(context.stmt_factory.with_params(query))
                 else:
                     table_name = context.schema.tableName(ApdbTables.DiaForcedSource)
-                    forced_source_deletes.append(
-                        (
-                            f'DELETE FROM "{keyspace}"."{table_name}" '
-                            f"WHERE apdb_part = {apdb_part} "
-                            f"AND apdb_time_part = {apdb_time_part} "
-                            f'AND ("diaObjectId", visit, detector) IN ({cl_str})',
-                            (),
-                        )
+                    query = (
+                        Delete(keyspace, table_name)
+                        .where(C("apdb_part") == apdb_part)
+                        .where(C("apdb_time_part") == apdb_time_part)
+                        .where(f'("diaObjectId", visit, detector) IN ({cl_str})')
                     )
+                    forced_source_deletes.append(context.stmt_factory.with_params(query))
 
         _LOG.info(
             "Deleting %d objects, %d sources, and %d forced sources",

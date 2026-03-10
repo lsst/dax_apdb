@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = [
     "ApdbCassandraTableData",
     "PreparedStatementCache",
+    "StatementFactory",
     "literal",
     "quote_id",
     "raw_data_factory",
@@ -46,7 +47,7 @@ import pandas
 try:
     import cassandra.concurrent
     from cassandra.cluster import EXEC_PROFILE_DEFAULT, Session
-    from cassandra.query import PreparedStatement
+    from cassandra.query import PreparedStatement, SimpleStatement
 
     CASSANDRA_IMPORTED = True
 except ImportError:
@@ -55,6 +56,7 @@ except ImportError:
 
 from .. import schema_model
 from ..apdbReplica import ApdbTableData
+from .queries import Query
 
 _LOG = logging.getLogger(__name__)
 
@@ -181,6 +183,59 @@ class PreparedStatementCache:
             stmt = self._session.prepare(query)
             self._prepared_statements[query] = stmt
         return stmt
+
+
+class StatementFactory:
+    """Class that builds Cassandra statements from Query objects."""
+
+    def __init__(self, session: Session, cache: PreparedStatementCache | None = None) -> None:
+        self._session = session
+        self._prepared_cache = cache
+
+    def __call__(self, query: Query, prepare: bool = False) -> PreparedStatement | SimpleStatement:
+        """Generate Cassandra statement from Query.
+
+        Parameters
+        ----------
+        query : `Query`
+            Query to convert to Cassandra statement.
+        prepare : `bool`, optional
+            if `True` then generate prepared statement (and only if
+            ``query.can_prepare`` is True).
+
+        Returns
+        -------
+        statement : `PreparedStatement` or `SimpleStatement`
+            Statement to execute.
+        """
+        if prepare and query.can_prepare and self._prepared_cache is not None:
+            stmt = self._prepared_cache.prepare(query.render("?"))
+        else:
+            stmt = SimpleStatement(query.render("%s"))
+        return stmt
+
+    def with_params(
+        self, query: Query, prepare: bool = False
+    ) -> tuple[PreparedStatement | SimpleStatement, tuple]:
+        """Generate Cassandra statement and its parameters from Query.
+
+        Parameters
+        ----------
+        query : `Query`
+            Query to convert to Cassandra statement.
+        prepare : `bool`, optional
+            if `True` then generate prepared statement (and only if
+            ``query.can_prepare`` is True).
+
+        Returns
+        -------
+        statement : `PreparedStatement` or `SimpleStatement`
+            Statement to execute.
+        parameters : `tuple`
+            Parameters for this statement.
+        """
+        stmt = self(query, prepare)
+        return stmt, query.parameters
 
 
 def raw_data_factory(colnames: list[str], rows: list[tuple]) -> ApdbCassandraTableData:
