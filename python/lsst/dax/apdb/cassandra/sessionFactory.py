@@ -24,13 +24,11 @@ from __future__ import annotations
 __all__ = ["SessionContext", "SessionFactory"]
 
 import contextlib
-import cProfile
-import io
 import logging
+import logging.handlers
 import os
-import pstats
-from collections.abc import Mapping
-from contextlib import ExitStack
+from collections.abc import Iterator, Mapping
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from typing import TYPE_CHECKING, Any
 
 # If cassandra-driver is not there the module can still be imported
@@ -62,9 +60,29 @@ _MON = MonAgent(__name__)
 _DO_PROFILE = os.environ.get("DAX_APDB_DM53808_PROFILE")
 
 
-def _profile_context() -> Any:
+@contextmanager
+def _logging_context() -> Iterator[logging.Handler]:
+    logger = logging.getLogger("cassandra")
+    old_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    stream_handler = logging.StreamHandler()
+    root = logging.getLogger()
+    stream_handler.setFormatter(root.handlers[0].formatter)
+    handler = logging.handlers.MemoryHandler(1_000_000, target=stream_handler, flushOnClose=False)
+    logger.addHandler(handler)
+
+    yield handler
+
+    logger.handlers.remove(handler)
+    logger.setLevel(old_level)
+    logger.propagate = True
+
+
+def _profile_context() -> AbstractContextManager[logging.Handler] | contextlib.nullcontext:
     if _DO_PROFILE:
-        return cProfile.Profile()
+        return _logging_context()
     else:
         return contextlib.nullcontext()
 
@@ -168,17 +186,8 @@ class SessionFactory:
                 )
                 session = cluster.connect()
 
-        if cluster_connect_prf and timer.accumulated()[1] > _profile_cpu_threshold():
-            out = io.StringIO()
-            ps = (
-                pstats.Stats(cluster_connect_prf, stream=out)
-                .sort_stats(pstats.SortKey.CUMULATIVE)
-                .strip_dirs()
-            )
-            ps.print_stats(10)
-            # Make it a single line.
-            text = out.getvalue().strip().replace("\n", "\\n")
-            _LOG.info(text)
+            if cluster_connect_prf and timer.accumulated()[1] > _profile_cpu_threshold():
+                cluster_connect_prf.flush()
 
         # Dump queries if debug level is enabled.
         if _LOG.isEnabledFor(logging.DEBUG):
