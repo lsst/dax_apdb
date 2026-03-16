@@ -58,10 +58,12 @@ from ..apdbUpdateRecord import (
     ApdbReassignDiaSourceToDiaObjectRecord,
     ApdbUpdateNDiaSourcesRecord,
     ApdbUpdateRecord,
+    ApdbWithdrawDiaForcedSourceRecord,
+    ApdbWithdrawDiaSourceRecord,
 )
 from ..config import ApdbConfig
 from ..monitor import MonAgent
-from ..recordIds import DiaObjectId, DiaSourceId
+from ..recordIds import DiaForcedSourceId, DiaObjectId, DiaSourceId
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import IncompatibleVersionError, VersionTuple
@@ -865,6 +867,18 @@ class ApdbSql(Apdb):
         self, objects: list[DiaObjectId], validityEnd: astropy.time.Time, raise_on_missing_id: bool = False
     ) -> int:
         # docstring is inherited from a base class
+
+        with self._engine.begin() as conn:
+            return self._setValidityEnd(conn, objects, validityEnd, raise_on_missing_id=raise_on_missing_id)
+
+    def _setValidityEnd(
+        self,
+        conn: sqlalchemy.Connection,
+        objects: list[DiaObjectId],
+        validityEnd: astropy.time.Time,
+        raise_on_missing_id: bool = False,
+    ) -> int:
+        # docstring is inherited from a base class
         if not objects:
             return 0
 
@@ -882,48 +896,47 @@ class ApdbSql(Apdb):
             )
         )
 
-        with self._engine.begin() as conn:
-            result = conn.execute(query)
-            found_ids = set(result.scalars())
+        result = conn.execute(query)
+        found_ids = set(result.scalars())
 
-            # Check that we found all that is requested.
-            if raise_on_missing_id:
-                if missing_ids := (requested_ids - found_ids):
-                    raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+        # Check that we found all that is requested.
+        if raise_on_missing_id:
+            if missing_ids := (requested_ids - found_ids):
+                raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
 
-            # Filter existing records.
-            if len(objects) != len(found_ids):
-                objects = [obj for obj in objects if obj.diaObjectId in found_ids]
+        # Filter existing records.
+        if len(objects) != len(found_ids):
+            objects = [obj for obj in objects if obj.diaObjectId in found_ids]
 
-            if not objects:
-                return 0
+        if not objects:
+            return 0
 
-            values = {validity_end_column: validityEnd_value}
-            update = (
-                table.update()
-                .where(
-                    sqlalchemy.and_(
-                        table.columns["diaObjectId"].in_(sorted(found_ids)),
-                        table.columns[validity_end_column].is_(None),
-                    )
+        values = {validity_end_column: validityEnd_value}
+        update = (
+            table.update()
+            .where(
+                sqlalchemy.and_(
+                    table.columns["diaObjectId"].in_(sorted(found_ids)),
+                    table.columns[validity_end_column].is_(None),
                 )
-                .values(**values)
             )
-            result = conn.execute(update)
+            .values(**values)
+        )
+        result = conn.execute(update)
+        if result.rowcount != len(found_ids):
+            raise RuntimeError(
+                f"Unexpected mismatch in the number of records updated. Object IDs = {found_ids}"
+            )
+
+        # Also drop them from DiaObjectLast.
+        if self.config.dia_object_index == "last_object_table":
+            last_table = self._schema.get_table(ApdbTables.DiaObjectLast)
+            delete = last_table.delete().where(last_table.columns["diaObjectId"].in_(sorted(found_ids)))
+            result = conn.execute(delete)
             if result.rowcount != len(found_ids):
                 raise RuntimeError(
-                    f"Unexpected mismatch in the number of records updated. Object IDs = {found_ids}"
+                    f"Unexpected mismatch in the number of records deleted. Object IDs = {found_ids}"
                 )
-
-            # Also drop them from DiaObjectLast.
-            if self.config.dia_object_index == "last_object_table":
-                last_table = self._schema.get_table(ApdbTables.DiaObjectLast)
-                delete = last_table.delete().where(last_table.columns["diaObjectId"].in_(sorted(found_ids)))
-                result = conn.execute(delete)
-                if result.rowcount != len(found_ids):
-                    raise RuntimeError(
-                        f"Unexpected mismatch in the number of records deleted. Object IDs = {found_ids}"
-                    )
 
         # If replication is enabled then send all updates.
         if self._schema.replication_enabled:
@@ -944,7 +957,7 @@ class ApdbSql(Apdb):
                 for index, obj in enumerate(objects)
             ]
 
-            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True, connection=conn)
 
         return len(objects)
 
@@ -988,6 +1001,179 @@ class ApdbSql(Apdb):
             if missing_ids:
                 missing = ",".join(str(item) for item in missing_ids)
                 raise ValueError(f"Following DiaSource IDs do not exist in the database: {missing}")
+
+    def withdrawDiaSources(
+        self,
+        diaSourceIds: Iterable[DiaSourceId],
+        *,
+        timeWithdrawn: astropy.time.Time | None = None,
+        decrement_nDiaSources: bool = True,
+        closeValidity: bool = True,
+    ) -> None:
+        # docstring is inherited from a base class
+
+        diaSourceIds = list(diaSourceIds)
+        source_ids = {source.diaSourceId for source in diaSourceIds}
+
+        if timeWithdrawn is None:
+            timeWithdrawn = astropy.time.Time.now()
+        time_value = self._timestamp_column_value(timeWithdrawn)
+        column_name = self._timestamp_column_name("time_withdrawn")
+
+        with self._engine.begin() as conn:
+            # Make sure that all DiaSources exist.
+            found_sources = self._get_diasource_data(conn, source_ids, "diaObjectId")
+            if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
+                raise LookupError(f"Some source IDs are missing from DiaSource table: {missing_ids}")
+            original_object_ids = {row.diaSourceId: row.diaObjectId for row in found_sources}
+
+            # Set time_withdrawn for sources.
+            table = self._schema.get_table(ApdbTables.DiaSource)
+            where = table.columns["diaSourceId"].in_(sorted(source_ids))
+            update = table.update().where(where).values({column_name: time_value})
+            conn.execute(update)
+
+            update_records: list[ApdbUpdateRecord] = []
+            update_order = 0
+
+            # If replication is enabled then send all updates.
+            if self._schema.replication_enabled:
+                current_time = self._current_time()
+                current_time_ns = int(current_time.unix_tai * 1e9)
+                replica_chunk = ReplicaChunk.make_replica_chunk(
+                    current_time, self.config.replica_chunk_seconds
+                )
+
+                update_records = [
+                    ApdbWithdrawDiaSourceRecord(
+                        diaSourceId=source.diaSourceId,
+                        ra=source.ra,
+                        dec=source.dec,
+                        midpointMjdTai=source.midpointMjdTai,
+                        update_time_ns=current_time_ns,
+                        update_order=update_order,
+                        timeWithdrawnMjdTai=float(timeWithdrawn.tai.mjd),
+                    )
+                    for update_order, source in enumerate(diaSourceIds)
+                ]
+                if update_records:
+                    self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True, connection=conn)
+
+            # Decrement nDiaSources for the matching DiaObjects.
+            if decrement_nDiaSources:
+                all_object_ids = set(original_object_ids.values())
+                found_objects = self._get_diaobject_data(conn, all_object_ids, "ra", "dec", "nDiaSources")
+                found_objects_by_id = {row.diaObjectId: row for row in found_objects}
+
+                decrements: Counter = Counter(original_object_ids.values())
+
+                # DiaObject tables to update.
+                object_tables = [self._schema.get_table(ApdbTables.DiaObject)]
+                if self.config.dia_object_index == "last_object_table":
+                    object_tables.append(self._schema.get_table(ApdbTables.DiaObjectLast))
+
+                if decrements:
+                    for table in object_tables:
+                        for diaObjectId, decrement in decrements.items():
+                            update = (
+                                table.update()
+                                .where(table.columns["diaObjectId"] == diaObjectId)
+                                .values(nDiaSources=table.columns["nDiaSources"] - decrement)
+                            )
+                            conn.execute(update)
+
+                    # Also send updated values to replica.
+                    if self._schema.replication_enabled:
+                        current_time = self._current_time()
+                        current_time_ns = int(current_time.unix_tai * 1e9)
+                        replica_chunk = ReplicaChunk.make_replica_chunk(
+                            current_time, self.config.replica_chunk_seconds
+                        )
+
+                        update_records = []
+                        for diaObjectId, dia_object in found_objects_by_id.items():
+                            decrement = decrements.get(diaObjectId, 0)
+                            update_records.append(
+                                ApdbUpdateNDiaSourcesRecord(
+                                    diaObjectId=diaObjectId,
+                                    ra=dia_object.ra,
+                                    dec=dia_object.dec,
+                                    nDiaSources=dia_object.nDiaSources - decrement,
+                                    update_time_ns=current_time_ns,
+                                    update_order=update_order,
+                                )
+                            )
+                            update_order += 1
+
+                        if update_records:
+                            self._storeUpdateRecords(
+                                update_records, replica_chunk, store_chunk=True, connection=conn
+                            )
+
+                    if closeValidity:
+                        objects_to_close = []
+                        for diaObjectId, dia_object in found_objects_by_id.items():
+                            decrement = decrements.get(diaObjectId, 0)
+                            if decrement >= dia_object.nDiaSources:
+                                objects_to_close.append(
+                                    DiaObjectId(diaObjectId=diaObjectId, ra=dia_object.ra, dec=dia_object.dec)
+                                )
+                        if objects_to_close:
+                            self._setValidityEnd(conn, objects_to_close, timeWithdrawn)
+
+    def withdrawDiaForcedSources(
+        self,
+        diaForcedSourceIds: Iterable[DiaForcedSourceId],
+        *,
+        timeWithdrawn: astropy.time.Time | None = None,
+    ) -> None:
+        # docstring is inherited from a base class
+
+        diaForcedSourceIds = list(diaForcedSourceIds)
+        source_ids = {(source.diaObjectId, source.visit, source.detector) for source in diaForcedSourceIds}
+
+        if timeWithdrawn is None:
+            timeWithdrawn = astropy.time.Time.now()
+        time_value = self._timestamp_column_value(timeWithdrawn)
+        column_name = self._timestamp_column_name("time_withdrawn")
+
+        with self._engine.begin() as conn:
+            # Make sure that all DiaForcedSources exist.
+            table = self._schema.get_table(ApdbTables.DiaForcedSource)
+            id_columns = [table.columns["diaObjectId"], table.columns["visit"], table.columns["detector"]]
+            where = sqlalchemy.tuple_(*id_columns).in_(sorted(source_ids))
+            query = sql.select(*id_columns).where(where)
+            result = conn.execute(query)
+            if missing_ids := (source_ids - {(row.diaObjectId, row.visit, row.detector) for row in result}):
+                raise LookupError(f"Some source IDs are missing from DiaForcedSource table: {missing_ids}")
+
+            update = table.update().where(where).values({column_name: time_value})
+            conn.execute(update)
+
+            # If replication is enabled then send all updates.
+            if self._schema.replication_enabled:
+                current_time = self._current_time()
+                current_time_ns = int(current_time.unix_tai * 1e9)
+                replica_chunk = ReplicaChunk.make_replica_chunk(
+                    current_time, self.config.replica_chunk_seconds
+                )
+
+                update_records = [
+                    ApdbWithdrawDiaForcedSourceRecord(
+                        diaObjectId=source.diaObjectId,
+                        visit=source.visit,
+                        detector=source.detector,
+                        ra=source.ra,
+                        dec=source.dec,
+                        midpointMjdTai=source.midpointMjdTai,
+                        update_time_ns=current_time_ns,
+                        update_order=index,
+                        timeWithdrawnMjdTai=float(timeWithdrawn.tai.mjd),
+                    )
+                    for index, source in enumerate(diaForcedSourceIds)
+                ]
+
+                self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True, connection=conn)
 
     def countUnassociatedObjects(self) -> int:
         # docstring is inherited from a base class
@@ -1248,25 +1434,25 @@ class ApdbSql(Apdb):
                     schema=table.schema,
                 )
                 timer.add_values(row_count=len(last_objs))
-        else:
-            # truncate existing validity intervals
-            table = self._schema.get_table(ApdbTables.DiaObject)
 
-            update = (
-                table.update()
-                .values(**{validity_end_column: timestamp})
-                .where(
-                    sql.expression.and_(
-                        table.columns["diaObjectId"].in_(ids),
-                        table.columns[validity_end_column].is_(None),
-                    )
+        # truncate existing validity intervals
+        table = self._schema.get_table(ApdbTables.DiaObject)
+
+        update = (
+            table.update()
+            .values(**{validity_end_column: timestamp})
+            .where(
+                sql.expression.and_(
+                    table.columns["diaObjectId"].in_(ids),
+                    table.columns[validity_end_column].is_(None),
                 )
             )
+        )
 
-            with self._timer("truncate_time", tags={"table": table.name}) as timer:
-                res = connection.execute(update)
-                timer.add_values(row_count=res.rowcount)
-            _LOG.debug("truncated %s intervals", res.rowcount)
+        with self._timer("truncate_time", tags={"table": table.name}) as timer:
+            res = connection.execute(update)
+            timer.add_values(row_count=res.rowcount)
+        _LOG.debug("truncated %s intervals", res.rowcount)
 
         objs = _coerce_uint64(objs)
 
