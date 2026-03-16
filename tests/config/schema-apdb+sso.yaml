@@ -197,6 +197,10 @@ tables:
     datatype: double
     nullable: false
     description: Time when the image was processed and this DiaSource record was generated.
+  - name: timeWithdrawnMjdTai
+    datatype: double
+    nullable: true
+    description: Time when this record was marked invalid.
   primaryKey: "#DiaSource.diaSourceId"
   indexes:
   - name: IDX_DiaSource_visitDetector
@@ -270,6 +274,10 @@ tables:
     datatype: double
     nullable: false
     description: Time when this record was generated.
+  - name: timeWithdrawnMjdTai
+    datatype: double
+    nullable: true
+    description: Time when this record was marked invalid.
   primaryKey:
   - "#DiaForcedSource.diaObjectId"
   - "#DiaForcedSource.visit"
