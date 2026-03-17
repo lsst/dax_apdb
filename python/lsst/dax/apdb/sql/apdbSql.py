@@ -1025,7 +1025,9 @@ class ApdbSql(Apdb):
             found_sources = self._get_diasource_data(conn, source_ids, "diaObjectId")
             if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
                 raise LookupError(f"Some source IDs are missing from DiaSource table: {missing_ids}")
-            original_object_ids = {row.diaSourceId: row.diaObjectId for row in found_sources}
+            original_object_ids = {
+                row.diaSourceId: row.diaObjectId for row in found_sources if row.diaObjectId is not None
+            }
 
             # Set time_withdrawn for sources.
             table = self._schema.get_table(ApdbTables.DiaSource)
