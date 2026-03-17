@@ -50,8 +50,8 @@ class ApdbSchemaTestCase(unittest.TestCase):
     table_column_count = {
         ApdbTables.DiaObject: 8,
         ApdbTables.DiaObjectLast: 6,
-        ApdbTables.DiaSource: 12,
-        ApdbTables.DiaForcedSource: 8,
+        ApdbTables.DiaSource: 13,
+        ApdbTables.DiaForcedSource: 9,
         ApdbTables.DiaObject_To_Object_Match: 3,
         ApdbTables.SSObject: 3,
         ApdbTables.SSSource: 4,
