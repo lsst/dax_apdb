@@ -11,3 +11,4 @@ jobs:
     uses: lsst/rubin_workflows/.github/workflows/mypy.yaml@main
     with:
       folders: "python tests"
+      mypy_package: "mypy<1.20"
