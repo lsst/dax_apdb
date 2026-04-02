@@ -57,6 +57,7 @@ class LoggingCli:
         logger_levels: dict[str, int] = {
             "cassandra.cluster": logging.WARNING,
             "botocore": logging.WARNING,
+            "felis": logging.INFO,  # felis is chatty too at debug level
         }
         for level_str in args.log_level:
             for spec in level_str.split(","):
