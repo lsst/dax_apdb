@@ -33,7 +33,7 @@ __all__ = [
 
 import dataclasses
 import json
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -121,6 +121,37 @@ class ApdbUpdateRecord(ABC):
         data["update_type"] = self.update_type
         return json.dumps(data)
 
+    @abstractmethod
+    def record_id(self) -> tuple[tuple[str, int], ...]:
+        """Return a tuple of (field name, field value) pairs for fields that
+        identify the record to which this update applies.
+
+        Returns
+        -------
+        record_id_tuple : `tuple` [`tuple` [`str`, `int`], ...]
+            Tuple of (field name, field value) pairs for fields that identify
+            the record to which this update applies.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+        """Return a tuple of (field name, field value) pairs for fields that
+        represent updates being applied by this record.
+
+        Returns
+        -------
+        payload_tuple : `tuple` [`tuple` [`str`, `Any`], ...]
+            Tuple of (field name, field value) pairs.
+
+        Notes
+        -----
+        Returned tuple contains the fields that are actually updated. Even if
+        this class represents an update that modifies multiple fields,
+        individual records can update a smaller set of fields.
+        """
+        raise NotImplementedError()
+
 
 @dataclass(kw_only=True)
 class ApdbReassignDiaSourceToDiaObjectRecord(
@@ -134,6 +165,14 @@ class ApdbReassignDiaSourceToDiaObjectRecord(
     """ID of a new associated DIAObject record."""
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaSource
+
+    def record_id(self) -> tuple[tuple[str, int], ...]:
+        # Docstring inherited from the base class.
+        return (("diaSourceId", self.diaSourceId),)
+
+    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+        # Docstring inherited from the base class.
+        return (("diaObjectId", self.diaObjectId),)
 
 
 @dataclass(kw_only=True)
@@ -150,6 +189,17 @@ class ApdbReassignDiaSourceToSSObjectRecord(
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaSource
 
+    def record_id(self) -> tuple[tuple[str, int], ...]:
+        # Docstring inherited from the base class.
+        return (("diaSourceId", self.diaSourceId),)
+
+    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+        # Docstring inherited from the base class.
+        return (
+            ("ssObjectId", self.ssObjectId),
+            ("ssObjectReassocTimeMjdTai", self.ssObjectReassocTimeMjdTai),
+        )
+
 
 @dataclass(kw_only=True)
 class ApdbWithdrawDiaSourceRecord(ApdbUpdateRecord, DiaSourceId, update_type="withdraw_diasource"):
@@ -159,6 +209,14 @@ class ApdbWithdrawDiaSourceRecord(ApdbUpdateRecord, DiaSourceId, update_type="wi
     """Time when this record was marked invalid."""
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaSource
+
+    def record_id(self) -> tuple[tuple[str, int], ...]:
+        # Docstring inherited from the base class.
+        return (("diaSourceId", self.diaSourceId),)
+
+    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+        # Docstring inherited from the base class.
+        return (("timeWithdrawnMjdTai", self.timeWithdrawnMjdTai),)
 
 
 @dataclass(kw_only=True)
@@ -171,6 +229,18 @@ class ApdbWithdrawDiaForcedSourceRecord(
     """Time when this record was marked invalid."""
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaForcedSource
+
+    def record_id(self) -> tuple[tuple[str, int], ...]:
+        # Docstring inherited from the base class.
+        return (
+            ("diaObjectId", self.diaObjectId),
+            ("visit", self.visit),
+            ("detector", self.detector),
+        )
+
+    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+        # Docstring inherited from the base class.
+        return (("timeWithdrawnMjdTai", self.timeWithdrawnMjdTai),)
 
 
 @dataclass(kw_only=True)
@@ -187,6 +257,18 @@ class ApdbCloseDiaObjectValidityRecord(ApdbUpdateRecord, DiaObjectId, update_typ
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaObject
 
+    def record_id(self) -> tuple[tuple[str, int], ...]:
+        # Docstring inherited from the base class.
+        return (("diaObjectId", self.diaObjectId),)
+
+    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+        # Docstring inherited from the base class.
+        payload: tuple[tuple[str, Any], ...] = (("validityEndMjdTai", self.validityEndMjdTai),)
+        # nDiaSources is updated only when not None.
+        if self.nDiaSources is not None:
+            payload += (("nDiaSources", self.nDiaSources),)
+        return payload
+
 
 @dataclass(kw_only=True)
 class ApdbUpdateNDiaSourcesRecord(ApdbUpdateRecord, DiaObjectId, update_type="update_n_dia_sources"):
@@ -198,3 +280,11 @@ class ApdbUpdateNDiaSourcesRecord(ApdbUpdateRecord, DiaObjectId, update_type="up
     """New value for nDiaSources column for updated record."""
 
     apdb_table: ClassVar[ApdbTables] = ApdbTables.DiaObject
+
+    def record_id(self) -> tuple[tuple[str, int], ...]:
+        # Docstring inherited from the base class.
+        return (("diaObjectId", self.diaObjectId),)
+
+    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+        # Docstring inherited from the base class.
+        return (("nDiaSources", self.nDiaSources),)
