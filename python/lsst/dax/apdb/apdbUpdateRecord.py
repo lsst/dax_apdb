@@ -36,10 +36,24 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal, NamedTuple
 
 from .apdb import ApdbTables
 from .recordIds import DiaForcedSourceId, DiaObjectId, DiaSourceId
+
+FieldTypeName = Literal["int", "float", "bool", "str"]
+
+
+class PayloadiFieldData(NamedTuple):
+    field: str
+    """Name of the payload field."""
+
+    value: Any
+    """Value of that field."""
+
+    type: str
+    """Field type, a generic type name, one of "int", "float", "bool", "str".
+    """
 
 
 @dataclass(kw_only=True)
@@ -135,14 +149,14 @@ class ApdbUpdateRecord(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def record_payload(self) -> tuple[tuple[str, Any], ...]:
-        """Return a tuple of (field name, field value) pairs for fields that
-        represent updates being applied by this record.
+    def record_payload(self) -> tuple[PayloadiFieldData, ...]:
+        """Return data items for fields that represent updates being applied by
+        this record.
 
         Returns
         -------
-        payload_tuple : `tuple` [`tuple` [`str`, `Any`], ...]
-            Tuple of (field name, field value) pairs.
+        payload_tuple : `tuple` [PayloadiFieldData, ...]
+            Tuple of payload data associated with this update.
 
         Notes
         -----
@@ -170,9 +184,9 @@ class ApdbReassignDiaSourceToDiaObjectRecord(
         # Docstring inherited from the base class.
         return (("diaSourceId", self.diaSourceId),)
 
-    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+    def record_payload(self) -> tuple[PayloadiFieldData, ...]:
         # Docstring inherited from the base class.
-        return (("diaObjectId", self.diaObjectId),)
+        return (PayloadiFieldData("diaObjectId", self.diaObjectId, "int"),)
 
 
 @dataclass(kw_only=True)
@@ -193,11 +207,11 @@ class ApdbReassignDiaSourceToSSObjectRecord(
         # Docstring inherited from the base class.
         return (("diaSourceId", self.diaSourceId),)
 
-    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+    def record_payload(self) -> tuple[PayloadiFieldData, ...]:
         # Docstring inherited from the base class.
         return (
-            ("ssObjectId", self.ssObjectId),
-            ("ssObjectReassocTimeMjdTai", self.ssObjectReassocTimeMjdTai),
+            PayloadiFieldData("ssObjectId", self.ssObjectId, "int"),
+            PayloadiFieldData("ssObjectReassocTimeMjdTai", self.ssObjectReassocTimeMjdTai, "float"),
         )
 
 
@@ -214,9 +228,9 @@ class ApdbWithdrawDiaSourceRecord(ApdbUpdateRecord, DiaSourceId, update_type="wi
         # Docstring inherited from the base class.
         return (("diaSourceId", self.diaSourceId),)
 
-    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+    def record_payload(self) -> tuple[PayloadiFieldData, ...]:
         # Docstring inherited from the base class.
-        return (("timeWithdrawnMjdTai", self.timeWithdrawnMjdTai),)
+        return (PayloadiFieldData("timeWithdrawnMjdTai", self.timeWithdrawnMjdTai, "float"),)
 
 
 @dataclass(kw_only=True)
@@ -238,9 +252,9 @@ class ApdbWithdrawDiaForcedSourceRecord(
             ("detector", self.detector),
         )
 
-    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+    def record_payload(self) -> tuple[PayloadiFieldData, ...]:
         # Docstring inherited from the base class.
-        return (("timeWithdrawnMjdTai", self.timeWithdrawnMjdTai),)
+        return (PayloadiFieldData("timeWithdrawnMjdTai", self.timeWithdrawnMjdTai, "float"),)
 
 
 @dataclass(kw_only=True)
@@ -261,12 +275,14 @@ class ApdbCloseDiaObjectValidityRecord(ApdbUpdateRecord, DiaObjectId, update_typ
         # Docstring inherited from the base class.
         return (("diaObjectId", self.diaObjectId),)
 
-    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+    def record_payload(self) -> tuple[PayloadiFieldData, ...]:
         # Docstring inherited from the base class.
-        payload: tuple[tuple[str, Any], ...] = (("validityEndMjdTai", self.validityEndMjdTai),)
+        payload: tuple[PayloadiFieldData, ...] = (
+            PayloadiFieldData("validityEndMjdTai", self.validityEndMjdTai, "float"),
+        )
         # nDiaSources is updated only when not None.
         if self.nDiaSources is not None:
-            payload += (("nDiaSources", self.nDiaSources),)
+            payload += (PayloadiFieldData("nDiaSources", self.nDiaSources, "int"),)
         return payload
 
 
@@ -285,6 +301,6 @@ class ApdbUpdateNDiaSourcesRecord(ApdbUpdateRecord, DiaObjectId, update_type="up
         # Docstring inherited from the base class.
         return (("diaObjectId", self.diaObjectId),)
 
-    def record_payload(self) -> tuple[tuple[str, Any], ...]:
+    def record_payload(self) -> tuple[PayloadiFieldData, ...]:
         # Docstring inherited from the base class.
-        return (("nDiaSources", self.nDiaSources),)
+        return (PayloadiFieldData("nDiaSources", self.nDiaSources, "int"),)

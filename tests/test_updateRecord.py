@@ -66,7 +66,10 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             midpointMjdTai=59999.0,
         )
         self.assertEqual(record.record_id(), (("diaSourceId", 123456),))
-        self.assertEqual(record.record_payload(), (("ssObjectId", 1), ("ssObjectReassocTimeMjdTai", 60000.0)))
+        self.assertEqual(
+            record.record_payload(),
+            (("ssObjectId", 1, "int"), ("ssObjectReassocTimeMjdTai", 60000.0, "float")),
+        )
 
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -99,7 +102,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             midpointMjdTai=59999.0,
         )
         self.assertEqual(record.record_id(), (("diaSourceId", 123456),))
-        self.assertEqual(record.record_payload(), (("diaObjectId", 321),))
+        self.assertEqual(record.record_payload(), (("diaObjectId", 321, "int"),))
 
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -131,7 +134,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             dec=-45.0,
         )
         self.assertEqual(record.record_id(), (("diaObjectId", 321),))
-        self.assertEqual(record.record_payload(), (("validityEndMjdTai", 60000.0),))
+        self.assertEqual(record.record_payload(), (("validityEndMjdTai", 60000.0, "float"),))
 
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -162,7 +165,9 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             dec=-45.0,
         )
         self.assertEqual(record.record_id(), (("diaObjectId", 321),))
-        self.assertEqual(record.record_payload(), (("validityEndMjdTai", 60000.0), ("nDiaSources", 3)))
+        self.assertEqual(
+            record.record_payload(), (("validityEndMjdTai", 60000.0, "float"), ("nDiaSources", 3, "int"))
+        )
 
     def test_update_n_dia_sources(self) -> None:
         """Test round-tripping ApdbUpdateNDiaSourcesRecord class."""
@@ -175,7 +180,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             dec=-45.0,
         )
         self.assertEqual(record.record_id(), (("diaObjectId", 321),))
-        self.assertEqual(record.record_payload(), (("nDiaSources", 6),))
+        self.assertEqual(record.record_payload(), (("nDiaSources", 6, "int"),))
 
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -206,7 +211,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             midpointMjdTai=60000.0,
         )
         self.assertEqual(record.record_id(), (("diaSourceId", 123456),))
-        self.assertEqual(record.record_payload(), (("timeWithdrawnMjdTai", 61000.0),))
+        self.assertEqual(record.record_payload(), (("timeWithdrawnMjdTai", 61000.0, "float"),))
 
         record_json = record.to_json()
         record_dict = json.loads(record_json)
@@ -240,7 +245,7 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             midpointMjdTai=60000.0,
         )
         self.assertEqual(record.record_id(), (("diaObjectId", 1234), ("visit", 555), ("detector", 123)))
-        self.assertEqual(record.record_payload(), (("timeWithdrawnMjdTai", 61000.0),))
+        self.assertEqual(record.record_payload(), (("timeWithdrawnMjdTai", 61000.0, "float"),))
 
         record_json = record.to_json()
         record_dict = json.loads(record_json)
