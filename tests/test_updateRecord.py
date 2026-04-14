@@ -39,6 +39,20 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
     update_time_ns1 = 2_000_000_000_000_000_000
     update_time_ns2 = 2_000_000_001_000_000_000
 
+    def test_all_types(self) -> None:
+        """Test that we know full set of update types."""
+        self.assertEqual(
+            set(ApdbUpdateRecord._update_types),
+            {
+                "reassign_diasource_to_diaobject",
+                "reassign_diasource_to_ssobject",
+                "withdraw_diasource",
+                "withdraw_diaforcedsource",
+                "close_diaobject_validity",
+                "update_n_dia_sources",
+            },
+        )
+
     def test_reassign_diasource_to_ssobject(self) -> None:
         """Test round-tripping ApdbReassignDiaSourceToSSObjectRecord class."""
         record = ApdbReassignDiaSourceToSSObjectRecord(
@@ -51,6 +65,9 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             dec=-45.0,
             midpointMjdTai=59999.0,
         )
+        self.assertEqual(record.record_id(), (("diaSourceId", 123456),))
+        self.assertEqual(record.record_payload(), (("ssObjectId", 1), ("ssObjectReassocTimeMjdTai", 60000.0)))
+
         record_json = record.to_json()
         record_dict = json.loads(record_json)
         self.assertEqual(
@@ -81,6 +98,9 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             dec=-45.0,
             midpointMjdTai=59999.0,
         )
+        self.assertEqual(record.record_id(), (("diaSourceId", 123456),))
+        self.assertEqual(record.record_payload(), (("diaObjectId", 321),))
+
         record_json = record.to_json()
         record_dict = json.loads(record_json)
         self.assertEqual(
@@ -110,6 +130,9 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             ra=45.0,
             dec=-45.0,
         )
+        self.assertEqual(record.record_id(), (("diaObjectId", 321),))
+        self.assertEqual(record.record_payload(), (("validityEndMjdTai", 60000.0),))
+
         record_json = record.to_json()
         record_dict = json.loads(record_json)
         self.assertEqual(
@@ -128,6 +151,19 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
         self.assertIsInstance(record2, ApdbCloseDiaObjectValidityRecord)
         self.assertEqual(record2, record)
 
+        # Also check record_payload with nDiaSources != None
+        record = ApdbCloseDiaObjectValidityRecord(
+            update_time_ns=self.update_time_ns1,
+            update_order=0,
+            diaObjectId=321,
+            validityEndMjdTai=60000.0,
+            nDiaSources=3,
+            ra=45.0,
+            dec=-45.0,
+        )
+        self.assertEqual(record.record_id(), (("diaObjectId", 321),))
+        self.assertEqual(record.record_payload(), (("validityEndMjdTai", 60000.0), ("nDiaSources", 3)))
+
     def test_update_n_dia_sources(self) -> None:
         """Test round-tripping ApdbUpdateNDiaSourcesRecord class."""
         record = ApdbUpdateNDiaSourcesRecord(
@@ -138,6 +174,9 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             ra=45.0,
             dec=-45.0,
         )
+        self.assertEqual(record.record_id(), (("diaObjectId", 321),))
+        self.assertEqual(record.record_payload(), (("nDiaSources", 6),))
+
         record_json = record.to_json()
         record_dict = json.loads(record_json)
         self.assertEqual(
@@ -166,6 +205,9 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             dec=-45.0,
             midpointMjdTai=60000.0,
         )
+        self.assertEqual(record.record_id(), (("diaSourceId", 123456),))
+        self.assertEqual(record.record_payload(), (("timeWithdrawnMjdTai", 61000.0),))
+
         record_json = record.to_json()
         record_dict = json.loads(record_json)
         self.assertEqual(
@@ -197,6 +239,9 @@ class ApdbUpdateRecordTestCase(unittest.TestCase):
             dec=-45.0,
             midpointMjdTai=60000.0,
         )
+        self.assertEqual(record.record_id(), (("diaObjectId", 1234), ("visit", 555), ("detector", 123)))
+        self.assertEqual(record.record_payload(), (("timeWithdrawnMjdTai", 61000.0),))
+
         record_json = record.to_json()
         record_dict = json.loads(record_json)
         self.assertEqual(
