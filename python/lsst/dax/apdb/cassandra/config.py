@@ -69,6 +69,16 @@ class ApdbCassandraConnectionConfig(BaseModel):
         ),
     )
 
+    dbauth_alias: str = Field(
+        default="",
+        description=(
+            "If specified then this string will be used to as a host name when checking credentials in "
+            "db-auth.yaml in addition to regular host names in contact_points. For example if "
+            "dbauth_alias='pp_apdb_prod_cluster' then the entry 'cassandra://pp_apdb_prod_cluster/' will "
+            "match. Port number should not be used in that entry. Alias has higher priority than host names."
+        ),
+    )
+
     read_consistency: str = Field(
         default="QUORUM",
         description="Name for consistency level of read operations, default: QUORUM, can be ONE.",

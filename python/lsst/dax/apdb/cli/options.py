@@ -102,6 +102,7 @@ def cassandra_config_options(parser: argparse.ArgumentParser) -> None:
     _option_from_pydantic_field(group, ApdbCassandraConfig, "replica_skips_diaobjects", action="store_true")
     _option_from_pydantic_field(group, ApdbCassandraConnectionConfig, "port", metavar="PORT")
     _option_from_pydantic_field(group, ApdbCassandraConnectionConfig, "username", metavar="USER")
+    _option_from_pydantic_field(group, ApdbCassandraConnectionConfig, "dbauth_alias", metavar="NAME")
     _option_from_pydantic_field(group, ApdbCassandraConfig, "prefix")
     group.add_argument(
         "--replication-factor", help="Replication factor used when creating new keyspace.", type=int

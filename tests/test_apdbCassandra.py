@@ -51,9 +51,11 @@ from lsst.dax.apdb import (
 )
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
 from lsst.dax.apdb.cassandra.connectionContext import ConnectionContext
+from lsst.dax.apdb.cassandra.sessionFactory import SessionFactory
 from lsst.dax.apdb.pixelization import Pixelization
 from lsst.dax.apdb.tests import ApdbSchemaUpdateTest, ApdbTest, cassandra_mixin
 from lsst.dax.apdb.tests.data_factory import makeObjectCatalog
+from lsst.dax.apdb.tests.utils import modified_environment
 
 TEST_SCHEMA = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-apdb.yaml")
 TEST_SCHEMA_SSO = os.path.join(os.path.abspath(os.path.dirname(__file__)), "config/schema-sso.yaml")
@@ -215,6 +217,83 @@ class ApdbCassandraVersionCheck(cassandra_mixin.ApdbCassandraMixin, unittest.Tes
         with self.assertRaises(IncompatibleVersionError):
             # Need to call some actual method to initiate connection.
             Apdb.from_config(self.config).metadata.items()
+
+
+_DB_AUTH_JSON = """\
+[{
+  "url": "cassandra://user1000@node1.slac.stanford.edu:9042/",
+  "username": "user01",
+  "password": "pass01"
+}, {
+  "url": "cassandra://node2.slac.stanford.edu:9042/",
+  "username": "user02",
+  "password": "pass02"
+}, {
+  "url": "cassandra://node1.slac.stanford.edu:9042/apdb_dev",
+  "username": "user03",
+  "password": "pass03"
+}, {
+  "url": "cassandra://user2000@test_cluster/",
+  "username": "user04",
+  "password": "pass04"
+}, {
+  "url": "cassandra://test_cluster/",
+  "username": "user05",
+  "password": "pass05"
+}]
+"""
+
+
+class ApdbCassandraDbAuthTest(unittest.TestCase):
+    """A test case for extracting credentials from db-auth.yaml."""
+
+    def _make_config(self) -> ApdbCassandraConfig:
+        config = ApdbCassandraConfig(
+            contact_points=("node1.slac.stanford.edu", "node2.slac.stanford.edu"),
+            keyspace="apdb",
+        )
+        return config
+
+    @unittest.skipIf(not cassandra_mixin.CASSANDRA_IMPORTED, "cassandra_driver cannot be imported")
+    def test_dbauth(self) -> None:
+        """Check credentials access."""
+        with modified_environment(LSST_DB_AUTH_CREDENTIALS=_DB_AUTH_JSON):
+            config = self._make_config()
+
+            factory = SessionFactory(config)
+
+            # Should match second entry.
+            auth = factory._make_auth_provider()
+            assert auth is not None
+            self.assertEqual(auth.username, "user02")
+
+            config.keyspace = "apdb_dev"
+            # Should match third entry.
+            auth = factory._make_auth_provider()
+            assert auth is not None
+            self.assertEqual(auth.username, "user03")
+
+            config.connection_config.username = "user1000"
+            # Should match first entry, returns original user name.
+            auth = factory._make_auth_provider()
+            assert auth is not None
+            self.assertEqual(auth.username, "user1000")
+            self.assertEqual(auth.password, "pass01")
+
+            config.connection_config.username = ""
+            config.connection_config.dbauth_alias = "test_cluster"
+            # Should match fifth entry.
+            auth = factory._make_auth_provider()
+            assert auth is not None
+            self.assertEqual(auth.username, "user05")
+
+            config.connection_config.username = "user2000"
+            config.connection_config.dbauth_alias = "test_cluster"
+            # Should match fourth entry.
+            auth = factory._make_auth_provider()
+            assert auth is not None
+            self.assertEqual(auth.username, "user2000")
+            self.assertEqual(auth.password, "pass04")
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

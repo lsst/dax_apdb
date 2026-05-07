@@ -160,15 +160,22 @@ class SessionFactory:
             # Credentials file doesn't exist, use anonymous login.
             return None
 
+        # If dbauth_alias is defined then try it too without port number.
+        hosts: list[tuple[str, int | None]] = [
+            (hostname, self._config.connection_config.port) for hostname in self._config.contact_points
+        ]
+        if self._config.connection_config.dbauth_alias:
+            hosts = [(self._config.connection_config.dbauth_alias, None)] + hosts
+
         empty_username = True
         # Try every contact point in turn.
-        for hostname in self._config.contact_points:
+        for hostname, port in hosts:
             try:
                 username, password = dbauth.getAuth(
                     "cassandra",
                     self._config.connection_config.username,
                     hostname,
-                    self._config.connection_config.port,
+                    port,
                     self._config.keyspace,
                 )
                 if not username:
