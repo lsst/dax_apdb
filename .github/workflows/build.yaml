@@ -46,11 +46,9 @@ jobs:
           conda install -y -q pip wheel
           pip install uv
 
-      # Need cassandra-driver from conda-forge where it has a patch for 3.13
       - name: Install dependencies
         shell: bash -l {0}
         run: |
-          conda install -y -q cassandra-driver
           uv pip install -r requirements.txt
 
       # We have two cores so we can speed up the testing with xdist
