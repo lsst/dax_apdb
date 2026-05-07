@@ -178,7 +178,7 @@ class ModelToSql:
                 kwargs.update(autoincrement=False)
             else:
                 kwargs.update(autoincrement=column.autoincrement)
-            ctype = self._type_map[column.datatype]
+            ctype: Any = self._type_map[column.datatype]
             if column.length is not None:
                 if ctype not in (sqlalchemy.types.Text, sqlalchemy.types.TIMESTAMP):
                     ctype = ctype(length=column.length)
