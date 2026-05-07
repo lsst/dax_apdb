@@ -37,7 +37,7 @@ _LOG_LINE_RE_PIPELINE = re.compile(
     r"""
     ^
     INFO .* lsst[.]dax[.]apdb[.]monitor
-    \ \(\w+:(?P<MDC>\{[^}]*\})\)
+    \ \((?P<task>\w+):(?P<MDC>\{[^}]*\})\)
     \([^)]*\)[ ]-[ ](?P<metric>.*)
     $
     """,
@@ -232,7 +232,8 @@ def _metrics_log_to_influx(
 
             timestamp: float = metric["timestamp"]
             for tag, tag_val in metric["tags"].items():
-                tags[tag] = tag_val
+                if tag_val:
+                    tags[tag] = tag_val
             values: dict[str, Any] = metric["values"]
 
             if fix_row_count and name == "insert_time":
@@ -243,8 +244,11 @@ def _metrics_log_to_influx(
                 elif tags["table"].startswith("DiaForcedSource"):
                     values["row_count"] = forced_sources_count
 
-            if mode == "pipeline" and context_keys:
-                tags.update(_extract_mdc(match, context_keys))
+            if mode == "pipeline":
+                if task_str := match.group("task"):
+                    tags["task"] = task_str
+                if context_keys:
+                    tags.update(_extract_mdc(match, context_keys))
 
             for tag in drop_tags:
                 tags.pop(tag, None)
@@ -275,8 +279,7 @@ def _print_metrics(name: str, tags: dict[str, Any], values: dict[str, Any], time
 
 def _extract_mdc(match: re.Match, context_keys: Iterable[str]) -> dict[str, Any]:
     tags: dict[str, Any] = {}
-    mdc_str = match.group("MDC")
-    if mdc_str:
+    if mdc_str := match.group("MDC"):
         mdc_str = mdc_str.replace("'", '"')
         mdc: dict[str, Any] = yaml.safe_load(io.StringIO(mdc_str))
         for tag in context_keys:
