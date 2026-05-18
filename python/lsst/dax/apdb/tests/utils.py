@@ -21,7 +21,12 @@
 
 from __future__ import annotations
 
+__all__ = ["TestCaseMixin", "modified_environment"]
+
+import contextlib
+import os
 import unittest
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -33,3 +38,22 @@ else:
 
     class TestCaseMixin:
         """Do-nothing definition of mixin base class for regular execution."""
+
+
+# Stolen from daf_butler
+@contextlib.contextmanager
+def modified_environment(**environ: str) -> Iterator[None]:
+    """Temporarily set environment variables.
+
+    Parameters
+    ----------
+    **environ : `dict`
+        Key value pairs of environment variables to temporarily set.
+    """
+    old_environ = dict(os.environ)
+    os.environ.update(environ)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(old_environ)

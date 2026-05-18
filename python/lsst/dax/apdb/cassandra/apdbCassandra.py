@@ -178,6 +178,7 @@ class ApdbCassandra(Apdb):
         replica_skips_diaobjects: bool = False,
         port: int | None = None,
         username: str | None = None,
+        dbauth_alias: str | None = None,
         prefix: str | None = None,
         part_pixelization: str | None = None,
         part_pix_level: int | None = None,
@@ -220,6 +221,14 @@ class ApdbCassandra(Apdb):
             Port number to use for Cassandra connections.
         username : `str`, optional
             User name for Cassandra connections.
+        dbauth_alias : `str`, optional
+            If specified then this string will be used to as a host name when
+            checking credentials in db-auth.yaml in addition to regular host
+            names in contact_points. For example if
+            dbauth_alias='pp_apdb_prod_cluster' then the entry
+            'cassandra://pp_apdb_prod_cluster/' will match. Port number should
+            not be used in that entry. Alias has higher priority than host
+            names.
         prefix : `str`, optional
             Optional prefix for all table names.
         part_pixelization : `str`, optional
@@ -289,6 +298,8 @@ class ApdbCassandra(Apdb):
             config.connection_config.port = port
         if username is not None:
             config.connection_config.username = username
+        if dbauth_alias is not None:
+            config.connection_config.dbauth_alias = dbauth_alias
         if prefix is not None:
             config.prefix = prefix
         if part_pixelization is not None:
