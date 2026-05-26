@@ -160,14 +160,14 @@ class SessionFactory:
             # Credentials file doesn't exist, use anonymous login.
             return None
 
-        # If dbauth_alias is defined then try it too without port number.
+        # If dbauth_alias is defined then try it first without port number.
         hosts: list[tuple[str, int | None]] = [
             (hostname, self._config.connection_config.port) for hostname in self._config.contact_points
         ]
-        if self._config.connection_config.dbauth_alias:
-            hosts = [(self._config.connection_config.dbauth_alias, None)] + hosts
+        if dbauth_alias := self._config.get_dbauth_alias():
+            hosts = [(dbauth_alias, None)] + hosts
 
-        empty_username = True
+        empty_username = False
         # Try every contact point in turn.
         for hostname, port in hosts:
             try:
