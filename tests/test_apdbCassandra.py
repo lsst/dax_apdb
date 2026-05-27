@@ -240,6 +240,14 @@ _DB_AUTH_JSON = """\
   "url": "cassandra://test_cluster/",
   "username": "user05",
   "password": "pass05"
+}, {
+  "url": "cassandra://pp_apdb_prod_cluster/",
+  "username": "user06",
+  "password": "pass06"
+}, {
+  "url": "cassandra://pp_apdb_dev_cluster/",
+  "username": "user07",
+  "password": "pass07"
 }]
 """
 
@@ -294,6 +302,25 @@ class ApdbCassandraDbAuthTest(unittest.TestCase):
             assert auth is not None
             self.assertEqual(auth.username, "user2000")
             self.assertEqual(auth.password, "pass04")
+
+            # Default value of alias is based on username and keyspace.
+            config.connection_config.dbauth_alias = ""
+            config.contact_points = ("127.0.0.1",)
+            config.keyspace = "apdb"
+            config.connection_config.username = "apdb-prod"
+            auth = factory._make_auth_provider()
+            self.assertIsNone(auth)
+
+            config.keyspace = "pp_apdb_cam"
+            auth = factory._make_auth_provider()
+            assert auth is not None
+            self.assertEqual(auth.password, "pass06")
+
+            config.connection_config.username = "apdb"
+            config.keyspace = "pp_apdb_cam_dev"
+            auth = factory._make_auth_provider()
+            assert auth is not None
+            self.assertEqual(auth.password, "pass07")
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

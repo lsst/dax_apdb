@@ -72,10 +72,11 @@ class ApdbCassandraConnectionConfig(BaseModel):
     dbauth_alias: str = Field(
         default="",
         description=(
-            "If specified then this string will be used to as a host name when checking credentials in "
+            "If specified then this string will be used as a host name when checking credentials in "
             "db-auth.yaml in addition to regular host names in contact_points. For example if "
             "dbauth_alias='pp_apdb_prod_cluster' then the entry 'cassandra://pp_apdb_prod_cluster/' will "
-            "match. Port number should not be used in that entry. Alias has higher priority than host names."
+            "match. Port number should not be used in that entry. Alias has higher priority than host names. "
+            "If not specified, the default value depends on `username` and `keyspace` values."
         ),
     )
 
@@ -271,6 +272,37 @@ class ApdbCassandraConfig(ApdbConfig):
         if len(vtup) != 2:
             raise ValueError("ra_dec_columns must have exactly two column names")
         return vtup
+
+    def get_dbauth_alias(self) -> str:
+        """Return alias name for dbauth lookup.
+
+        Returns
+        -------
+        alias : `str`
+            Possibly empty alias name.
+
+        Notes
+        -----
+        If ``connection_config.dbauth_alias`` is set then it is returned.
+        Otherwise this method tries to guess whether the instance should be in
+        ``prod`` or ``dev`` cluster based on username and keyspace. It returns
+        "pp_apdb_prod_cluster" or "pp_apdb_dev_cluster" for those two, empty
+        string is returned when it cannot guess.
+        """
+        if self.connection_config.dbauth_alias:
+            return self.connection_config.dbauth_alias
+
+        if self.connection_config.username == "apdb-prod" and self.keyspace.startswith("pp_apdb_"):
+            return "pp_apdb_prod_cluster"
+
+        if (
+            self.connection_config.username == "apdb"
+            and self.keyspace.startswith("pp_apdb_")
+            and self.keyspace.endswith("_dev")
+        ):
+            return "pp_apdb_dev_cluster"
+
+        return ""
 
 
 class ApdbCassandraTimePartitionRange(BaseModel):
