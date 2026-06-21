@@ -36,7 +36,7 @@ from lsst.sphgeom import Region
 from .apdbSchema import ApdbSchema, ApdbTables
 from .config import ApdbConfig
 from .factory import make_apdb
-from .recordIds import DiaObjectId, DiaSourceId
+from .recordIds import DiaForcedSourceId, DiaObjectId, DiaSourceId
 from .schema_model import Table
 
 if TYPE_CHECKING:
@@ -462,6 +462,62 @@ class Apdb(ABC):
         ------
         ValueError
             Raised if DiaSource ID does not exist in the database.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def withdrawDiaSources(
+        self,
+        diaSourceIds: Iterable[DiaSourceId],
+        *,
+        timeWithdrawn: astropy.time.Time | None = None,
+        decrement_nDiaSources: bool = True,
+        closeValidity: bool = True,
+    ) -> None:
+        """Withdraw DiaSources.
+
+        Parameters
+        ----------
+        diaSourceIds : `~collections.abc.Iterable` [`DiaSourceId`]
+            Identifiers of DiaSources to withdraw.
+        timeWithdrawn : `astropy.time.Time`, optional
+            Set the value of ``time_withdrawn`` column to this time, current
+            time by default.
+        decrement_nDiaSources : `bool`, optional
+            If `True` then decrement the value of ``nDiaSources`` in matching
+            DiaObjects.
+        closeValidity : `bool`, optional
+            If `True` then close validity interval for DiaObjects whose
+            ``nDiaSources`` becomes zero.
+
+        Raises
+        ------
+        LookupError
+            Raised if some of DiaSources are not found.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def withdrawDiaForcedSources(
+        self,
+        diaForcedSourceIds: Iterable[DiaForcedSourceId],
+        *,
+        timeWithdrawn: astropy.time.Time | None = None,
+    ) -> None:
+        """Withdraw DiaForcedSources.
+
+        Parameters
+        ----------
+        diaForcedSourceIds : `~collections.abc.Iterable` [`DiaForcedSourceId`]
+            Identifiers of DiaSources to withdraw.
+        timeWithdrawn : `astropy.time.Time`, optional
+            Set the value of ``time_withdrawn`` column to this time, current
+            time by default.
+
+        Raises
+        ------
+        LookupError
+            Raised if some of DiaForcedSources are not found.
         """
         raise NotImplementedError()
 

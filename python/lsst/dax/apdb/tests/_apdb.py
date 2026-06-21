@@ -48,6 +48,7 @@ from .. import (
     ApdbTables,
     ApdbUpdateRecord,
     ApdbWithdrawDiaSourceRecord,
+    DiaForcedSourceId,
     DiaObjectId,
     DiaSourceId,
     IncompatibleVersionError,
@@ -154,8 +155,8 @@ class ApdbTest(TestCaseMixin, ABC):
     table_column_count = {
         ApdbTables.DiaObject: 8,
         ApdbTables.DiaObjectLast: 6,
-        ApdbTables.DiaSource: 12,
-        ApdbTables.DiaForcedSource: 8,
+        ApdbTables.DiaSource: 13,
+        ApdbTables.DiaForcedSource: 9,
         ApdbTables.SSObject: 3,
     }
 
@@ -801,6 +802,148 @@ class ApdbTest(TestCaseMixin, ABC):
         by resetDedup().
         """
         raise NotImplementedError()
+
+    def test_withdraw_sources(self) -> None:
+        """Test withdrawDiaSources() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        lonlat = LonLat.fromDegrees(0.0, 0.0)
+        region = self.make_region(xyz=(1.0, 0.0, 0.0))
+
+        # Store 3 objects and sources at the same position in each region.
+        visit_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+        objects1 = makeObjectCatalog(lonlat, 3, start_id=100)
+        sources1 = makeSourceCatalog(objects1, visit_time1, start_id=1000, use_mjd=self.use_mjd)
+        apdb.store(visit_time1, objects1, sources1)
+
+        visit_time2 = astropy.time.Time("2021-01-01T00:01:00", format="isot", scale="tai")
+        objects2 = makeObjectCatalog(lonlat, 3, start_id=200)
+        sources2 = makeSourceCatalog(objects2, visit_time2, start_id=2000, use_mjd=self.use_mjd)
+        apdb.store(visit_time2, objects2, sources2)
+
+        objects1["nDiaSources"] = 2
+        sources3 = makeSourceCatalog(objects1, visit_time2, start_id=3000, use_mjd=self.use_mjd)
+        apdb.store(visit_time2, objects1, sources3)
+
+        # Fetch everything and verify.
+        objects = apdb.getDiaObjects(region)
+        self.assertEqual(
+            {row.diaObjectId: row.nDiaSources for row in objects.itertuples()},
+            {100: 2, 101: 2, 102: 2, 200: 1, 201: 1, 202: 1},
+        )
+
+        sources = apdb.getDiaSources(region, None, visit_time2)
+        assert sources is not None
+        source_ids = [DiaSourceId.from_named_tuple(row) for row in sources.itertuples()]
+        sources_by_id = {source_id.diaSourceId: source_id for source_id in source_ids}
+
+        # Withdraw a bunch of sources.
+        withdraw_time = astropy.time.Time("2021-01-01T10:00:00", format="isot", scale="tai")
+        apdb.withdrawDiaSources(
+            [sources_by_id[i] for i in (1000, 2000, 3000, 1001)], timeWithdrawn=withdraw_time
+        )
+
+        objects = apdb.getDiaObjects(region)
+        self.assertEqual(
+            {int(row.diaObjectId): int(row.nDiaSources) for row in objects.itertuples()},
+            {101: 1, 102: 2, 201: 1, 202: 1},
+        )
+
+        sources = apdb.getDiaSources(region, None, visit_time2)
+        assert sources is not None
+        sources.set_index("diaSourceId", inplace=True)
+        if self.use_mjd:
+            self.assertFalse(any(pandas.isna(sources.loc[[1000, 1001, 2000, 3000], "timeWithdrawnMjdTai"])))
+        else:
+            self.assertFalse(any(pandas.isnull(sources.loc[[1000, 1001, 2000, 3000], "time_withdrawn"])))
+
+        # Do not close validity.
+        apdb.withdrawDiaSources([sources_by_id[2001]], timeWithdrawn=withdraw_time, closeValidity=False)
+        objects = apdb.getDiaObjects(region)
+        self.assertEqual(
+            {int(row.diaObjectId): int(row.nDiaSources) for row in objects.itertuples()},
+            {101: 1, 102: 2, 201: 0, 202: 1},
+        )
+
+        # Do not decrement nDiaSources.
+        apdb.withdrawDiaSources(
+            [sources_by_id[2002]],
+            timeWithdrawn=withdraw_time,
+            decrement_nDiaSources=False,
+        )
+        objects = apdb.getDiaObjects(region)
+        self.assertEqual(
+            {int(row.diaObjectId): int(row.nDiaSources) for row in objects.itertuples()},
+            {101: 1, 102: 2, 201: 0, 202: 1},
+        )
+
+        # Check replication update tables.
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            # Check that there are 10 update records in replica tables.
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            self.assertEqual(len(update_records), 12)
+
+    def test_withdraw_forced_sources(self) -> None:
+        """Test withdrawDiaForcedSources() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        lonlat = LonLat.fromDegrees(0.0, 0.0)
+        region = self.make_region(xyz=(1.0, 0.0, 0.0))
+
+        # Store 3 objects and sources at the same position in each region.
+        objects = makeObjectCatalog(lonlat, 3, start_id=100)
+        fsources = makeForcedSourceCatalog(objects, self.visit_time, use_mjd=self.use_mjd)
+        apdb.store(self.visit_time, objects, None, fsources)
+
+        fsources = apdb.getDiaForcedSources(region, [100, 101, 102], self.visit_time)
+        assert fsources is not None
+        source_ids = [DiaForcedSourceId.from_named_tuple(row) for row in fsources.itertuples()]
+        sources_by_id = {source_id.diaObjectId: source_id for source_id in source_ids}
+
+        if self.use_mjd:
+            self.assertTrue(all(pandas.isna(fsources["timeWithdrawnMjdTai"])))
+        else:
+            self.assertTrue(all(pandas.isnull(fsources["time_withdrawn"])))
+
+        # Withdraw a bunch of sources.
+        withdraw_time = astropy.time.Time("2021-01-01T10:00:00", format="isot", scale="tai")
+        apdb.withdrawDiaForcedSources([sources_by_id[i] for i in (100, 102)], timeWithdrawn=withdraw_time)
+
+        fsources = apdb.getDiaForcedSources(region, [100, 101, 102], self.visit_time)
+        assert fsources is not None
+        fsources.set_index("diaObjectId", inplace=True)
+        if self.use_mjd:
+            self.assertFalse(any(pandas.isna(fsources.loc[[100, 102], "timeWithdrawnMjdTai"])))
+        else:
+            self.assertFalse(any(pandas.isnull(fsources.loc[[100, 102], "time_withdrawn"])))
+
+        # Check replication update tables.
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            # Check that there are 10 update records in replica tables.
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            self.assertEqual(len(update_records), 2)
 
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
