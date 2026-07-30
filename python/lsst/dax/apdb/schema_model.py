@@ -66,6 +66,42 @@ def _make_iterable(obj: str | Iterable[str]) -> Iterable[str]:
         yield from obj
 
 
+@dataclasses.dataclass
+class _ColumnLookup:
+    """Lookup object for resolving columns by name or ID."""
+
+    columns_by_id: Mapping[str, Column]
+    columns_by_table_name: Mapping[tuple[str, str], Column]
+
+    def find_table_column(self, table_name: str, column_ref: str) -> Column:
+        """Find a table-local column using name-first, ID-second lookup.
+
+        Parameters
+        ----------
+        table_name : `str`
+            Name of the table that owns the column reference.
+        column_ref : `str`
+            Column reference within that table. This can be either a column
+            name (new style) or a column ID (legacy style).
+
+        Returns
+        -------
+        column : `Column`
+            Resolved converted column.
+
+        Raises
+        ------
+        KeyError
+            Raised if ``column_ref`` cannot be resolved by either
+            ``(table_name, column_ref)`` in ``columns_by_table_name`` or
+            ``column_ref`` in ``columns_by_id``.
+        """
+        column = self.columns_by_table_name.get((table_name, column_ref))
+        if column is not None:
+            return column
+        return self.columns_by_id[column_ref]
+
+
 _data_type_size: Mapping[DataTypes, int] = {
     felis.datamodel.DataType.boolean: 1,
     felis.datamodel.DataType.byte: 1,
@@ -224,15 +260,22 @@ class Index:
     """Additional annotations for this index."""
 
     @classmethod
-    def from_felis(cls, dm_index: felis.datamodel.Index, columns: Mapping[str, Column]) -> Index:
+    def from_felis(
+        cls,
+        dm_index: felis.datamodel.Index,
+        dm_table: felis.datamodel.Table,
+        lookup: _ColumnLookup,
+    ) -> Index:
         """Convert Felis index definition into instance of this class.
 
         Parameters
         ----------
         dm_index : `felis.datamodel.Index`
             Felis index definition.
-        columns : `~collections.abc.Mapping` [`str`, `Column`]
-            Mapping of column ID to `Column` instance.
+        dm_table : `felis.datamodel.Table`
+            Felis table containing this index.
+        lookup : `_ColumnLookup`
+            Lookup object for resolving columns.
 
         Returns
         -------
@@ -242,7 +285,7 @@ class Index:
         return cls(
             name=dm_index.name,
             id=dm_index.id,
-            columns=[columns[c] for c in (dm_index.columns or [])],
+            columns=[lookup.find_table_column(dm_table.name, c) for c in (dm_index.columns or [])],
             expressions=dm_index.expressions or [],
             description=dm_index.description,
             annotations=_strip_keys(dict(dm_index), ["name", "id", "columns", "expressions", "description"]),
@@ -274,15 +317,22 @@ class Constraint:
     """Additional annotations for this constraint."""
 
     @classmethod
-    def from_felis(cls, dm_constr: felis.datamodel.Constraint, columns: Mapping[str, Column]) -> Constraint:
+    def from_felis(
+        cls,
+        dm_constr: felis.datamodel.Constraint,
+        dm_table: felis.datamodel.Table,
+        lookup: _ColumnLookup,
+    ) -> Constraint:
         """Convert Felis constraint definition into instance of this class.
 
         Parameters
         ----------
-        dm_const : `felis.datamodel.Constraint`
+        dm_constr : `felis.datamodel.Constraint`
             Felis constraint definition.
-        columns : `~collections.abc.Mapping` [`str`, `Column`]
-            Mapping of column ID to `Column` instance.
+        dm_table : `felis.datamodel.Table`
+            Felis table containing this constraint.
+        lookup : `_ColumnLookup`
+            Lookup object for resolving columns.
 
         Returns
         -------
@@ -293,7 +343,7 @@ class Constraint:
             return UniqueConstraint(
                 name=dm_constr.name,
                 id=dm_constr.id,
-                columns=[columns[c] for c in dm_constr.columns],
+                columns=[lookup.find_table_column(dm_table.name, c) for c in dm_constr.columns],
                 deferrable=dm_constr.deferrable,
                 initially=dm_constr.initially,
                 description=dm_constr.description,
@@ -303,11 +353,24 @@ class Constraint:
                 ),
             )
         elif isinstance(dm_constr, felis.datamodel.ForeignKeyConstraint):
+            source_columns = [lookup.find_table_column(dm_table.name, c) for c in dm_constr.columns]
+            if dm_constr.reference is not None:
+                # New encoding: `reference` provides table and column names.
+                # Resolve referenced columns via (table_name, column_name).
+                referenced_columns = [
+                    lookup.columns_by_table_name[(dm_constr.reference.table, column_name)]
+                    for column_name in dm_constr.reference.columns
+                ]
+            else:
+                # Legacy encoding: `referencedColumns` stores column IDs.
+                # Resolve referenced columns directly via ID lookup.
+                referenced_columns = [lookup.columns_by_id[c] for c in dm_constr.referenced_columns or []]
+
             return ForeignKeyConstraint(
                 name=dm_constr.name,
                 id=dm_constr.id,
-                columns=[columns[c] for c in dm_constr.columns],
-                referenced_columns=[columns[c] for c in dm_constr.referenced_columns],
+                columns=source_columns,
+                referenced_columns=referenced_columns,
                 deferrable=dm_constr.deferrable,
                 initially=dm_constr.initially,
                 description=dm_constr.description,
@@ -320,6 +383,7 @@ class Constraint:
                         "columns",
                         "deferrable",
                         "initially",
+                        "reference",
                         "referenced_columns",
                         "description",
                     ],
@@ -428,28 +492,30 @@ class Table:
             column.table = self
 
     @classmethod
-    def from_felis(cls, dm_table: felis.datamodel.Table, columns: Mapping[str, Column]) -> Table:
+    def from_felis(cls, dm_table: felis.datamodel.Table, lookup: _ColumnLookup) -> Table:
         """Convert Felis table definition into instance of this class.
 
         Parameters
         ----------
         dm_table : `felis.datamodel.Table`
             Felis table definition.
-        columns : `~collections.abc.Mapping` [`str`, `Column`]
-            Mapping of column ID to `Column` instance.
+        lookup : `_ColumnLookup`
+            Lookup object for resolving columns.
 
         Returns
         -------
         table : `Table`
             Converted table definition.
         """
-        table_columns = [columns[c.id] for c in dm_table.columns]
+        table_columns = [lookup.columns_by_id[c.id] for c in dm_table.columns]
         if dm_table.primary_key:
-            pk_columns = [columns[c] for c in _make_iterable(dm_table.primary_key)]
+            pk_columns = [
+                lookup.find_table_column(dm_table.name, c) for c in _make_iterable(dm_table.primary_key)
+            ]
         else:
             pk_columns = []
-        constraints = [Constraint.from_felis(constr, columns) for constr in dm_table.constraints]
-        indices = [Index.from_felis(dm_idx, columns) for dm_idx in dm_table.indexes]
+        constraints = [Constraint.from_felis(constr, dm_table, lookup) for constr in dm_table.constraints]
+        indices = [Index.from_felis(dm_idx, dm_table, lookup) for dm_idx in dm_table.indexes]
         table = cls(
             name=dm_table.name,
             id=dm_table.id,
@@ -503,13 +569,16 @@ class Schema:
             Converted schema definition.
         """
         # Convert all columns first.
-        columns: MutableMapping[str, Column] = {}
+        columns_by_id: MutableMapping[str, Column] = {}
+        columns_by_table_name: MutableMapping[tuple[str, str], Column] = {}
         for dm_table in dm_schema.tables:
             for dm_column in dm_table.columns:
                 column = Column.from_felis(dm_column)
-                columns[column.id] = column
+                columns_by_id[column.id] = column
+                columns_by_table_name[(dm_table.name, column.name)] = column
 
-        tables = [Table.from_felis(dm_table, columns) for dm_table in dm_schema.tables]
+        lookup = _ColumnLookup(columns_by_id=columns_by_id, columns_by_table_name=columns_by_table_name)
+        tables = [Table.from_felis(dm_table, lookup) for dm_table in dm_schema.tables]
 
         version: felis.datamodel.SchemaVersion | None
         if isinstance(dm_schema.version, str):
