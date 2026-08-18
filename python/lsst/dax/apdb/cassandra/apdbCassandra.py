@@ -689,7 +689,7 @@ class ApdbCassandra(Apdb):
 
     def reassignDiaSourcesToDiaObjects(
         self,
-        idMap: Mapping[DiaSourceId, int],
+        idMap: Mapping[DiaSourceId, DiaObjectId],
         *,
         increment_nDiaSources: bool = True,
         decrement_nDiaSources: bool = True,
@@ -716,11 +716,7 @@ class ApdbCassandra(Apdb):
         current_object_ids = {
             DiaObjectId(diaObjectId=row.diaObjectId, ra=row.ra, dec=row.dec) for row in found_sources
         }
-        # Assume that DiaSource ra/dec are very close to re-assigned objects.
-        new_object_ids = {
-            DiaObjectId(diaObjectId=diaObjectId, ra=source_id.ra, dec=source_id.dec)
-            for source_id, diaObjectId in idMap.items()
-        }
+        new_object_ids = set(idMap.values())
         all_object_ids = new_object_ids | current_object_ids
         found_objects = self._get_diaobject_data(all_object_ids, "apdb_part", "ra", "dec", "nDiaSources")
 
@@ -736,7 +732,7 @@ class ApdbCassandra(Apdb):
 
         # Update DiaSources.
         statements: list[tuple] = []
-        for source_id, diaObjectId in idMap.items():
+        for source_id, obj_id in idMap.items():
             source_row = found_sources_by_id[source_id.diaSourceId]
             apdb_part = source_row.apdb_part
             time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
@@ -745,7 +741,7 @@ class ApdbCassandra(Apdb):
                 table_name = context.schema.tableName(ApdbTables.DiaSource, time_part)
                 update = (
                     Update(self._keyspace, table_name)
-                    .values(C("diaObjectId").update(diaObjectId))
+                    .values(C("diaObjectId").update(obj_id.diaObjectId))
                     .where(C("apdb_part") == apdb_part)
                     .where(C("diaSourceId") == source_id.diaSourceId)
                 )
@@ -753,7 +749,7 @@ class ApdbCassandra(Apdb):
                 table_name = context.schema.tableName(ApdbTables.DiaSource)
                 update = (
                     Update(self._keyspace, table_name)
-                    .values(C("diaObjectId").update(diaObjectId))
+                    .values(C("diaObjectId").update(obj_id.diaObjectId))
                     .where(C("apdb_part") == apdb_part)
                     .where(C("apdb_time_part") == time_part)
                     .where(C("diaSourceId") == source_id.diaSourceId)
@@ -767,7 +763,7 @@ class ApdbCassandra(Apdb):
                         ra=source_id.ra,
                         dec=source_id.dec,
                         midpointMjdTai=source_id.midpointMjdTai,
-                        diaObjectId=diaObjectId,
+                        diaObjectId=obj_id.diaObjectId,
                         update_time_ns=current_time_ns,
                         update_order=update_order,
                     )
@@ -797,7 +793,7 @@ class ApdbCassandra(Apdb):
             # Calculate increments/decrements for all affected DiaObjects.
             increments: Counter = Counter()
             if increment_nDiaSources:
-                increments.update(idMap.values())
+                increments.update(obj_id.diaObjectId for obj_id in idMap.values())
             if decrement_nDiaSources:
                 increments.subtract(row.diaObjectId for row in found_sources)
 
@@ -1602,6 +1598,9 @@ class ApdbCassandra(Apdb):
 
         if not context.schema.replication_enabled:
             raise TypeError("Replication is not enabled for this APDB instance.")
+
+        if not context.has_update_record_chunks_table:
+            raise TypeError("ApdbUpdateRecordChunks does not exist, ApdbReplica schema has to be upgraded.")
 
         if store_chunk:
             self._storeReplicaChunk(chunk)
