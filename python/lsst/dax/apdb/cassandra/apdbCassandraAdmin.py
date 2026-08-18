@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Protocol
 
 import astropy.time
 
-from lsst.sphgeom import LonLat, UnitVector3d
 from lsst.utils.iteration import chunk_iterable
 
 try:
@@ -193,8 +192,7 @@ class ApdbCassandraAdmin(ApdbAdmin):
 
     def apdb_part(self, ra: float, dec: float) -> int:
         # docstring is inherited from a base class
-        uv3d = UnitVector3d(LonLat.fromDegrees(ra, dec))
-        return self.partitioner.pixel(uv3d)
+        return self.partitioner.pixel(ra, dec)
 
     def apdb_time_part(self, midpointMjdTai: float) -> int:
         # docstring is inherited from a base class
