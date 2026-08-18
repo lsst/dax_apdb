@@ -1673,8 +1673,7 @@ class ApdbCassandra(Apdb):
         apdb_part = np.zeros(df.shape[0], dtype=np.int64)
         ra_col, dec_col = config.ra_dec_columns
         for i, (ra, dec) in enumerate(zip(df[ra_col], df[dec_col])):
-            uv3d = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
-            idx = context.partitioner.pixel(uv3d)
+            idx = context.partitioner.pixel(ra, dec)
             apdb_part[i] = idx
         df = df.copy()
         df["apdb_part"] = apdb_part
