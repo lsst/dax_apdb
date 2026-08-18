@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["Pixelization"]
 
 import logging
+from typing import Any, overload
 
 from lsst import sphgeom
 
@@ -98,13 +99,34 @@ class Pixelization:
         region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
         return self.pixels(region)
 
-    def pixel(self, direction: sphgeom.UnitVector3d) -> int:
+    @overload
+    def pixel(self, direction: sphgeom.UnitVector3d, /) -> int: ...
+
+    @overload
+    def pixel(self, ra: float, dec: float, /) -> int: ...
+
+    def pixel(self, *args: Any) -> int:
         """Compute the index of the pixel for given direction.
 
         Parameters
         ----------
-        direction : `lsst.sphgeom.UnitVector3d`
+        args
+            The method can take either a single `sphgeom.UnitVector3d` or
+            a pair of floating point numbers representing RA and Dec in
+            degrees.
+
+        Returns
+        -------
+        pixel : `int`
+            Pixel index.
         """
+        match args:
+            case (sphgeom.UnitVector3d() as direction,):
+                pass
+            case (float() as ra, float() as dec):
+                direction = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
+            case _:
+                raise TypeError(f"Unexpected arguments: {args}")
         index = self.pixelator.index(direction)
         return index
 

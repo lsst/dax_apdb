@@ -23,6 +23,7 @@ from __future__ import annotations
 
 __all__ = ["Partitioner"]
 
+from typing import Any, overload
 
 import astropy.time
 
@@ -56,20 +57,28 @@ class Partitioner:
         )
         self._epoch = float(self.partition_zero_epoch.mjd)
 
-    def pixel(self, direction: sphgeom.UnitVector3d) -> int:
+    @overload
+    def pixel(self, direction: sphgeom.UnitVector3d, /) -> int: ...
+
+    @overload
+    def pixel(self, ra: float, dec: float, /) -> int: ...
+
+    def pixel(self, *args: Any) -> int:
         """Compute the index of the pixel for given direction.
 
         Parameters
         ----------
-        direction : `lsst.sphgeom.UnitVector3d`
-            Spatial position.
+        args
+            The method can take either a single `sphgeom.UnitVector3d` or
+            a pair of floating point numbers representing RA and Dec in
+            degrees.
 
         Returns
         -------
         pixel : `int`
             Pixel index.
         """
-        return self.pixelization.pixel(direction)
+        return self.pixelization.pixel(*args)
 
     def time_partition(self, time: float | astropy.time.Time) -> int:
         """Calculate time partition number for a given time.
