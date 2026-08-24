@@ -617,8 +617,8 @@ class ApdbCassandra(Apdb):
         self,
         visit: int,
         detector: int,
-        region: sphgeom.Region,
-        visit_time: astropy.time.Time,
+        region: sphgeom.Region | None = None,
+        visit_time: astropy.time.Time | None = None,
     ) -> bool:
         # docstring is inherited from a base class
         context = self._context
