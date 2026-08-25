@@ -706,8 +706,8 @@ class ApdbSql(Apdb):
         self,
         visit: int,
         detector: int,
-        region: Region,
-        visit_time: astropy.time.Time,
+        region: Region | None = None,
+        visit_time: astropy.time.Time | None = None,
     ) -> bool:
         # docstring is inherited from a base class
         src_table: sqlalchemy.schema.Table = self._schema.get_table(ApdbTables.DiaSource)

@@ -288,7 +288,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
         # data_factory's ccdVisitId generation corresponds to (1, 1)
-        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
+        res = apdb.containsVisitDetector(visit=1, detector=1)
         self.assertFalse(res)
 
         # get sources by region
@@ -330,7 +330,7 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assertIs(res, None)
 
         # Database is empty, no images exist.
-        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
+        res = apdb.containsVisitDetector(visit=1, detector=1)
         self.assertFalse(res)
 
     def test_storeObjects(self) -> None:
@@ -431,10 +431,10 @@ class ApdbTest(TestCaseMixin, ABC):
 
         # test if a visit is present
         # data_factory's ccdVisitId generation corresponds to (1, 1)
-        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
+        res = apdb.containsVisitDetector(visit=1, detector=1)
         self.assertTrue(res)
         # non-existent image
-        res = apdb.containsVisitDetector(visit=2, detector=42, region=region, visit_time=visit_time)
+        res = apdb.containsVisitDetector(visit=2, detector=42)
         self.assertFalse(res)
 
     def test_storeForcedSources(self) -> None:
@@ -461,10 +461,10 @@ class ApdbTest(TestCaseMixin, ABC):
         self.assert_catalog(res, 0, ApdbTables.DiaForcedSource)
 
         # data_factory's ccdVisitId generation corresponds to (1, 1)
-        res = apdb.containsVisitDetector(visit=1, detector=1, region=region, visit_time=visit_time)
+        res = apdb.containsVisitDetector(visit=1, detector=1)
         self.assertTrue(res)
         # non-existent image
-        res = apdb.containsVisitDetector(visit=2, detector=42, region=region, visit_time=visit_time)
+        res = apdb.containsVisitDetector(visit=2, detector=42)
         self.assertFalse(res)
 
     def test_null_integer_type(self) -> None:

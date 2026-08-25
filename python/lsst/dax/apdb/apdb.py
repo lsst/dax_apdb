@@ -301,8 +301,8 @@ class Apdb(ABC):
         self,
         visit: int,
         detector: int,
-        region: Region,
-        visit_time: astropy.time.Time,
+        region: Region | None = None,
+        visit_time: astropy.time.Time | None = None,
     ) -> bool:
         """Test whether any sources for a given visit-detector are present in
         the APDB.
@@ -311,17 +311,19 @@ class Apdb(ABC):
         ----------
         visit, detector : `int`
             The ID of the visit-detector to search for.
-        region : `lsst.sphgeom.Region`
-            Region corresponding to the visit/detector combination.
-        visit_time : `astropy.time.Time`
-            Visit time (as opposed to visit processing time). This can be any
-            timestamp in the visit timespan, e.g. its begin or end time.
+        region : `lsst.sphgeom.Region`, optional
+            Deprecated - parameter is not used. Region corresponding to the
+            visit/detector combination.
+        visit_time : `astropy.time.Time`, optional
+            Deprecated - parameter is not used. Visit time (as opposed to visit
+            processing time). This can be any timestamp in the visit timespan,
+            e.g. its begin or end time.
 
         Returns
         -------
         present : `bool`
-            `True` if at least one DiaSource or DiaForcedSource record
-            may exist for the specified observation, `False` otherwise.
+            `True` if given visit/detector combination was stored in APDB,
+            `False` otherwise.
         """
         raise NotImplementedError()
 
