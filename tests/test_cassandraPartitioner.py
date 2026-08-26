@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import math
 import unittest
 from typing import Any
 
@@ -57,12 +58,22 @@ class CassandraPartitionerTestCase(unittest.TestCase):
         """Test pixel() method."""
         partitioner = self.make_partitioner()
 
-        self.assertEqual(partitioner.pixel(UnitVector3d(1.0, 1.0, 1.0)), 0xD00000)
-        self.assertEqual(partitioner.pixel(UnitVector3d(-1.0, 1.0, 1.0)), 0xE00000)
-        self.assertEqual(partitioner.pixel(UnitVector3d(1.0, -1.0, 1.0)), 0xF55555)
-        self.assertEqual(partitioner.pixel(UnitVector3d(1.0, 1.0, -1.0)), 0xAAAAAA)
-        self.assertEqual(partitioner.pixel(UnitVector3d(-1.0, -1.0, 1.0)), 0xEFFFFF)
-        self.assertEqual(partitioner.pixel(UnitVector3d(1.0, -1.0, -1.0)), 0xFAAAAA)
+        # Avoid getting on the boundary between pixels with tiny deltas.
+        self.assertEqual(partitioner.pixel(UnitVector3d(1.0001, 1.0, 1.0001)), 0xD00000)
+        self.assertEqual(partitioner.pixel(UnitVector3d(-1.0001, 1.0, 0.9999)), 0xE00000)
+        self.assertEqual(partitioner.pixel(UnitVector3d(0.9999, -1.0, 0.9999)), 0xF55555)
+        self.assertEqual(partitioner.pixel(UnitVector3d(1.0001, 1.0, -1.0001)), 0xAAAAAA)
+        self.assertEqual(partitioner.pixel(UnitVector3d(-1.0001, -1.0, 0.9999)), 0xEFFFFF)
+        self.assertEqual(partitioner.pixel(UnitVector3d(0.9999, -1.0, -0.9999)), 0xFAAAAA)
+
+        # Same with ra/dec in degrees.
+        dec = math.atan(1 / math.sqrt(2.0)) / math.pi * 180
+        self.assertEqual(partitioner.pixel(45.01, dec + 0.01), 0xD00000)
+        self.assertEqual(partitioner.pixel(135.01, dec - 0.01), 0xE00000)
+        self.assertEqual(partitioner.pixel(314.99, dec - 0.01), 0xF55555)
+        self.assertEqual(partitioner.pixel(45.01, -dec - 0.01), 0xAAAAAA)
+        self.assertEqual(partitioner.pixel(224.99, dec - 0.01), 0xEFFFFF)
+        self.assertEqual(partitioner.pixel(314.99, -dec + 0.01), 0xFAAAAA)
 
     def test_time_partition(self) -> None:
         """Test time_partition() method."""
