@@ -26,7 +26,7 @@ __all__ = ["Pixelization"]
 import logging
 from typing import Any, overload
 
-from lsst import sphgeom
+import lsst.sphgeom
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,21 +50,22 @@ class Pixelization:
         self._pix_max_ranges = pix_max_ranges
         self._is_healpix = False
 
+        self.pixelator: lsst.sphgeom.Pixelization
         if pixelization == "htm":
-            self.pixelator = sphgeom.HtmPixelization(pix_level)
+            self.pixelator = lsst.sphgeom.HtmPixelization(pix_level)
         elif pixelization == "q3c":
-            self.pixelator = sphgeom.Q3cPixelization(pix_level)
+            self.pixelator = lsst.sphgeom.Q3cPixelization(pix_level)
         elif pixelization == "mq3c":
-            self.pixelator = sphgeom.Mq3cPixelization(pix_level)
+            self.pixelator = lsst.sphgeom.Mq3cPixelization(pix_level)
         elif pixelization == "healpix":
             # Healpix does not support maxRanges.
             self._pix_max_ranges = 0
             self._is_healpix = True
-            self.pixelator = sphgeom.HealpixPixelization(pix_level)
+            self.pixelator = lsst.sphgeom.HealpixPixelization(pix_level)  # type: ignore[attr-defined]
         else:
             raise ValueError(f"unknown pixelization: {pixelization}")
 
-    def pixels(self, region: sphgeom.Region) -> list[int]:
+    def pixels(self, region: lsst.sphgeom.Region) -> list[int]:
         """Compute set of the pixel indices for given region.
 
         Parameters
@@ -94,13 +95,13 @@ class Pixelization:
         pixels : `list` [`int`]
             All pixels that envelop the circle.
         """
-        lon_lat = sphgeom.LonLat.fromDegrees(ra, dec)
-        center = sphgeom.UnitVector3d(lon_lat)
-        region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
+        lon_lat = lsst.sphgeom.LonLat.fromDegrees(ra, dec)
+        center = lsst.sphgeom.UnitVector3d(lon_lat)
+        region = lsst.sphgeom.Circle(center, lsst.sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
         return self.pixels(region)
 
     @overload
-    def pixel(self, direction: sphgeom.UnitVector3d, /) -> int: ...
+    def pixel(self, direction: lsst.sphgeom.UnitVector3d, /) -> int: ...
 
     @overload
     def pixel(self, ra: float, dec: float, /) -> int: ...
@@ -121,11 +122,13 @@ class Pixelization:
             Pixel index.
         """
         match args:
-            case (sphgeom.UnitVector3d() as direction,):
+            case (lsst.sphgeom.UnitVector3d() as direction,):
                 pass
             case (ra, dec):
                 try:
-                    direction = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(float(ra), float(dec)))
+                    direction = lsst.sphgeom.UnitVector3d(
+                        lsst.sphgeom.LonLat.fromDegrees(float(ra), float(dec))
+                    )
                 except (TypeError, ValueError) as exc:
                     raise TypeError(f"Unexpected arguments: {args}") from exc
             case _:
@@ -133,7 +136,7 @@ class Pixelization:
         index = self.pixelator.index(direction)
         return index
 
-    def region(self, pixel: int) -> sphgeom.Region:
+    def region(self, pixel: int) -> lsst.sphgeom.Region:
         """Return region corresponding to a pixel index.
 
         Parameters
@@ -149,7 +152,7 @@ class Pixelization:
         region = self.pixelator.pixel(pixel)
         return region
 
-    def envelope(self, region: sphgeom.Region) -> list[tuple[int, int]]:
+    def envelope(self, region: lsst.sphgeom.Region) -> list[tuple[int, int]]:
         """Generate a set of HTM indices covering specified region.
 
         Parameters
