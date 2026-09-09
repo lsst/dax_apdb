@@ -123,8 +123,11 @@ class Pixelization:
         match args:
             case (sphgeom.UnitVector3d() as direction,):
                 pass
-            case (float() as ra, float() as dec):
-                direction = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(ra, dec))
+            case (ra, dec):
+                try:
+                    direction = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(float(ra), float(dec)))
+                except (TypeError, ValueError) as exc:
+                    raise TypeError(f"Unexpected arguments: {args}") from exc
             case _:
                 raise TypeError(f"Unexpected arguments: {args}")
         index = self.pixelator.index(direction)
