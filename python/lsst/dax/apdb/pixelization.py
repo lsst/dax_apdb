@@ -112,9 +112,9 @@ class Pixelization:
         Parameters
         ----------
         args
-            The method can take either a single `sphgeom.UnitVector3d` or
-            a pair of floating point numbers representing RA and Dec in
-            degrees.
+            The method can take either a single `lsst.sphgeom.UnitVector3d` or
+            a pair of floating point numbers (or values convertible to floats)
+            representing RA and Dec in degrees.
 
         Returns
         -------
