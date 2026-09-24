@@ -51,6 +51,7 @@ class Pixelization:
         self._is_healpix = False
 
         self.pixelator: lsst.sphgeom.Pixelization
+        self.level = pix_level
         if pixelization == "htm":
             self.pixelator = lsst.sphgeom.HtmPixelization(pix_level)
         elif pixelization == "q3c":

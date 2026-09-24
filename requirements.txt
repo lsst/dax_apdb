@@ -3,7 +3,7 @@ numpy
 pandas
 pydantic
 pyyaml >= 5.1
-sqlalchemy
+sqlalchemy < 2.1
 testing.postgresql
 psycopg2
 cassandra-driver
