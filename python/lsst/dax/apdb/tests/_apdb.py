@@ -814,6 +814,8 @@ class ApdbTest(TestCaseMixin, ABC):
         region = self.make_region(xyz=(1.0, 0.0, 0.0))
 
         # Store 3 objects and sources at the same position in each region.
+        # The code originally updated nDiaSources so there are objects with
+        # nDiaSources > 1, but we dropped that option.
         visit_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
         objects1 = makeObjectCatalog(lonlat, 3, start_id=100)
         sources1 = makeSourceCatalog(objects1, visit_time1, start_id=1000, use_mjd=self.use_mjd)
@@ -840,16 +842,15 @@ class ApdbTest(TestCaseMixin, ABC):
         source_ids = [DiaSourceId.from_named_tuple(row) for row in sources.itertuples()]
         sources_by_id = {source_id.diaSourceId: source_id for source_id in source_ids}
 
+        if self.use_mjd:
+            self.assertTrue(all(pandas.isna(sources["timeWithdrawnMjdTai"])))
+        else:
+            self.assertTrue(all(pandas.isnull(sources["time_withdrawn"])))
+
         # Withdraw a bunch of sources.
         withdraw_time = astropy.time.Time("2021-01-01T10:00:00", format="isot", scale="tai")
         apdb.withdrawDiaSources(
             [sources_by_id[i] for i in (1000, 2000, 3000, 1001)], timeWithdrawn=withdraw_time
-        )
-
-        objects = apdb.getDiaObjects(region)
-        self.assertEqual(
-            {int(row.diaObjectId): int(row.nDiaSources) for row in objects.itertuples()},
-            {101: 1, 102: 2, 201: 1, 202: 1},
         )
 
         sources = apdb.getDiaSources(region, None, visit_time2)
@@ -860,39 +861,19 @@ class ApdbTest(TestCaseMixin, ABC):
         else:
             self.assertFalse(any(pandas.isnull(sources.loc[[1000, 1001, 2000, 3000], "time_withdrawn"])))
 
-        # Do not close validity.
-        apdb.withdrawDiaSources([sources_by_id[2001]], timeWithdrawn=withdraw_time, closeValidity=False)
-        objects = apdb.getDiaObjects(region)
-        self.assertEqual(
-            {int(row.diaObjectId): int(row.nDiaSources) for row in objects.itertuples()},
-            {101: 1, 102: 2, 201: 0, 202: 1},
-        )
-
-        # Do not decrement nDiaSources.
-        apdb.withdrawDiaSources(
-            [sources_by_id[2002]],
-            timeWithdrawn=withdraw_time,
-            decrement_nDiaSources=False,
-        )
-        objects = apdb.getDiaObjects(region)
-        self.assertEqual(
-            {int(row.diaObjectId): int(row.nDiaSources) for row in objects.itertuples()},
-            {101: 1, 102: 2, 201: 0, 202: 1},
-        )
-
         # Check replication update tables.
         replica_chunks = apdb_replica.getReplicaChunks()
         if not self.enable_replica:
             self.assertIsNone(replica_chunks)
         else:
-            # Check that there are 10 update records in replica tables.
+            # Check that there are 4 update records in replica tables.
             assert replica_chunks is not None
 
             # There could be one or two chunks.
             self.assertTrue(1 <= len(replica_chunks) <= 2)
 
             update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
-            self.assertEqual(len(update_records), 12)
+            self.assertEqual(len(update_records), 4)
 
     def test_withdraw_forced_sources(self) -> None:
         """Test withdrawDiaForcedSources() method."""
@@ -936,7 +917,7 @@ class ApdbTest(TestCaseMixin, ABC):
         if not self.enable_replica:
             self.assertIsNone(replica_chunks)
         else:
-            # Check that there are 10 update records in replica tables.
+            # Check that there are 2 update records in replica tables.
             assert replica_chunks is not None
 
             # There could be one or two chunks.

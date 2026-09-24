@@ -1007,8 +1007,6 @@ class ApdbSql(Apdb):
         diaSourceIds: Iterable[DiaSourceId],
         *,
         timeWithdrawn: astropy.time.Time | None = None,
-        decrement_nDiaSources: bool = True,
-        closeValidity: bool = True,
     ) -> None:
         # docstring is inherited from a base class
 
@@ -1025,18 +1023,12 @@ class ApdbSql(Apdb):
             found_sources = self._get_diasource_data(conn, source_ids, "diaObjectId")
             if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
                 raise LookupError(f"Some source IDs are missing from DiaSource table: {missing_ids}")
-            original_object_ids = {
-                row.diaSourceId: row.diaObjectId for row in found_sources if row.diaObjectId is not None
-            }
 
             # Set time_withdrawn for sources.
             table = self._schema.get_table(ApdbTables.DiaSource)
             where = table.columns["diaSourceId"].in_(sorted(source_ids))
             update = table.update().where(where).values({column_name: time_value})
             conn.execute(update)
-
-            update_records: list[ApdbUpdateRecord] = []
-            update_order = 0
 
             # If replication is enabled then send all updates.
             if self._schema.replication_enabled:
@@ -1060,68 +1052,6 @@ class ApdbSql(Apdb):
                 ]
                 if update_records:
                     self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True, connection=conn)
-
-            # Decrement nDiaSources for the matching DiaObjects.
-            if decrement_nDiaSources:
-                all_object_ids = set(original_object_ids.values())
-                found_objects = self._get_diaobject_data(conn, all_object_ids, "ra", "dec", "nDiaSources")
-                found_objects_by_id = {row.diaObjectId: row for row in found_objects}
-
-                decrements: Counter = Counter(original_object_ids.values())
-
-                # DiaObject tables to update.
-                object_tables = [self._schema.get_table(ApdbTables.DiaObject)]
-                if self.config.dia_object_index == "last_object_table":
-                    object_tables.append(self._schema.get_table(ApdbTables.DiaObjectLast))
-
-                if decrements:
-                    for table in object_tables:
-                        for diaObjectId, decrement in decrements.items():
-                            update = (
-                                table.update()
-                                .where(table.columns["diaObjectId"] == diaObjectId)
-                                .values(nDiaSources=table.columns["nDiaSources"] - decrement)
-                            )
-                            conn.execute(update)
-
-                    # Also send updated values to replica.
-                    if self._schema.replication_enabled:
-                        current_time = self._current_time()
-                        current_time_ns = int(current_time.unix_tai * 1e9)
-                        replica_chunk = ReplicaChunk.make_replica_chunk(
-                            current_time, self.config.replica_chunk_seconds
-                        )
-
-                        update_records = []
-                        for diaObjectId, dia_object in found_objects_by_id.items():
-                            decrement = decrements.get(diaObjectId, 0)
-                            update_records.append(
-                                ApdbUpdateNDiaSourcesRecord(
-                                    diaObjectId=diaObjectId,
-                                    ra=dia_object.ra,
-                                    dec=dia_object.dec,
-                                    nDiaSources=dia_object.nDiaSources - decrement,
-                                    update_time_ns=current_time_ns,
-                                    update_order=update_order,
-                                )
-                            )
-                            update_order += 1
-
-                        if update_records:
-                            self._storeUpdateRecords(
-                                update_records, replica_chunk, store_chunk=True, connection=conn
-                            )
-
-                    if closeValidity:
-                        objects_to_close = []
-                        for diaObjectId, dia_object in found_objects_by_id.items():
-                            decrement = decrements.get(diaObjectId, 0)
-                            if decrement >= dia_object.nDiaSources:
-                                objects_to_close.append(
-                                    DiaObjectId(diaObjectId=diaObjectId, ra=dia_object.ra, dec=dia_object.dec)
-                                )
-                        if objects_to_close:
-                            self._setValidityEnd(conn, objects_to_close, timeWithdrawn)
 
     def withdrawDiaForcedSources(
         self,

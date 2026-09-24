@@ -1060,8 +1060,6 @@ class ApdbCassandra(Apdb):
         diaSourceIds: Iterable[DiaSourceId],
         *,
         timeWithdrawn: astropy.time.Time | None = None,
-        decrement_nDiaSources: bool = True,
-        closeValidity: bool = True,
     ) -> None:
         # docstring is inherited from a base class
         context = self._context
@@ -1084,9 +1082,6 @@ class ApdbCassandra(Apdb):
             raise LookupError(f"Some source IDs were not found in DiaSource table: {missing_ids}")
 
         found_sources_by_id = {row.diaSourceId: row for row in found_sources}
-        original_object_ids = {
-            row.diaSourceId: row.diaObjectId for row in found_sources if row.diaObjectId is not None
-        }
 
         update_records: list[ApdbUpdateRecord] = []
         update_order = 0
@@ -1140,70 +1135,6 @@ class ApdbCassandra(Apdb):
         if update_records:
             replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
             self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
-
-        if decrement_nDiaSources:
-            table_name = context.schema.tableName(ApdbTables.DiaObjectLast)
-            update = (
-                Update(self._keyspace, table_name)
-                .values(C("nDiaSources").update(-1))
-                .where(C("apdb_part") == -1)
-                .where(C("diaObjectId") == -1)
-            )
-            statement = context.stmt_factory(update, prepare=True)
-            statements = []
-
-            # Find matching objects (and some sources may not have an object).
-            all_object_ids = set()
-            for source_id in found_sources_by_id.values():
-                if source_id.diaObjectId:
-                    all_object_ids.add(
-                        DiaObjectId(diaObjectId=source_id.diaObjectId, ra=source_id.ra, dec=source_id.dec)
-                    )
-            found_objects = self._get_diaobject_data(all_object_ids, "apdb_part", "ra", "dec", "nDiaSources")
-            decrements: Counter = Counter(original_object_ids.values())
-
-            update_records = []
-            update_order = 0
-            current_time = self._current_time()
-            current_time_ns = int(current_time.unix_tai * 1e9)
-
-            objects_to_close = []
-            for row in found_objects:
-                if decrements.get(row.diaObjectId):
-                    nDiaSources = row.nDiaSources - decrements[row.diaObjectId]
-                    statements.append((statement, (nDiaSources, row.apdb_part, row.diaObjectId)))
-
-                    if nDiaSources <= 0:
-                        objects_to_close.append(row)
-
-                    # Also send updated values to replica.
-                    if context.schema.replication_enabled:
-                        update_records.append(
-                            ApdbUpdateNDiaSourcesRecord(
-                                diaObjectId=row.diaObjectId,
-                                ra=row.ra,
-                                dec=row.dec,
-                                nDiaSources=nDiaSources,
-                                update_time_ns=current_time_ns,
-                                update_order=update_order,
-                            )
-                        )
-                        update_order += 1
-
-            if statements:
-                with self._timer(
-                    "update_time", tags={"table": table_name, "method": "withdrawDiaSources"}
-                ) as timer:
-                    execute_concurrent(context.session, statements, execution_profile="write")
-                    timer.add_values(num_queries=len(statements))
-
-            if update_records:
-                replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
-                self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
-
-            if closeValidity and objects_to_close:
-                to_close = [DiaObjectId.from_named_tuple(row) for row in objects_to_close]
-                self.setValidityEnd(to_close, timeWithdrawn)
 
     def withdrawDiaForcedSources(
         self,

@@ -473,8 +473,6 @@ class Apdb(ABC):
         diaSourceIds: Iterable[DiaSourceId],
         *,
         timeWithdrawn: astropy.time.Time | None = None,
-        decrement_nDiaSources: bool = True,
-        closeValidity: bool = True,
     ) -> None:
         """Withdraw DiaSources.
 
@@ -485,12 +483,6 @@ class Apdb(ABC):
         timeWithdrawn : `astropy.time.Time`, optional
             Set the value of ``time_withdrawn`` column to this time, current
             time by default.
-        decrement_nDiaSources : `bool`, optional
-            If `True` then decrement the value of ``nDiaSources`` in matching
-            DiaObjects.
-        closeValidity : `bool`, optional
-            If `True` then close validity interval for DiaObjects whose
-            ``nDiaSources`` becomes zero.
 
         Raises
         ------
