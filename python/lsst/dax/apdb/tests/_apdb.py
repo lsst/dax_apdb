@@ -24,6 +24,7 @@ from __future__ import annotations
 __all__ = ["ApdbSchemaUpdateTest", "ApdbTest", "update_schema_yaml"]
 
 import contextlib
+import itertools
 import logging.config
 import os
 import tempfile
@@ -34,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import astropy.time
 import felis.datamodel
+import numpy
 import pandas
 import yaml
 
@@ -48,6 +50,7 @@ from .. import (
     ApdbTables,
     ApdbUpdateRecord,
     ApdbWithdrawDiaSourceRecord,
+    DiaForcedSourceId,
     DiaObjectId,
     DiaSourceId,
     IncompatibleVersionError,
@@ -72,9 +75,12 @@ if log_config := os.environ.get("DAX_APDB_TEST_LOG_CONFIG"):
     logging.config.fileConfig(log_config)
 
 
-def _make_region(xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
+def _make_region(xyz: tuple[float, float, float] | LonLat = (1.0, 1.0, -1.0)) -> Region:
     """Make a region to use in tests"""
-    pointing_v = UnitVector3d(*xyz)
+    if isinstance(xyz, LonLat):
+        pointing_v = UnitVector3d(xyz)
+    else:
+        pointing_v = UnitVector3d(*xyz)
     fov = 0.0013  # radians
     region = Circle(pointing_v, Angle(fov / 2))
     return region
@@ -154,8 +160,8 @@ class ApdbTest(TestCaseMixin, ABC):
     table_column_count = {
         ApdbTables.DiaObject: 8,
         ApdbTables.DiaObjectLast: 6,
-        ApdbTables.DiaSource: 12,
-        ApdbTables.DiaForcedSource: 8,
+        ApdbTables.DiaSource: 13,
+        ApdbTables.DiaForcedSource: 9,
         ApdbTables.SSObject: 3,
     }
 
@@ -217,7 +223,7 @@ class ApdbTest(TestCaseMixin, ABC):
         for column, datatype in types.items():
             self.assertEqual(column_defs[column], datatype)
 
-    def make_region(self, xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
+    def make_region(self, xyz: tuple[float, float, float] | LonLat = (1.0, 1.0, -1.0)) -> Region:
         """Make a region to use in tests"""
         return _make_region(xyz)
 
@@ -618,8 +624,8 @@ class ApdbTest(TestCaseMixin, ABC):
         lonlat1 = LonLat.fromDegrees(0.0, 0.0)
         lonlat2 = LonLat.fromDegrees(180.0, 0.0)
         # regons around lonlat1/2
-        region1 = self.make_region(xyz=(1.0, 0.0, 0.0))
-        region2 = self.make_region(xyz=(-1.0, 0.0, 0.0))
+        region1 = self.make_region(lonlat1)
+        region2 = self.make_region(lonlat2)
 
         # Store 3 objects and sources at the same position in each region.
         objects = makeObjectCatalog(lonlat1, 3, start_id=100)
@@ -801,6 +807,154 @@ class ApdbTest(TestCaseMixin, ABC):
         by resetDedup().
         """
         raise NotImplementedError()
+
+    def test_withdraw_sources(self) -> None:
+        """Test withdrawDiaSources() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        lonlat1 = LonLat.fromDegrees(0.0, 0.0)
+        region1 = self.make_region(lonlat1)
+        lonlat2 = LonLat.fromDegrees(45.0, 0.0)
+        region2 = self.make_region(lonlat2)
+
+        # Store 3 objects and sources at the same position in each region.
+        # The code originally updated nDiaSources so there are objects with
+        # nDiaSources > 1, but we dropped that option.
+        visit_time1 = astropy.time.Time("2021-01-01T00:00:00", format="isot", scale="tai")
+        objects1 = makeObjectCatalog(lonlat1, 3, start_id=100)
+        sources1 = makeSourceCatalog(objects1, visit_time1, start_id=1000, use_mjd=self.use_mjd)
+        apdb.store(visit_time1, objects1, sources1)
+
+        visit_time2 = astropy.time.Time("2021-01-01T00:01:00", format="isot", scale="tai")
+        objects2 = makeObjectCatalog(lonlat2, 3, start_id=200)
+        sources2 = makeSourceCatalog(objects2, visit_time2, start_id=2000, use_mjd=self.use_mjd)
+        apdb.store(visit_time2, objects2, sources2)
+
+        # Fetch everything and verify.
+        objects1 = apdb.getDiaObjects(region1)
+        objects2 = apdb.getDiaObjects(region2)
+        self.assertEqual({row.diaObjectId for row in objects1.itertuples()}, {100, 101, 102})
+        self.assertEqual({row.diaObjectId for row in objects2.itertuples()}, {200, 201, 202})
+
+        sources1 = apdb.getDiaSources(region1, None, visit_time2)
+        sources2 = apdb.getDiaSources(region2, None, visit_time2)
+        assert sources1 is not None and sources2 is not None
+        source_ids = [
+            DiaSourceId.from_named_tuple(row)
+            for row in itertools.chain(sources1.itertuples(), sources2.itertuples())
+        ]
+        sources_by_id = {source_id.diaSourceId: source_id for source_id in source_ids}
+
+        if self.use_mjd:
+            self.assertTrue(all(pandas.isna(sources1["timeWithdrawnMjdTai"])))
+            self.assertTrue(all(pandas.isna(sources2["timeWithdrawnMjdTai"])))
+        else:
+            self.assertTrue(all(pandas.isnull(sources1["time_withdrawn"])))
+            self.assertTrue(all(pandas.isnull(sources2["time_withdrawn"])))
+
+        # Withdraw a bunch of sources.
+        withdraw_time1 = astropy.time.Time("2021-01-01T10:00:00", format="isot", scale="tai")
+        withdraw_time2 = astropy.time.Time("2021-01-02T10:00:00", format="isot", scale="tai")
+        apdb.withdrawDiaSources([sources_by_id[i] for i in (1000, 2001)], timeWithdrawn=withdraw_time1)
+        # Withdraw diaSourceId=1000 second time, should not change it.
+        apdb.withdrawDiaSources([sources_by_id[i] for i in (1000, 2000, 1002)], timeWithdrawn=withdraw_time2)
+
+        sources1 = apdb.getDiaSources(region1, None, visit_time2)
+        sources2 = apdb.getDiaSources(region2, None, visit_time2)
+        assert sources1 is not None and sources2 is not None
+        sources1.set_index("diaSourceId", inplace=True)
+        sources2.set_index("diaSourceId", inplace=True)
+        if self.use_mjd:
+            self.assertEqual(sources1.loc[1000, "timeWithdrawnMjdTai"], withdraw_time1.mjd)
+            self.assertTrue(numpy.isnan(sources1.loc[1001, "timeWithdrawnMjdTai"]))
+            self.assertEqual(sources1.loc[1002, "timeWithdrawnMjdTai"], withdraw_time2.mjd)
+            self.assertEqual(sources2.loc[2000, "timeWithdrawnMjdTai"], withdraw_time2.mjd)
+            self.assertEqual(sources2.loc[2001, "timeWithdrawnMjdTai"], withdraw_time1.mjd)
+            self.assertTrue(numpy.isnan(sources2.loc[2002, "timeWithdrawnMjdTai"]))
+        else:
+            # Exact type and values depend on backend, I don't want to
+            # overcomplicate it, just check for NaT.
+            self.assertEqual(
+                dict(numpy.isnat(sources1["time_withdrawn"])), {1000: False, 1001: True, 1002: False}
+            )
+            self.assertEqual(
+                dict(numpy.isnat(sources2["time_withdrawn"])), {2000: False, 2001: False, 2002: True}
+            )
+
+        # Check replication update tables.
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            # Check that there are 4 update records in replica tables.
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            self.assertEqual(len(update_records), 4)
+
+    def test_withdraw_forced_sources(self) -> None:
+        """Test withdrawDiaForcedSources() method."""
+        config = self.make_instance()
+        apdb = Apdb.from_config(config)
+        apdb._current_time = lambda: self.processing_time  # type: ignore[method-assign]
+        apdb_replica = ApdbReplica.from_config(config)
+
+        lonlat = LonLat.fromDegrees(0.0, 0.0)
+        region = self.make_region(lonlat)
+
+        # Store 3 objects and sources at the same position in each region.
+        objects = makeObjectCatalog(lonlat, 3, start_id=100)
+        fsources = makeForcedSourceCatalog(objects, self.visit_time, use_mjd=self.use_mjd)
+        apdb.store(self.visit_time, objects, None, fsources)
+
+        fsources = apdb.getDiaForcedSources(region, [100, 101, 102], self.visit_time)
+        assert fsources is not None
+        source_ids = [DiaForcedSourceId.from_named_tuple(row) for row in fsources.itertuples()]
+        sources_by_id = {source_id.diaObjectId: source_id for source_id in source_ids}
+
+        if self.use_mjd:
+            self.assertTrue(all(pandas.isna(fsources["timeWithdrawnMjdTai"])))
+        else:
+            self.assertTrue(all(pandas.isnull(fsources["time_withdrawn"])))
+
+        # Withdraw sources.
+        withdraw_time1 = astropy.time.Time("2021-01-01T10:00:00", format="isot", scale="tai")
+        apdb.withdrawDiaForcedSources([sources_by_id[i] for i in (100, 102)], timeWithdrawn=withdraw_time1)
+        withdraw_time2 = astropy.time.Time("2021-01-02T10:00:00", format="isot", scale="tai")
+        # DiaSourceId=102 withdrawn second time, it has no effect.
+        apdb.withdrawDiaForcedSources([sources_by_id[i] for i in (101, 102)], timeWithdrawn=withdraw_time2)
+
+        fsources = apdb.getDiaForcedSources(region, [100, 101, 102], self.visit_time)
+        assert fsources is not None
+        fsources.set_index("diaObjectId", inplace=True)
+        if self.use_mjd:
+            self.assertEqual(fsources.loc[100, "timeWithdrawnMjdTai"], withdraw_time1.mjd)
+            self.assertEqual(fsources.loc[101, "timeWithdrawnMjdTai"], withdraw_time2.mjd)
+            self.assertEqual(fsources.loc[102, "timeWithdrawnMjdTai"], withdraw_time1.mjd)
+        else:
+            # Exact type and values depend on backend, I don't want to
+            # overcomplicate it, just check that all of them are not NULL.
+            self.assertFalse(any(pandas.isnull(fsources["time_withdrawn"])))
+
+        # Check replication update tables.
+        replica_chunks = apdb_replica.getReplicaChunks()
+        if not self.enable_replica:
+            self.assertIsNone(replica_chunks)
+        else:
+            # Check that there are 3 update records in replica tables.
+            assert replica_chunks is not None
+
+            # There could be one or two chunks.
+            self.assertTrue(1 <= len(replica_chunks) <= 2)
+
+            update_records = apdb_replica.getUpdateRecordChunks([chunk.id for chunk in replica_chunks])
+            self.assertEqual(len(update_records), 3)
 
     def test_getChunks(self) -> None:
         """Store and retrieve replica chunks."""
@@ -1198,7 +1352,7 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         """
         raise NotImplementedError()
 
-    def make_region(self, xyz: tuple[float, float, float] = (1.0, 1.0, -1.0)) -> Region:
+    def make_region(self, xyz: tuple[float, float, float] | LonLat = (1.0, 1.0, -1.0)) -> Region:
         """Make a region to use in tests"""
         return _make_region(xyz)
 

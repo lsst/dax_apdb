@@ -61,9 +61,11 @@ from ..apdbUpdateRecord import (
     ApdbCloseDiaObjectValidityRecord,
     ApdbReassignDiaSourceToDiaObjectRecord,
     ApdbUpdateNDiaSourcesRecord,
+    ApdbWithdrawDiaForcedSourceRecord,
+    ApdbWithdrawDiaSourceRecord,
 )
 from ..monitor import MonAgent
-from ..recordIds import DiaObjectId, DiaSourceId
+from ..recordIds import DiaForcedSourceId, DiaObjectId, DiaSourceId
 from ..schema_model import Table
 from ..timer import Timer
 from ..versionTuple import VersionTuple
@@ -1053,6 +1055,184 @@ class ApdbCassandra(Apdb):
             execute_concurrent(context.session, queries, execution_profile="write")
             timer.add_values(source_count=len(idMap))
 
+    def withdrawDiaSources(
+        self,
+        diaSourceIds: Iterable[DiaSourceId],
+        *,
+        timeWithdrawn: astropy.time.Time | None = None,
+    ) -> None:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        if timeWithdrawn is None:
+            timeWithdrawn = self._current_time()
+        time_value = self._timestamp_column_value(timeWithdrawn)
+        column_name = self._timestamp_column_name("time_withdrawn")
+
+        diaSourceIds = list(diaSourceIds)
+        source_ids = {source_id.diaSourceId for source_id in diaSourceIds}
+
+        # Find all DiaSources.
+        found_sources = self._get_diasource_data(
+            diaSourceIds, "apdb_part", "diaObjectId", "ra", "dec", "midpointMjdTai", column_name
+        )
+
+        if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
+            raise LookupError(f"Some source IDs were not found in DiaSource table: {missing_ids}")
+
+        found_sources_by_id = {row.diaSourceId: row for row in found_sources}
+
+        update_records: list[ApdbUpdateRecord] = []
+        update_order = 0
+        current_time = self._current_time()
+        current_time_ns = int(current_time.unix_tai * 1e9)
+
+        # Update DiaSources.
+        statements: list[tuple] = []
+        for source_id in diaSourceIds:
+            source_row = found_sources_by_id[source_id.diaSourceId]
+            # Ignore sources already withdrawn.
+            if getattr(source_row, column_name) is not None:
+                continue
+
+            apdb_part = source_row.apdb_part
+            time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
+
+            if config.partitioning.time_partition_tables:
+                table_name = context.schema.tableName(ApdbTables.DiaSource, time_part)
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values(C(column_name).update(time_value))
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("diaSourceId") == source_id.diaSourceId)
+                )
+            else:
+                table_name = context.schema.tableName(ApdbTables.DiaSource)
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values(C(column_name).update(time_value))
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("apdb_time_part") == time_part)
+                    .where(C("diaSourceId") == source_id.diaSourceId)
+                )
+            statements.append(context.stmt_factory.with_params(update, prepare=True))
+
+            if context.schema.replication_enabled:
+                update_records.append(
+                    ApdbWithdrawDiaSourceRecord(
+                        diaSourceId=source_id.diaSourceId,
+                        ra=source_id.ra,
+                        dec=source_id.dec,
+                        midpointMjdTai=source_id.midpointMjdTai,
+                        update_time_ns=current_time_ns,
+                        update_order=update_order,
+                        timeWithdrawnMjdTai=float(timeWithdrawn.tai.mjd),
+                    )
+                )
+                update_order += 1
+
+        with self._timer("update_time", tags={"table": "DiaSource", "method": "withdrawDiaSources"}) as timer:
+            execute_concurrent(context.session, statements, execution_profile="write")
+            timer.add_values(num_queries=len(statements))
+
+        if update_records:
+            replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
+    def withdrawDiaForcedSources(
+        self,
+        diaForcedSourceIds: Iterable[DiaForcedSourceId],
+        *,
+        timeWithdrawn: astropy.time.Time | None = None,
+    ) -> None:
+        # docstring is inherited from a base class
+        context = self._context
+        config = context.config
+
+        def _fsrc_id(fsource: Any) -> tuple[int, int, int]:
+            return (fsource.diaObjectId, fsource.visit, fsource.detector)
+
+        if timeWithdrawn is None:
+            timeWithdrawn = self._current_time()
+        time_value = self._timestamp_column_value(timeWithdrawn)
+        column_name = self._timestamp_column_name("time_withdrawn")
+
+        diaForcedSourceIds = list(diaForcedSourceIds)
+        fsource_keys = {_fsrc_id(source) for source in diaForcedSourceIds}
+
+        found_fsources = self._get_diaforcedsource_data(
+            diaForcedSourceIds, "apdb_part", "ra", "dec", "midpointMjdTai", column_name
+        )
+
+        found_keys = {_fsrc_id(row) for row in found_fsources}
+        if missing_ids := (fsource_keys - found_keys):
+            raise LookupError(f"Some source IDs were not found in DiaForcedSource table: {missing_ids}")
+
+        statements: list[tuple] = []
+        update_records = []
+        update_order = 0
+        current_time = self._current_time()
+        current_time_ns = int(current_time.unix_tai * 1e9)
+
+        for source_row in found_fsources:
+            # Ignore sources already withdrawn.
+            if getattr(source_row, column_name) is not None:
+                continue
+
+            apdb_part = source_row.apdb_part
+            time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
+
+            if config.partitioning.time_partition_tables:
+                table_name = context.schema.tableName(ApdbTables.DiaForcedSource, time_part)
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values(C(column_name).update(time_value))
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("diaObjectId") == source_row.diaObjectId)
+                    .where(C("visit") == source_row.visit)
+                    .where(C("detector") == source_row.detector)
+                )
+            else:
+                table_name = context.schema.tableName(ApdbTables.DiaForcedSource)
+                update = (
+                    Update(self._keyspace, table_name)
+                    .values(C(column_name).update(time_value))
+                    .where(C("apdb_part") == apdb_part)
+                    .where(C("apdb_time_part") == time_part)
+                    .where(C("diaObjectId") == source_row.diaObjectId)
+                    .where(C("visit") == source_row.visit)
+                    .where(C("detector") == source_row.detector)
+                )
+            statements.append(context.stmt_factory.with_params(update, prepare=True))
+
+            if context.schema.replication_enabled:
+                update_records.append(
+                    ApdbWithdrawDiaForcedSourceRecord(
+                        diaObjectId=source_row.diaObjectId,
+                        visit=source_row.visit,
+                        detector=source_row.detector,
+                        ra=source_row.ra,
+                        dec=source_row.dec,
+                        midpointMjdTai=source_row.midpointMjdTai,
+                        update_time_ns=current_time_ns,
+                        update_order=update_order,
+                        timeWithdrawnMjdTai=float(timeWithdrawn.tai.mjd),
+                    )
+                )
+                update_order += 1
+
+        if statements:
+            with self._timer(
+                "update_time", tags={"table": "DiaForcedSource", "method": "withdrawDiaForcedSources"}
+            ) as timer:
+                execute_concurrent(context.session, statements, execution_profile="write")
+                timer.add_values(num_queries=len(statements))
+
+        if update_records:
+            replica_chunk = ReplicaChunk.make_replica_chunk(current_time, config.replica_chunk_seconds)
+            self._storeUpdateRecords(update_records, replica_chunk, store_chunk=True)
+
     def countUnassociatedObjects(self) -> int:
         # docstring is inherited from a base class
 
@@ -1809,6 +1989,61 @@ class ApdbCassandra(Apdb):
 
         with self._timer(
             "select_time", tags={"table": "DiaSource", "method": "_get_diasource_data"}
+        ) as timer:
+            result = cast(
+                list[tuple],
+                select_concurrent(
+                    context.session,
+                    statements,
+                    "read_named_tuples",
+                    config.connection_config.read_concurrency,
+                ),
+            )
+            timer.add_values(row_count=len(result), num_queries=len(statements))
+
+        return result
+
+    def _get_diaforcedsource_data(self, source_ids: Iterable[DiaForcedSourceId], *columns: str) -> list:
+        """Select records from DiaForcedSource table by (diaObjectId, visit,
+        detector) and return all records as a list of named tuples.
+        """
+        context = self._context
+        config = context.config
+        partitioner = context.partitioner
+
+        columns = ("diaObjectId", "visit", "detector") + columns
+
+        # Allow some uncertainty for coordinates and time when calculating
+        # partitions.
+        statements: list[tuple] = []
+        pad_arcsec = 1.0
+        pad_time_day = 10 / (24 * 3600)
+        for source_id in source_ids:
+            center = sphgeom.UnitVector3d(sphgeom.LonLat.fromDegrees(source_id.ra, source_id.dec))
+            region = sphgeom.Circle(center, sphgeom.Angle.fromDegrees(pad_arcsec / 3600.0))
+            spatial_where, _ = partitioner.spatial_where(region)
+
+            tables, temporal_where = partitioner.temporal_where(
+                ApdbTables.DiaForcedSource,
+                source_id.midpointMjdTai - pad_time_day,
+                source_id.midpointMjdTai + pad_time_day,
+                partitons_range=context.time_partitions_range,
+                query_per_time_part=True,
+            )
+
+            id_where = (
+                (C("diaObjectId") == source_id.diaObjectId)
+                & (C("visit") == source_id.visit)
+                & (C("detector") == source_id.detector)
+            )
+
+            for table in tables:
+                query = Select(self._keyspace, table, columns)
+                for clause in QExpr.combine(spatial_where, temporal_where, extra=id_where):
+                    statements.append(context.stmt_factory.with_params(query.where(clause), prepare=True))
+
+        with self._timer(
+            "select_time", tags={"table": "DiaForcedSource", "method": "_get_diaforcedsource_data"}
         ) as timer:
             result = cast(
                 list[tuple],
