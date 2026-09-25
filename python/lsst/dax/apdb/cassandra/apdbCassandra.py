@@ -1075,7 +1075,7 @@ class ApdbCassandra(Apdb):
 
         # Find all DiaSources.
         found_sources = self._get_diasource_data(
-            diaSourceIds, "apdb_part", "diaObjectId", "ra", "dec", "midpointMjdTai"
+            diaSourceIds, "apdb_part", "diaObjectId", "ra", "dec", "midpointMjdTai", column_name
         )
 
         if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
@@ -1092,6 +1092,10 @@ class ApdbCassandra(Apdb):
         statements: list[tuple] = []
         for source_id in diaSourceIds:
             source_row = found_sources_by_id[source_id.diaSourceId]
+            # Ignore sources already withdrawn.
+            if getattr(source_row, column_name) is not None:
+                continue
+
             apdb_part = source_row.apdb_part
             time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
 
@@ -1146,19 +1150,22 @@ class ApdbCassandra(Apdb):
         context = self._context
         config = context.config
 
+        def _fsrc_id(fsource: Any) -> tuple[int, int, int]:
+            return (fsource.diaObjectId, fsource.visit, fsource.detector)
+
         if timeWithdrawn is None:
             timeWithdrawn = self._current_time()
         time_value = self._timestamp_column_value(timeWithdrawn)
         column_name = self._timestamp_column_name("time_withdrawn")
 
         diaForcedSourceIds = list(diaForcedSourceIds)
-        fsource_keys = {(source.diaObjectId, source.visit, source.detector) for source in diaForcedSourceIds}
+        fsource_keys = {_fsrc_id(source) for source in diaForcedSourceIds}
 
         found_fsources = self._get_diaforcedsource_data(
-            diaForcedSourceIds, "apdb_part", "ra", "dec", "midpointMjdTai"
+            diaForcedSourceIds, "apdb_part", "ra", "dec", "midpointMjdTai", column_name
         )
 
-        found_keys = {(row.diaObjectId, row.visit, row.detector) for row in found_fsources}
+        found_keys = {_fsrc_id(row) for row in found_fsources}
         if missing_ids := (fsource_keys - found_keys):
             raise LookupError(f"Some source IDs were not found in DiaForcedSource table: {missing_ids}")
 
@@ -1169,6 +1176,10 @@ class ApdbCassandra(Apdb):
         current_time_ns = int(current_time.unix_tai * 1e9)
 
         for source_row in found_fsources:
+            # Ignore sources already withdrawn.
+            if getattr(source_row, column_name) is not None:
+                continue
+
             apdb_part = source_row.apdb_part
             time_part = context.partitioner.time_partition(source_row.midpointMjdTai)
 

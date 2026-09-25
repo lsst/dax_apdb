@@ -1020,9 +1020,13 @@ class ApdbSql(Apdb):
 
         with self._engine.begin() as conn:
             # Make sure that all DiaSources exist.
-            found_sources = self._get_diasource_data(conn, source_ids, "diaObjectId")
+            found_sources = self._get_diasource_data(conn, source_ids, "diaObjectId", column_name)
             if missing_ids := (source_ids - {row.diaSourceId for row in found_sources}):
                 raise LookupError(f"Some source IDs are missing from DiaSource table: {missing_ids}")
+
+            # Ignore sources already withdrawn.
+            source_ids = {row.diaSourceId for row in found_sources if getattr(row, column_name) is None}
+            diaSourceIds = [source for source in diaSourceIds if source.diaSourceId in source_ids]
 
             # Set time_withdrawn for sources.
             table = self._schema.get_table(ApdbTables.DiaSource)
@@ -1061,8 +1065,11 @@ class ApdbSql(Apdb):
     ) -> None:
         # docstring is inherited from a base class
 
+        def _fsrc_id(fsource: Any) -> tuple[int, int, int]:
+            return (fsource.diaObjectId, fsource.visit, fsource.detector)
+
         diaForcedSourceIds = list(diaForcedSourceIds)
-        source_ids = {(source.diaObjectId, source.visit, source.detector) for source in diaForcedSourceIds}
+        source_ids = {_fsrc_id(source) for source in diaForcedSourceIds}
 
         if timeWithdrawn is None:
             timeWithdrawn = self._current_time()
@@ -1074,11 +1081,16 @@ class ApdbSql(Apdb):
             table = self._schema.get_table(ApdbTables.DiaForcedSource)
             id_columns = [table.columns["diaObjectId"], table.columns["visit"], table.columns["detector"]]
             where = sqlalchemy.tuple_(*id_columns).in_(sorted(source_ids))
-            query = sql.select(*id_columns).where(where)
-            result = conn.execute(query)
-            if missing_ids := (source_ids - {(row.diaObjectId, row.visit, row.detector) for row in result}):
+            query = sql.select(table.columns[column_name], *id_columns).where(where)
+            result = list(conn.execute(query))
+            if missing_ids := (source_ids - {_fsrc_id(row) for row in result}):
                 raise LookupError(f"Some source IDs are missing from DiaForcedSource table: {missing_ids}")
 
+            # Ignore sources already withdrawn.
+            source_ids = {_fsrc_id(row) for row in result if getattr(row, column_name) is None}
+            diaForcedSourceIds = [source for source in diaForcedSourceIds if _fsrc_id(source) in source_ids]
+
+            where = sqlalchemy.tuple_(*id_columns).in_(sorted(source_ids))
             update = table.update().where(where).values({column_name: time_value})
             conn.execute(update)
 
