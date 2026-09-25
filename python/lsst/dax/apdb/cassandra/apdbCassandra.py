@@ -1066,7 +1066,7 @@ class ApdbCassandra(Apdb):
         config = context.config
 
         if timeWithdrawn is None:
-            timeWithdrawn = astropy.time.Time.now()
+            timeWithdrawn = self._current_time()
         time_value = self._timestamp_column_value(timeWithdrawn)
         column_name = self._timestamp_column_name("time_withdrawn")
 
@@ -1147,7 +1147,7 @@ class ApdbCassandra(Apdb):
         config = context.config
 
         if timeWithdrawn is None:
-            timeWithdrawn = astropy.time.Time.now()
+            timeWithdrawn = self._current_time()
         time_value = self._timestamp_column_value(timeWithdrawn)
         column_name = self._timestamp_column_name("time_withdrawn")
 
@@ -2032,7 +2032,7 @@ class ApdbCassandra(Apdb):
                     statements.append(context.stmt_factory.with_params(query.where(clause), prepare=True))
 
         with self._timer(
-            "select_time", tags={"table": "DiaForcedSource", "method": "_get_diasource_data"}
+            "select_time", tags={"table": "DiaForcedSource", "method": "_get_diaforcedsource_data"}
         ) as timer:
             result = cast(
                 list[tuple],

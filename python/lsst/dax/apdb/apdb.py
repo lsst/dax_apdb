@@ -503,7 +503,7 @@ class Apdb(ABC):
         Parameters
         ----------
         diaForcedSourceIds : `~collections.abc.Iterable` [`DiaForcedSourceId`]
-            Identifiers of DiaSources to withdraw.
+            Identifiers of DiaForcedSources to withdraw.
         timeWithdrawn : `astropy.time.Time`, optional
             Set the value of ``time_withdrawn`` column to this time, current
             time by default.

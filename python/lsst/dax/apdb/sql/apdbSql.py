@@ -902,7 +902,7 @@ class ApdbSql(Apdb):
         # Check that we found all that is requested.
         if raise_on_missing_id:
             if missing_ids := (requested_ids - found_ids):
-                raise LookupError(f"Some object IDs are missing from DiaObjectLast table: {missing_ids}")
+                raise LookupError(f"Some object IDs are missing from DiaObject table: {missing_ids}")
 
         # Filter existing records.
         if len(objects) != len(found_ids):
@@ -1014,7 +1014,7 @@ class ApdbSql(Apdb):
         source_ids = {source.diaSourceId for source in diaSourceIds}
 
         if timeWithdrawn is None:
-            timeWithdrawn = astropy.time.Time.now()
+            timeWithdrawn = self._current_time()
         time_value = self._timestamp_column_value(timeWithdrawn)
         column_name = self._timestamp_column_name("time_withdrawn")
 
@@ -1065,7 +1065,7 @@ class ApdbSql(Apdb):
         source_ids = {(source.diaObjectId, source.visit, source.detector) for source in diaForcedSourceIds}
 
         if timeWithdrawn is None:
-            timeWithdrawn = astropy.time.Time.now()
+            timeWithdrawn = self._current_time()
         time_value = self._timestamp_column_value(timeWithdrawn)
         column_name = self._timestamp_column_name("time_withdrawn")
 
