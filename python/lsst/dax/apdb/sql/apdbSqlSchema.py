@@ -243,6 +243,18 @@ class ApdbSqlSchema:
         if drop:
             _LOG.info("dropping all tables")
             self._metadata.drop_all(self._engine)
+
+            # If we are dropping existing tables then we also want to drop
+            # `alembic_version` table if it exists.
+            metadata = sqlalchemy.schema.MetaData(schema=self._metadata.schema)
+            try:
+                table = sqlalchemy.schema.Table("alembic_version", metadata, autoload_with=self._engine)
+            except sqlalchemy.exc.NoSuchTableError:
+                # Nothing to delete.
+                pass
+            else:
+                table.drop(self._engine)
+
         _LOG.info("creating all tables")
         self._metadata.create_all(self._engine)
 
