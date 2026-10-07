@@ -50,7 +50,7 @@ class Pixelization:
         self._pix_max_ranges = pix_max_ranges
         self._is_healpix = False
 
-        self.pixelator: lsst.sphgeom.Pixelization
+        self.pixelator: lsst.sphgeom.PixelizationABC
         self.level = pix_level
         if pixelization == "htm":
             self.pixelator = lsst.sphgeom.HtmPixelization(pix_level)
@@ -62,7 +62,7 @@ class Pixelization:
             # Healpix does not support maxRanges.
             self._pix_max_ranges = 0
             self._is_healpix = True
-            self.pixelator = lsst.sphgeom.HealpixPixelization(pix_level)  # type: ignore[attr-defined]
+            self.pixelator = lsst.sphgeom.HealpixPixelization(pix_level)
         else:
             raise ValueError(f"unknown pixelization: {pixelization}")
 
