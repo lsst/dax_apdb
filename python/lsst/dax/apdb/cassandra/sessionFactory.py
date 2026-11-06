@@ -93,8 +93,14 @@ class SessionFactory:
     def __del__(self) -> None:
         # Need to call Cluster.shutdown() to avoid warnings.
         if hasattr(self, "_cluster"):
-            if self._cluster:
-                self._cluster.shutdown()
+            self.close()
+
+    def close(self) -> None:
+        """Close cluster connection"""
+        if self._cluster:
+            self._cluster.shutdown()
+            self._cluster = None
+            self._session = None
 
     def session(self) -> Session:
         """Return Cassandra Session, making new connection if necessary.

@@ -122,6 +122,10 @@ class ApdbCassandra(Apdb):
         self._session_factory = SessionFactory(config)
         self._connection_context: ConnectionContext | None = None
 
+    def close(self) -> None:
+        # docstring is inherited from a base class
+        self._session_factory.close()
+
     @property
     def _context(self) -> ConnectionContext:
         """Establish connection if not established and return context."""

@@ -26,6 +26,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from contextlib import closing
 from typing import Any
 from unittest.mock import patch
 
@@ -86,7 +87,8 @@ class ApdbSQLTest(ApdbTest):
         config = self.make_instance()
         assert isinstance(config, ApdbSqlConfig), "Only expect ApdbSqlConfig here"
         config.connection_config.connection_timeout = 60.0
-        Apdb.from_config(config)
+        with closing(Apdb.from_config(config)):
+            pass
 
     def store_update_records(self, apdb: Apdb, records: list[ApdbUpdateRecord], chunk: ReplicaChunk) -> None:
         # Docstring inherited.
@@ -264,17 +266,19 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
 
     def test_make_apdb_from_path(self) -> None:
         """Check that we can make APDB instance from config URI."""
-        Apdb.from_uri(self.config_path)
-        with self.assertRaises(FileNotFoundError):
-            Apdb.from_uri(self.bad_config_path)
+        with closing(Apdb.from_uri(self.config_path)):
+            with self.assertRaises(FileNotFoundError):
+                Apdb.from_uri(self.bad_config_path)
 
     def test_make_apdb_from_labels(self) -> None:
         """Check that we can make APDB instance from config URI."""
         # Replace DAX_APDB_INDEX_URI value
         new_env = {"DAX_APDB_INDEX_URI": self.index_path}
         with patch.dict(os.environ, new_env, clear=True):
-            Apdb.from_uri("label:label1")
-            Apdb.from_uri("label:label2")
+            with closing(Apdb.from_uri("label:label1")):
+                pass
+            with closing(Apdb.from_uri("label:label2")):
+                pass
             # Label does not exist.
             with self.assertRaises(ValueError):
                 Apdb.from_uri("label:not-a-label")
@@ -312,7 +316,8 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
 
     def test_make_apdb_replica(self) -> None:
         """Check that we can make ApdbReplica instance from config URI."""
-        ApdbReplica.from_uri(self.config_path)
+        with closing(ApdbReplica.from_uri(self.config_path)):
+            pass
         with self.assertRaises(FileNotFoundError):
             Apdb.from_uri(self.bad_config_path)
 
@@ -332,18 +337,18 @@ class ApdbSQLiteVersionCheck(unittest.TestCase):
 
     def test_version_check(self) -> None:
         """Test that version check happens before reading config."""
-        apdb = Apdb.from_config(self.config)
-        assert isinstance(apdb, ApdbSql)
+        with closing(Apdb.from_config(self.config)) as apdb:
+            assert isinstance(apdb, ApdbSql)
 
-        # Store incompatible version.
-        apdb.metadata.set(ApdbSql.metadataSchemaVersionKey, "99.0.0", force=True)
+            # Store incompatible version.
+            apdb.metadata.set(ApdbSql.metadataSchemaVersionKey, "99.0.0", force=True)
 
-        # Overwrite frozen config with something that will break.
-        apdb.metadata.set(ApdbSql.metadataConfigKey, '{"not_a_config_key": 0}', force=True)
+            # Overwrite frozen config with something that will break.
+            apdb.metadata.set(ApdbSql.metadataConfigKey, '{"not_a_config_key": 0}', force=True)
 
-        # Try again.
-        with self.assertRaises(IncompatibleVersionError):
-            Apdb.from_config(self.config)
+            # Try again.
+            with self.assertRaises(IncompatibleVersionError):
+                Apdb.from_config(self.config)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):

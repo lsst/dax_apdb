@@ -202,6 +202,10 @@ class ApdbSql(Apdb):
         if _LOG.isEnabledFor(logging.DEBUG):
             _LOG.debug("ApdbSql Configuration: %s", self.config.model_dump())
 
+    def close(self) -> None:
+        # docstring is inherited from a base class
+        self._engine.dispose()
+
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
         return Timer(name, _MON, tags=tags)
@@ -553,6 +557,8 @@ class ApdbSql(Apdb):
         # Store frozen part of a configuration in metadata.
         freezer = ApdbConfigFreezer[ApdbSqlConfig](cls._frozen_parameters)
         apdb_meta.set(cls.metadataConfigKey, freezer.to_json(config), force=True)
+
+        engine.dispose()
 
     def getDiaObjects(self, region: Region) -> pandas.DataFrame:
         # docstring is inherited from a base class

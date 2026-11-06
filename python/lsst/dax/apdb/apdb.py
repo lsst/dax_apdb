@@ -23,6 +23,7 @@ from __future__ import annotations
 
 __all__ = ["Apdb", "ApdbConfig"]
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING
@@ -42,6 +43,8 @@ from .schema_model import Table
 if TYPE_CHECKING:
     from .apdbAdmin import ApdbAdmin
     from .apdbMetadata import ApdbMetadata
+
+_LOG = logging.getLogger(__name__)
 
 
 class Apdb(ABC):
@@ -86,6 +89,13 @@ class Apdb(ABC):
         """
         config = ApdbConfig.from_uri(uri)
         return make_apdb(config)
+
+    @abstractmethod
+    def close(self) -> None:
+        """Release all resources associated with this Apdb instance. The
+        instance may no longer be used after this is called.
+        """
+        raise NotImplementedError()
 
     @abstractmethod
     def getConfig(self) -> ApdbConfig:

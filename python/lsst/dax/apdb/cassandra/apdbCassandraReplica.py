@@ -74,6 +74,10 @@ class ApdbCassandraReplica(ApdbReplica):
         # exists, so we keep reference to it.
         self._apdb = apdb
 
+    def close(self) -> None:
+        # docstring is inherited from a base class
+        pass
+
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
         return Timer(name, _MON, tags=tags)
