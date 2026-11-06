@@ -30,6 +30,7 @@ from contextlib import closing
 from typing import Any
 from unittest.mock import patch
 
+import felis.datamodel
 import sqlalchemy
 
 import lsst.utils.tests
@@ -237,6 +238,31 @@ class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
         }
         kw.update(kwargs)
         return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
+
+    def add_column(self, apdb: Apdb, table: ApdbTables, column: felis.datamodel.Column) -> None:
+        # SQLAlchemy does not have API for adding columns, have to do it
+        # manually.
+        assert isinstance(apdb, ApdbSql)
+
+        # Few selected types that we support.
+        type_names = {
+            felis.datamodel.DataType.int: "INT",
+            felis.datamodel.DataType.float: "FLOAT",
+            felis.datamodel.DataType.double: "DOUBLE",
+            felis.datamodel.DataType.string: "TEXT",
+        }
+
+        table_name = table.table_name()
+        datatype = type_names[column.datatype]
+        not_null = "" if column.nullable else "NOT NULL"
+        value = "" if column.value is None else column.value
+        if isinstance(value, str):
+            value = f"'{value}'"
+        query = f'ALTER TABLE "{table_name}" ADD COLUMN "{column.name}" {datatype} {not_null}'
+        if value:
+            query += f" DEFAULT {value}"
+        with apdb._engine.begin() as conn:
+            conn.execute(sqlalchemy.text(query))
 
 
 class ApdbSQLiteFromUriTestCase(unittest.TestCase):

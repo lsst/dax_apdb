@@ -39,6 +39,7 @@ import unittest
 from typing import Any
 
 import astropy.time
+import felis.datamodel
 
 import lsst.utils.tests
 from lsst.dax.apdb import (
@@ -50,6 +51,7 @@ from lsst.dax.apdb import (
     ReplicaChunk,
 )
 from lsst.dax.apdb.cassandra import ApdbCassandra, ApdbCassandraConfig
+from lsst.dax.apdb.cassandra.apdbCassandraSchema import ExtraTables
 from lsst.dax.apdb.cassandra.connectionContext import ConnectionContext
 from lsst.dax.apdb.cassandra.sessionFactory import SessionFactory
 from lsst.dax.apdb.pixelization import Pixelization
@@ -184,6 +186,25 @@ class ApdbSchemaUpdateCassandraTestCase(ApdbCassandraMixin, ApdbSchemaUpdateTest
         }
         kw.update(kwargs)
         return ApdbCassandra.init_database(**kw)  # type: ignore[arg-type]
+
+    def add_column(self, apdb: Apdb, table: ApdbTables, column: felis.datamodel.Column) -> None:
+        assert isinstance(apdb, ApdbCassandra)
+
+        # Few selected types that we support.
+        type_names = {
+            felis.datamodel.DataType.int: "INT",
+            felis.datamodel.DataType.float: "FLOAT",
+            felis.datamodel.DataType.double: "DOUBLE",
+            felis.datamodel.DataType.string: "TEXT",
+        }
+
+        context = apdb._context
+        # Need to add to both regular and replica tables.
+        table_names = [table.table_name(), ExtraTables.replica_chunk_tables(True)[table].table_name()]
+        datatype = type_names[column.datatype]
+        for table_name in table_names:
+            query = f'ALTER TABLE "{context.config.keyspace}"."{table_name}" ADD "{column.name}" {datatype}'
+            context.session.execute(query)
 
 
 class ApdbCassandraVersionCheck(cassandra_mixin.ApdbCassandraMixin, unittest.TestCase):

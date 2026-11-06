@@ -89,6 +89,10 @@ class ApdbCassandraTableData(ApdbTableData):
         # docstring inherited
         return self._columns
 
+    def column_index(self, name: str) -> int:
+        # docstring inherited
+        return self._columns.index(name)
+
     def column_defs(self) -> Sequence[tuple[str, felis.datamodel.DataType]]:
         return tuple((column, self._column_types[column]) for column in self._columns)
 

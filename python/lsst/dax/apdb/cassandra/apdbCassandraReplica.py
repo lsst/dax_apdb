@@ -324,6 +324,8 @@ class ApdbCassandraReplica(ApdbReplica):
             column_types["apdb_replica_subchunk"] = felis.datamodel.DataType.int
             table_data.set_column_types(column_types)
 
+            self._fix_null_columns(table, table_data)
+
         return table_data
 
     def getUpdateRecordChunks(self, chunks: Iterable[int]) -> Sequence[ApdbUpdateRecord]:
@@ -374,3 +376,28 @@ class ApdbCassandraReplica(ApdbReplica):
 
         records.sort()
         return records
+
+    def _fix_null_columns(self, table: ApdbTables, table_data: ApdbCassandraTableData) -> None:
+        """For non-null columns replace NULL values with column defaults.
+
+        When new non-null columns are added to the schema we do not populate
+        values for existing records. Instead when reading old data back we
+        fill NULLs with the defaults. Table data is updated in-place.
+        """
+        # Find all non-null columns  which also have default values defined.
+        table_schema = self._apdb._schema.tableSchemas[table]
+        # Defaults are indexed by column index.
+        defaults: dict[int, object] = {
+            table_data.column_index(column.name): column.value
+            for column in table_schema.columns
+            if not column.nullable and column.value is not None
+        }
+        if defaults:
+            # Rows are tuples, need to convert to list to modify.
+            for row_idx, row in enumerate(table_data._rows):
+                if any(row[def_idx] is None for def_idx in defaults):
+                    fixed = tuple(
+                        defaults[idx] if idx in defaults and item is None else item
+                        for idx, item in enumerate(list(row))
+                    )
+                    table_data._rows[row_idx] = fixed

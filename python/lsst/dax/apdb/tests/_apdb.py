@@ -29,7 +29,7 @@ import logging.config
 import os
 import tempfile
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import closing
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
@@ -40,6 +40,7 @@ import numpy
 import pandas
 import yaml
 
+from lsst.resources import ResourcePath
 from lsst.sphgeom import Angle, Circle, LonLat, Region, UnitVector3d
 
 from .. import (
@@ -92,7 +93,8 @@ def update_schema_yaml(
     schema_file: str,
     drop_metadata: bool = False,
     version: str | None = None,
-) -> Iterator[str]:
+    add_columns: dict[str, list[felis.datamodel.Column]] | None = None,
+) -> Generator[str]:
     """Update schema definition and return name of the new schema file.
 
     Parameters
@@ -110,23 +112,34 @@ def update_schema_yaml(
     ------
     Path for the updated configuration file.
     """
-    with open(schema_file) as yaml_stream:
-        schemas_list = list(yaml.load_all(yaml_stream, Loader=yaml.SafeLoader))
+    rp = ResourcePath(schema_file, forceAbsolute=False, forceDirectory=False)
+    schema = yaml.safe_load(rp.read())
+
     # Edit YAML contents.
-    for schema in schemas_list:
-        # Optionally drop metadata table.
-        if drop_metadata:
-            schema["tables"] = [table for table in schema["tables"] if table["name"] != "metadata"]
-        if version is not None:
-            if version == "":
-                del schema["version"]
+    # Optionally drop metadata table.
+    if drop_metadata:
+        schema["tables"] = [table for table in schema["tables"] if table["name"] != "metadata"]
+    if version is not None:
+        if version == "":
+            del schema["version"]
+        else:
+            schema["version"] = version
+    if add_columns:
+        for table, columns in add_columns.items():
+            for table_dict in schema["tables"]:
+                if table_dict["name"] == table:
+                    table_dict["columns"] += [
+                        column.model_dump(by_alias=True, exclude_none=True, exclude_defaults=True)
+                        for column in columns
+                    ]
+                    break
             else:
-                schema["version"] = version
+                raise ValueError(f"Unknown table {table}")
 
     with TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         output_path = os.path.join(tmpdir, "schema.yaml")
         with open(output_path, "w") as yaml_stream:
-            yaml.dump_all(schemas_list, stream=yaml_stream)
+            yaml.dump(schema, stream=yaml_stream)
         yield output_path
 
 
@@ -1358,6 +1371,11 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
         """
         raise NotImplementedError()
 
+    @abstractmethod
+    def add_column(self, apdb: Apdb, table: ApdbTables, column: felis.datamodel.Column) -> None:
+        """Add a column to an existing table."""
+        raise NotImplementedError()
+
     def make_region(self, xyz: tuple[float, float, float] | LonLat = (1.0, 1.0, -1.0)) -> Region:
         """Make a region to use in tests"""
         return _make_region(xyz)
@@ -1400,3 +1418,51 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
                     with closing(Apdb.from_config(config)) as apdb:
                         # Version is checked only when we try to do connect.
                         apdb.metadata.items()
+
+    def test_add_non_null_column(self) -> None:
+        """Test for adding a non-null column to a table with existing data."""
+        # Want replica tables in the schema too.
+        config = self.make_instance(enable_replica=True)
+        with closing(Apdb.from_config(config)) as apdb:
+            region = self.make_region()
+            visit_time = self.visit_time
+
+            # Store some data.
+            objects = makeObjectCatalog(region, 100)
+            sources = makeSourceCatalog(objects, visit_time)
+            fsources = makeForcedSourceCatalog(objects, visit_time)
+            apdb.store(visit_time, objects, sources, fsources)
+
+            new_column = felis.datamodel.Column.model_validate(
+                {
+                    "@id": "#DiaSource.non_null_column",
+                    "name": "non_null_column",
+                    "datatype": felis.datamodel.DataType.int,
+                    "nullable": False,
+                    "value": 123,
+                },
+            )
+            self.add_column(apdb, ApdbTables.DiaSource, new_column)
+
+        # Update configured schema.
+        columns_to_add = {"DiaSource": [new_column]}
+        with update_schema_yaml(config.schema_file, add_columns=columns_to_add) as schema_file:
+            config.schema_file = schema_file
+            with (
+                closing(Apdb.from_config(config)) as apdb,
+                closing(ApdbReplica.from_config(config)) as apdb_replica,
+            ):
+                # Read sources.
+                sources = apdb.getDiaSources(region, None, visit_time)
+                assert sources is not None
+                self.assertFalse((sources["non_null_column"].isna()).any())
+                self.assertTrue((sources["non_null_column"] == 123).all())
+
+            replica_chunks = apdb_replica.getReplicaChunks()
+            assert replica_chunks is not None, "Replication must be enabled"
+
+            source_data = apdb_replica.getTableDataChunks(
+                ApdbTables.DiaSource, [chunk.id for chunk in replica_chunks]
+            )
+            idx = source_data.column_names().index("non_null_column")
+            self.assertTrue(all(source[idx] == 123 for source in source_data.rows()))

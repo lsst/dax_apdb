@@ -449,6 +449,8 @@ class ApdbCassandra(Apdb):
             objects = raw_objects.to_pandas(context.schema._table_schema(ApdbTables.DiaObjectLast))
             timer.add_values(row_count=len(objects), num_sp_part=num_sp_part, num_queries=len(statements))
 
+        self._fix_null_columns(ApdbTables.DiaObjectLast, objects)
+
         _LOG.debug("found %s DiaObjects", objects.shape[0])
         return objects
 
@@ -473,7 +475,11 @@ class ApdbCassandra(Apdb):
         else:
             mjd_start = float(start_time.tai.mjd)
 
-        return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaSource)
+        sources = self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaSource)
+
+        self._fix_null_columns(ApdbTables.DiaSource, sources)
+
+        return sources
 
     def getDiaForcedSources(
         self,
@@ -496,7 +502,11 @@ class ApdbCassandra(Apdb):
         else:
             mjd_start = float(start_time.tai.mjd)
 
-        return self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
+        sources = self._getSources(region, object_ids, mjd_start, mjd_end, ApdbTables.DiaForcedSource)
+
+        self._fix_null_columns(ApdbTables.DiaForcedSource, sources)
+
+        return sources
 
     def getDiaObjectsForDedup(self, since: astropy.time.Time | None = None) -> pandas.DataFrame:
         # docstring is inherited from a base class
@@ -2103,3 +2113,20 @@ class ApdbCassandra(Apdb):
             timer.add_values(row_count=len(result), num_queries=len(statements))
 
         return result
+
+    def _fix_null_columns(self, table: ApdbTables, df: pandas.DataFrame) -> None:
+        """For non-null columns replace NULL values with column defaults.
+
+        When new non-null columns are added to the schema we do not populate
+        values for existing records. Instead when reading old data back we
+        fill NULLs with the defaults. The dataflame is updated in-place.
+        """
+        # Find all non-null columns  which also have default values defined.
+        table_schema = self._schema.tableSchemas[table]
+        defaults = {
+            column.name: column.value
+            for column in table_schema.columns
+            if not column.nullable and column.value is not None
+        }
+        if defaults:
+            df.fillna(defaults, inplace=True)
