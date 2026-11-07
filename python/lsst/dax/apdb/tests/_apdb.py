@@ -1466,3 +1466,63 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
                 )
                 idx = source_data.column_names().index("non_null_column")
                 self.assertTrue(all(source[idx] == 123 for source in source_data.rows()))
+
+    def test_non_null_column_defaults(self) -> None:
+        """Test that non-null columns absent from stored records read back
+        with their schema defaults.
+        """
+        column_defs = [
+            ("default_int", felis.datamodel.DataType.int, 123),
+            ("default_string", felis.datamodel.DataType.string, "default"),
+            ("default_true", felis.datamodel.DataType.boolean, True),
+            ("default_false", felis.datamodel.DataType.boolean, False),
+        ]
+        new_columns = [
+            felis.datamodel.Column.model_validate(
+                {
+                    "@id": f"#DiaSource.{name}",
+                    "name": name,
+                    "datatype": datatype,
+                    "length": 32 if datatype == felis.datamodel.DataType.string else None,
+                    "nullable": False,
+                    "value": value,
+                },
+            )
+            for name, datatype, value in column_defs
+        ]
+
+        config = self.make_instance()
+        with update_schema_yaml(config.schema_file, add_columns={"DiaSource": new_columns}) as schema_file:
+            config = self.make_instance(schema_file=schema_file, enable_replica=True, drop=True)
+            with (
+                closing(Apdb.from_config(config)) as apdb,
+                closing(ApdbReplica.from_config(config)) as apdb_replica,
+            ):
+                visit_time = self.visit_time
+                processing_time = visit_time + astropy.time.TimeDelta(0.5, format="jd")
+                apdb._current_time = lambda: processing_time  # type: ignore[method-assign]
+
+                region = self.make_region()
+                objects = makeObjectCatalog(region, 10)
+                sources = makeSourceCatalog(objects, visit_time)
+                apdb.store(visit_time, objects, sources)
+
+                object_ids = [DiaObjectId.from_named_tuple(row) for row in objects.itertuples()]
+                for catalog in (
+                    apdb.getDiaSources(region, None, visit_time),
+                    apdb.getDiaSourcesForDiaObjects(object_ids, visit_time),
+                ):
+                    assert catalog is not None
+                    self.assertEqual(len(catalog), len(sources))
+                    for name, _, value in column_defs:
+                        self.assertEqual(catalog[name].tolist(), [value] * len(sources))
+
+                replica_chunks = apdb_replica.getReplicaChunks()
+                assert replica_chunks is not None, "Replication must be enabled"
+                source_data = apdb_replica.getTableDataChunks(
+                    ApdbTables.DiaSource, [chunk.id for chunk in replica_chunks]
+                )
+                self.assertEqual(len(source_data.rows()), len(sources))
+                for name, _, value in column_defs:
+                    idx = source_data.column_names().index(name)
+                    self.assertEqual([row[idx] for row in source_data.rows()], [value] * len(sources))
