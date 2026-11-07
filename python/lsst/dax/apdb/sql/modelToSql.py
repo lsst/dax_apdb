@@ -172,7 +172,11 @@ class ModelToSql:
         column_defs: list[sqlalchemy.schema.Column] = []
         for column in table.columns:
             kwargs: dict[str, Any] = {"nullable": column.nullable}
-            if column.value is not None:
+            if isinstance(column.value, bool):
+                # str(False) is stored by SQLite as text, which reads back
+                # as true.
+                kwargs.update(server_default=sqlalchemy.true() if column.value else sqlalchemy.false())
+            elif column.value is not None:
                 kwargs.update(server_default=str(column.value))
             if column in table.primary_key and column.autoincrement is None:
                 kwargs.update(autoincrement=False)

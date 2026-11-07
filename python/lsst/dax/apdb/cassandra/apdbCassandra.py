@@ -558,6 +558,9 @@ class ApdbCassandra(Apdb):
             objects = objects_raw.to_pandas(context.schema._table_schema(ExtraTables.DiaObjectDedup))
             timer.add_values(row_count=len(objects), num_queries=num_part)
 
+        # DiaObjectDedup columns are copies of DiaObject columns.
+        self._fix_null_columns(ApdbTables.DiaObject, objects)
+
         _LOG.debug("found %s DiaObjectDedup records", objects.shape[0])
         return objects
 
@@ -625,6 +628,8 @@ class ApdbCassandra(Apdb):
             catalog = cast(pandas.DataFrame, catalog[catalog["midpointMjdTai"] >= start_time.tai.mjd])
 
             timer.add_values(row_count=len(catalog))
+
+        self._fix_null_columns(ApdbTables.DiaSource, catalog)
 
         _LOG.debug("found %d DiaSources", len(catalog))
         return catalog
