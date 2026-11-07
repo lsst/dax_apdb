@@ -1458,11 +1458,11 @@ class ApdbSchemaUpdateTest(TestCaseMixin, ABC):
                 self.assertFalse((sources["non_null_column"].isna()).any())
                 self.assertTrue((sources["non_null_column"] == 123).all())
 
-            replica_chunks = apdb_replica.getReplicaChunks()
-            assert replica_chunks is not None, "Replication must be enabled"
+                replica_chunks = apdb_replica.getReplicaChunks()
+                assert replica_chunks is not None, "Replication must be enabled"
 
-            source_data = apdb_replica.getTableDataChunks(
-                ApdbTables.DiaSource, [chunk.id for chunk in replica_chunks]
-            )
-            idx = source_data.column_names().index("non_null_column")
-            self.assertTrue(all(source[idx] == 123 for source in source_data.rows()))
+                source_data = apdb_replica.getTableDataChunks(
+                    ApdbTables.DiaSource, [chunk.id for chunk in replica_chunks]
+                )
+                idx = source_data.column_names().index("non_null_column")
+                self.assertTrue(all(source[idx] == 123 for source in source_data.rows()))

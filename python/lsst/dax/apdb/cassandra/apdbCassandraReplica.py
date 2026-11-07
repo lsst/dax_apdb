@@ -76,7 +76,7 @@ class ApdbCassandraReplica(ApdbReplica):
 
     def close(self) -> None:
         # docstring is inherited from a base class
-        pass
+        self._apdb.close()
 
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
