@@ -51,6 +51,8 @@ def _option_from_pydantic_field(
         name = "--" + field_name.replace("_", "-")
     if help is None:
         help = field_info.description
+    if "type" not in kwargs and field_info.annotation in (str, int, float):
+        kwargs["type"] = field_info.annotation
     group.add_argument(name, dest=field_name, help=help, **kwargs)
 
 
