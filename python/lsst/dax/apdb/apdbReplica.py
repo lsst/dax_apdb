@@ -163,6 +163,13 @@ class ApdbReplica(ABC):
         config = ApdbConfig.from_uri(uri)
         return make_apdb_replica(config)
 
+    @abstractmethod
+    def close(self) -> None:
+        """Release all resources associated with this instance. The instance
+        may no longer be used after this is called.
+        """
+        raise NotImplementedError()
+
     @classmethod
     @abstractmethod
     def apdbReplicaImplementationVersion(cls) -> VersionTuple:

@@ -147,6 +147,10 @@ class ApdbSqlReplica(ApdbReplica):
         if timer:
             self._timer_args.append(_LOG)
 
+    def close(self) -> None:
+        # docstring is inherited from a base class
+        self._engine.dispose()
+
     def _timer(self, name: str, *, tags: Mapping[str, str | int] | None = None) -> Timer:
         """Create `Timer` instance given its name."""
         return Timer(name, *self._timer_args, tags=tags)

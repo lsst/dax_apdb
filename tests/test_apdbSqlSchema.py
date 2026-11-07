@@ -76,6 +76,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
     def test_makeSchema_default(self) -> None:
         """Test for creating schema."""
         engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
 
         # create standard (baseline) schema
         schema = ApdbSqlSchema(
@@ -111,6 +112,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
     def test_makeSchema_prefix(self) -> None:
         """Create schema using prefix."""
         engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
         schema = ApdbSqlSchema(
             table_schema=ApdbSchema(TEST_SCHEMA_COMBINED, ""),
             engine=engine,
@@ -143,6 +145,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         columns.
         """
         engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
         schema = ApdbSqlSchema(
             table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
             engine=engine,
@@ -169,6 +172,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
     def test_makeSchema_diaobjectlast(self) -> None:
         """Use DiaObjectLast table for DiaObject."""
         engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
         schema = ApdbSqlSchema(
             table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
             engine=engine,
@@ -196,6 +200,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
     def test_makeSchema_replica(self) -> None:
         """Add replica tables."""
         engine = create_engine("sqlite://")
+        self.addCleanup(engine.dispose)
         schema = ApdbSqlSchema(
             table_schema=ApdbSchema(TEST_SCHEMA, TEST_SCHEMA_SSO),
             engine=engine,
@@ -217,6 +222,7 @@ class ApdbSchemaTestCase(unittest.TestCase):
         """Make schema using old yaml file without metadata table."""
         with update_schema_yaml(TEST_SCHEMA, drop_metadata=True) as schema_file:
             engine = create_engine("sqlite://")
+            self.addCleanup(engine.dispose)
             schema = ApdbSqlSchema(
                 table_schema=ApdbSchema(schema_file, TEST_SCHEMA_SSO),
                 engine=engine,

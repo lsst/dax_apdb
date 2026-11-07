@@ -43,7 +43,6 @@ def _option_from_pydantic_field(
     *,
     name: str | None = None,
     help: str | None = None,
-    type: type | None = None,
     **kwargs: Any,
 ) -> None:
     """Convert pydantic Field to argparse argument definition."""
@@ -52,14 +51,6 @@ def _option_from_pydantic_field(
         name = "--" + field_name.replace("_", "-")
     if help is None:
         help = field_info.description
-
-    if type is None:
-        type = field_info.annotation
-        if type in (str, int, float):
-            kwargs["type"] = type
-    else:
-        kwargs["type"] = type
-
     group.add_argument(name, dest=field_name, help=help, **kwargs)
 
 

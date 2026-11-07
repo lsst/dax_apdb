@@ -26,9 +26,11 @@ import os
 import shutil
 import tempfile
 import unittest
+from contextlib import closing
 from typing import Any
 from unittest.mock import patch
 
+import felis.datamodel
 import sqlalchemy
 
 import lsst.utils.tests
@@ -86,7 +88,8 @@ class ApdbSQLTest(ApdbTest):
         config = self.make_instance()
         assert isinstance(config, ApdbSqlConfig), "Only expect ApdbSqlConfig here"
         config.connection_config.connection_timeout = 60.0
-        Apdb.from_config(config)
+        with closing(Apdb.from_config(config)):
+            pass
 
     def store_update_records(self, apdb: Apdb, records: list[ApdbUpdateRecord], chunk: ReplicaChunk) -> None:
         # Docstring inherited.
@@ -236,6 +239,31 @@ class ApdbSchemaUpdateSQLiteTestCase(ApdbSchemaUpdateTest, unittest.TestCase):
         kw.update(kwargs)
         return ApdbSql.init_database(**kw)  # type: ignore[arg-type]
 
+    def add_column(self, apdb: Apdb, table: ApdbTables, column: felis.datamodel.Column) -> None:
+        # SQLAlchemy does not have API for adding columns, have to do it
+        # manually.
+        assert isinstance(apdb, ApdbSql)
+
+        # Few selected types that we support.
+        type_names = {
+            felis.datamodel.DataType.int: "INT",
+            felis.datamodel.DataType.float: "FLOAT",
+            felis.datamodel.DataType.double: "DOUBLE",
+            felis.datamodel.DataType.string: "TEXT",
+        }
+
+        table_name = table.table_name()
+        datatype = type_names[column.datatype]
+        not_null = "" if column.nullable else "NOT NULL"
+        value = "" if column.value is None else column.value
+        if isinstance(value, str):
+            value = f"'{value}'"
+        query = f'ALTER TABLE "{table_name}" ADD COLUMN "{column.name}" {datatype} {not_null}'
+        if value:
+            query += f" DEFAULT {value}"
+        with apdb._engine.begin() as conn:
+            conn.execute(sqlalchemy.text(query))
+
 
 class ApdbSQLiteFromUriTestCase(unittest.TestCase):
     """A test case for instantiating ApdbSql via URI."""
@@ -264,17 +292,19 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
 
     def test_make_apdb_from_path(self) -> None:
         """Check that we can make APDB instance from config URI."""
-        Apdb.from_uri(self.config_path)
-        with self.assertRaises(FileNotFoundError):
-            Apdb.from_uri(self.bad_config_path)
+        with closing(Apdb.from_uri(self.config_path)):
+            with self.assertRaises(FileNotFoundError):
+                Apdb.from_uri(self.bad_config_path)
 
     def test_make_apdb_from_labels(self) -> None:
         """Check that we can make APDB instance from config URI."""
         # Replace DAX_APDB_INDEX_URI value
         new_env = {"DAX_APDB_INDEX_URI": self.index_path}
         with patch.dict(os.environ, new_env, clear=True):
-            Apdb.from_uri("label:label1")
-            Apdb.from_uri("label:label2")
+            with closing(Apdb.from_uri("label:label1")):
+                pass
+            with closing(Apdb.from_uri("label:label2")):
+                pass
             # Label does not exist.
             with self.assertRaises(ValueError):
                 Apdb.from_uri("label:not-a-label")
@@ -312,7 +342,8 @@ class ApdbSQLiteFromUriTestCase(unittest.TestCase):
 
     def test_make_apdb_replica(self) -> None:
         """Check that we can make ApdbReplica instance from config URI."""
-        ApdbReplica.from_uri(self.config_path)
+        with closing(ApdbReplica.from_uri(self.config_path)):
+            pass
         with self.assertRaises(FileNotFoundError):
             Apdb.from_uri(self.bad_config_path)
 
@@ -332,18 +363,18 @@ class ApdbSQLiteVersionCheck(unittest.TestCase):
 
     def test_version_check(self) -> None:
         """Test that version check happens before reading config."""
-        apdb = Apdb.from_config(self.config)
-        assert isinstance(apdb, ApdbSql)
+        with closing(Apdb.from_config(self.config)) as apdb:
+            assert isinstance(apdb, ApdbSql)
 
-        # Store incompatible version.
-        apdb.metadata.set(ApdbSql.metadataSchemaVersionKey, "99.0.0", force=True)
+            # Store incompatible version.
+            apdb.metadata.set(ApdbSql.metadataSchemaVersionKey, "99.0.0", force=True)
 
-        # Overwrite frozen config with something that will break.
-        apdb.metadata.set(ApdbSql.metadataConfigKey, '{"not_a_config_key": 0}', force=True)
+            # Overwrite frozen config with something that will break.
+            apdb.metadata.set(ApdbSql.metadataConfigKey, '{"not_a_config_key": 0}', force=True)
 
-        # Try again.
-        with self.assertRaises(IncompatibleVersionError):
-            Apdb.from_config(self.config)
+            # Try again.
+            with self.assertRaises(IncompatibleVersionError):
+                Apdb.from_config(self.config)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
