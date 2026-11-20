@@ -249,10 +249,6 @@ class SessionFactory:
             request_timeout=config.connection_config.write_timeout,
             load_balancing_policy=loadBalancePolicy,
         )
-        # To replace default DCAwareRoundRobinPolicy
-        default_profile = ExecutionProfile(
-            load_balancing_policy=loadBalancePolicy,
-        )
         return {
             "read_tuples": read_tuples_profile,
             "read_named_tuples": read_named_tuples_profile,
@@ -260,7 +256,7 @@ class SessionFactory:
             "read_raw_multi": read_raw_multi_profile,
             "read_raw_multi_dedup": read_raw_multi_dedup_profile,
             "write": write_profile,
-            EXEC_PROFILE_DEFAULT: default_profile,
+            EXEC_PROFILE_DEFAULT: read_named_tuples_profile,
         }
 
 
