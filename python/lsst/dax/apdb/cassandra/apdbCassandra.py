@@ -1582,7 +1582,7 @@ class ApdbCassandra(Apdb):
             else:
                 # group by time partition.
                 for time_part, sub_frame in tp_sources.groupby(by="apdb_time_part"):
-                    sub_frame.drop(columns="apdb_time_part", inplace=True)
+                    sub_frame = sub_frame.drop(columns="apdb_time_part")
                     self._storeObjectsPandas(sub_frame, table_name, time_part=time_part)
 
         subchunk: int | None = None

@@ -1372,7 +1372,7 @@ class ApdbSql(Apdb):
                     last_objs[validity_start_column] = timestamp
                 else:
                     extra_column = pandas.Series([timestamp] * len(last_objs), name=validity_start_column)
-                    last_objs.set_index(extra_column.index, inplace=True)
+                    last_objs = last_objs.set_index(extra_column.index)
                     last_objs = pandas.concat([last_objs, extra_column], axis="columns")
 
             with self._timer("insert_time", tags={"table": "DiaObjectLast"}) as timer:
@@ -1417,7 +1417,7 @@ class ApdbSql(Apdb):
         else:
             extra_columns.append(pandas.Series([None] * len(objs), name=validity_end_column))
         if extra_columns:
-            objs.set_index(extra_columns[0].index, inplace=True)
+            objs = objs.set_index(extra_columns[0].index)
             objs = pandas.concat([objs] + extra_columns, axis="columns")
 
         # Insert replica data

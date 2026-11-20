@@ -876,8 +876,8 @@ class ApdbTest(TestCaseMixin, ABC):
             sources1 = apdb.getDiaSources(region1, None, visit_time2)
             sources2 = apdb.getDiaSources(region2, None, visit_time2)
             assert sources1 is not None and sources2 is not None
-            sources1.set_index("diaSourceId", inplace=True)
-            sources2.set_index("diaSourceId", inplace=True)
+            sources1 = sources1.set_index("diaSourceId")
+            sources2 = sources2.set_index("diaSourceId")
             if self.use_mjd:
                 self.assertEqual(sources1.loc[1000, "timeWithdrawnMjdTai"], withdraw_time1.mjd)
                 self.assertTrue(numpy.isnan(sources1.loc[1001, "timeWithdrawnMjdTai"]))
@@ -949,7 +949,7 @@ class ApdbTest(TestCaseMixin, ABC):
 
             fsources = apdb.getDiaForcedSources(region, [100, 101, 102], self.visit_time)
             assert fsources is not None
-            fsources.set_index("diaObjectId", inplace=True)
+            fsources = fsources.set_index("diaObjectId")
             if self.use_mjd:
                 self.assertEqual(fsources.loc[100, "timeWithdrawnMjdTai"], withdraw_time1.mjd)
                 self.assertEqual(fsources.loc[101, "timeWithdrawnMjdTai"], withdraw_time2.mjd)
